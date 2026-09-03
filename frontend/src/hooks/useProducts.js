@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { fetchActiveProducts } from '../services/firestore.service';
+import { useState, useEffect } from "react";
+import { fetchActiveProducts } from "../services/firestore.service";
 
 export default function useProducts() {
   const [products, setProducts] = useState([]);
