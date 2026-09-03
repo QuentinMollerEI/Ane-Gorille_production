@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- FONCTIONS DE SÉCURITÉ ET DE CONFORMITÉ ---
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function getUserRole() {
+      return getUserData().role;
+    }
+
+    // --- ACCÈS À LA COLLECTION USERS ---
+    match /users/{userId} {
+      // Inscription Étape 1 : Tout utilisateur connecté peut créer son profil initial
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+
+      // Lecture et modification de son propre profil (Étape 2)
+      allow read, update: if isOwner(userId);
+
+      // Seul l'administrateur peut lister tous les utilisateurs
+      allow list: if isAuthenticated() && getUserRole() == 'admin';
+    }
+
+    // --- ACCÈS À LA COLLECTION PRODUCTS (CONFORMITÉ ET TRAÇABILITÉ OBLIGATOIRE) ---
+    match /products/{productId} {
+      // Tout le monde (visiteurs inclus) peut lire le catalogue
+      allow read: if true;
+
+      // Seuls les producteurs d'exploitation et l'administrateur peuvent créer/modifier des fiches produits
+      allow create: if isAuthenticated() &&
+        (getUserRole() == 'producteur' || getUserRole() == 'admin') &&
+        // Validation stricte des données obligatoires pour la conformité légale (Lois AGEC & EGAlim)
+        request.resource.data.title is string &&
+        request.resource.data.priceHT is number &&
+        request.resource.data.priceTTC is number &&
+        request.resource.data.vatRate is number &&
+        request.resource.data.isBio is bool &&
+        request.resource.data.batchNumber is string && // HACCP
+        request.resource.data.iduAdeme is string &&     // Loi AGEC
+        request.resource.data.producerSiret is string; // Transparence vendeur tiers
+
+      allow update, delete: if isAuthenticated() &&
+        (getUserRole() == 'producteur' || getUserRole() == 'admin') &&
+        // S'assurer que le producteur ne modifie que ses propres produits
+        (request.resource.data.producer == getUserData().displayName || getUserRole() == 'admin');
+    }
+  }
+}
