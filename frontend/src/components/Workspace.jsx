@@ -6,7 +6,7 @@ import { Wrench } from "lucide-react";
 import ShopContainer from "./ShopContainer";
 import MiseEnRayon from "../pages/MiseEnRayon/MiseEnRayon";
 import OrderPreparation from "../pages/Preparation/OrderPreparation";
-import MyProfile from "../pages/Profil/MyProfile"; // 👈 IMPORT DE L'ONGLET PROFIL DYNAMIQUE
+import MyProfile from "../pages/Profil/MyProfile"; // IMPORT DE L'ONGLET PROFIL DYNAMIQUE
 
 // 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non encore intégrés)
 const TabPlaceholder = ({ title, description }) => (
@@ -25,7 +25,20 @@ const TabPlaceholder = ({ title, description }) => (
 // 3. ROUTEUR DYNAMIQUE DE L'ESPACE DE TRAVAIL (Workspace)
 export default function Workspace({ activeTab }) {
   const { user } = useAuth();
-  const role = user?.role || "acheteur";
+
+  // 🛡️ NORMALISATION DES RÔLES ("Legal by Design" & Robustesse RBAC)
+  // Permet de mapper tous les sous-profils acheteurs (particulier, pro/B2B, public/B2G)
+  // vers le canal d'onglets 'acheteur' pour qu'ils aient tous accès à la Boutique, Suivi, Compta et Profil.
+  let role = user?.role || "acheteur";
+  if (
+    role === "client_pro" ||
+    role === "client_public" ||
+    role === "acheteur_prive" ||
+    role === "acheteur_public" ||
+    role === "acheteur"
+  ) {
+    role = "acheteur";
+  }
 
   // --- RENDU 1 : ONGLET ACHETEUR (PARTICULIER OU ÉTABLISSEMENT PUBLIC) ---
   if (role === "acheteur") {
@@ -54,9 +67,8 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "profil":
-        return <MyProfile />; // 👈 REND LE COMPOSANT DYNAMIQUE DE PROFIL
       default:
-        return <ShopContainer />;
+        return <MyProfile />; // Rendu dynamique de votre onglet Profil unifié
     }
   }
 
@@ -91,9 +103,8 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "profil":
-        return <MyProfile />; // 👈 REND LE COMPOSANT DYNAMIQUE DE PROFIL
       default:
-        return <MiseEnRayon />;
+        return <MyProfile />; // Rendu dynamique de votre onglet Profil unifié
     }
   }
 
@@ -111,7 +122,7 @@ export default function Workspace({ activeTab }) {
         return (
           <TabPlaceholder
             title="Émargement & Bons de livraison"
-            description="Gérez la validation et la signature numérique des livraisons sur site."
+            description="Gerez la validation et la signature numérique des livraisons sur site."
           />
         );
       case "haccp":
@@ -136,9 +147,8 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "profil":
-        return <MyProfile />; // 👈 REND LE COMPOSANT DYNAMIQUE DE PROFIL
       default:
-        return <MyProfile />;
+        return <MyProfile />; // Rendu dynamique de votre onglet Profil unifié
     }
   }
 
