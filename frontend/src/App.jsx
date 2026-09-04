@@ -1,18 +1,27 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import React from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 
 // Import des éléments de structure globaux (qui gèrent désormais leur propre visuel)
-import Navbar from './components/Navbar';
-import Footer from './components/Footer';
-import DashboardLayout from './layouts/DashboardLayout';
+import Navbar from "./components/Navbar";
+import Footer from "./components/Footer";
+import DashboardLayout from "./layouts/DashboardLayout";
 
 // Import de vos vues applicatives
-import Hero from './components/Hero';
-import ShopContainer from './components/ShopContainer';
-import Workspace from './components/Workspace';
-import Login from './components/auth/Login';
-import Register from './components/auth/Register';
+import Hero from "./components/Hero";
+import ShopContainer from "./components/ShopContainer";
+import Workspace from "./components/Workspace";
+import Login from "./components/auth/Login";
+import Register from "./components/auth/Register";
+
+// 🛒 IMPORT DU PANIER FLOTTANT MODERNE
+// (Note : Ajustez légèrement le chemin relatif si votre fichier App.jsx n'est pas à la racine de /src)
+import CartFloatingWidget from "./pages/boutique/components/CartFloatingWidget";
 
 /**
  * Gardien de sécurité (PrivateRoute)
@@ -48,8 +57,7 @@ export default function App() {
   return (
     <AuthProvider>
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <div className="min-h-screen flex flex-col bg-brand-light">
-
+        <div className="min-h-screen flex flex-col bg-brand-light relative">
           {/* Navbar universelle : sa structure visuelle est gérée uniquement dans son fichier */}
           <Navbar />
 
@@ -80,6 +88,11 @@ export default function App() {
 
           {/* Footer universel : sa structure visuelle est gérée uniquement dans son fichier */}
           <Footer />
+
+          {/* 🛒 LE PANIER FLOTTANT GLOBAL
+              Placé ici, il reste visible et réactif sur toutes les pages publiques (Boutique, Login, Register...)
+              et se met à jour automatiquement dès qu'un produit est ajouté ! */}
+          <CartFloatingWidget />
         </div>
       </Router>
     </AuthProvider>
