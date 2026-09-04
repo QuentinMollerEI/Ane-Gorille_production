@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import StockCompartment from "./components/StockCompartment";
 import ManualAddCompartment from "./components/ManualAddCompartment";
 import CsvImportCompartment from "./components/CsvImportCompartment.jsx";
-import StockCompartment from "./components/StockCompartment";
 
 export default function MiseEnRayon() {
   const { user } = useAuth();
@@ -21,9 +21,9 @@ export default function MiseEnRayon() {
       </div>
 
       <div className="flex flex-col gap-6">
+        <StockCompartment />
         <ManualAddCompartment hasValidCertifications={hasValidCertifications} />
         <CsvImportCompartment />
-        <StockCompartment />
       </div>
     </div>
   );
