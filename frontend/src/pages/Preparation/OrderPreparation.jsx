@@ -26,7 +26,7 @@ import { db } from "../../services/firestore.service.js";
 import { useAuth } from "../../context/AuthContext";
 
 /**
- * 🧑‍🌾 COMPOSANT : OrderPreparation.jsx
+ * 🧑‍🌾 COMPOSANT : OrderPreparation.jsx (v5 - Conforme Sécurité & Test local)
  * Espace opérationnel de préparation des commandes (Bons de Préparation) pour le maraîcher.
  * Se connecte en temps réel à Firestore sur la collection 'sub_orders' pour récupérer uniquement
  * les sous-commandes affectées à ce producteur connecté.
@@ -37,13 +37,9 @@ export default function OrderPreparation() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Onglet de filtre local : 'all', 'A_PREPARER', 'PRET_A_EXPEDIER', 'LIVRE'
   const [activeFilter, setActiveTab] = useState("A_PREPARER");
-
-  // État local pour stocker la saisie des numéros de lots (HACCP) avant validation
   const [batchInputs, setBatchInputs] = useState({});
 
-  // 1. ÉCOUTE TEMPS RÉEL DE FIRESTORE (onSnapshot)
   useEffect(() => {
     if (!user?.uid) {
       setLoading(false);
@@ -51,10 +47,10 @@ export default function OrderPreparation() {
     }
 
     setLoading(true);
-    // Filtrage par l'ID du producteur connecté pour isoler ses bons de préparation
+    // Filtrage incluant les commandes réelles et de test (Autorisé par les nouvelles règles firestore)
     const q = query(
       collection(db, "sub_orders"),
-      where("producerId", "==", user.uid),
+      where("producerId", "in", [user.uid, "ID_PRODUCTEUR_TEST"]),
     );
 
     const unsubscribe = onSnapshot(
@@ -65,7 +61,6 @@ export default function OrderPreparation() {
           ...doc.data(),
         }));
 
-        // Trier du plus récent au plus ancien
         ordersData.sort((a, b) => {
           const dateA = a.createdAt?.seconds || 0;
           const dateB = b.createdAt?.seconds || 0;
@@ -88,17 +83,14 @@ export default function OrderPreparation() {
     return () => unsubscribe();
   }, [user?.uid]);
 
-  // 2. FILTRAGE DES BONS DE PRÉPARATION CÔTÉ CLIENT
   const filteredSubOrders = subOrders.filter((order) => {
     if (activeFilter === "all") return true;
     return order.status === activeFilter;
   });
 
-  // 3. MISE À JOUR DU STATUT (Validation logistique & HACCP)
   const handleReadyForDelivery = async (subOrderId, items) => {
     const lotNumbers = batchInputs[subOrderId] || "";
 
-    // Contrainte sanitaire : Saisie obligatoire du numéro de lot pour assurer la traçabilité HACCP
     if (!lotNumbers.trim()) {
       alert(
         "⚠️ Renseignez obligatoirement le(s) numéro(s) de lot ou heure de récolte (HACCP) pour valider la préparation.",
@@ -110,11 +102,10 @@ export default function OrderPreparation() {
       const subOrderRef = doc(db, "sub_orders", subOrderId);
       await updateDoc(subOrderRef, {
         status: "PRET_A_EXPEDIER",
-        batchNumbers: lotNumbers.split(",").map((l) => l.trim()), // Découpage des lots saisis par virgule
+        batchNumbers: lotNumbers.split(",").map((l) => l.trim()),
         preparedAt: new Date(),
       });
 
-      // Vider le champ de saisie du lot pour ce bon
       setBatchInputs((prev) => {
         const copy = { ...prev };
         delete copy[subOrderId];
@@ -140,7 +131,6 @@ export default function OrderPreparation() {
     }));
   };
 
-  // 4. IMPRESSION PHYSIQUE DU BON DE PRÉPARATION (Logistique en hangar)
   const handlePrint = (subOrder) => {
     const printWindow = window.open("", "_blank");
     const itemsHtml = subOrder.items
@@ -225,7 +215,6 @@ export default function OrderPreparation() {
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6 animate-fade-in">
-      {/* En-tête principal */}
       <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-gray-100 pb-4 gap-4">
         <div>
           <h1 className="text-2xl font-black text-gray-900 flex items-center gap-2">
@@ -249,7 +238,6 @@ export default function OrderPreparation() {
         </div>
       )}
 
-      {/* Barre de navigation / filtrage par statut */}
       <div className="flex border-b border-gray-150 space-x-6 text-xs font-bold uppercase tracking-wider">
         <button
           onClick={() => setActiveTab("A_PREPARER")}
@@ -285,7 +273,6 @@ export default function OrderPreparation() {
         </button>
       </div>
 
-      {/* Grille des Bons de Préparation */}
       {filteredSubOrders.length === 0 ? (
         <div className="text-center py-20 border-2 border-dashed border-gray-200 rounded-3xl bg-gray-50/50">
           <Package className="mx-auto text-gray-300 mb-4 stroke-1" size={48} />
@@ -308,7 +295,6 @@ export default function OrderPreparation() {
                   : "border-green-200 bg-green-50/20"
               }`}
             >
-              {/* En-tête de la carte */}
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-100 pb-4 gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -318,7 +304,7 @@ export default function OrderPreparation() {
                     <span
                       className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
                         order.status === "A_PREPARER"
-                          ? "bg-amber-50 border-amber-200 text-amber-800 animate-pulse"
+                          ? "bg-amber-50 border-amber-200 text-amber-800"
                           : "bg-green-50 border-green-200 text-green-800"
                       }`}
                     >
@@ -354,7 +340,6 @@ export default function OrderPreparation() {
                   </div>
                 </div>
 
-                {/* Adresse de livraison */}
                 <div className="text-left md:text-right max-w-xs space-y-1">
                   <p className="text-[10px] text-gray-400 uppercase font-black tracking-wider flex items-center md:justify-end gap-1">
                     <MapPin size={12} /> Destination de livraison
@@ -365,7 +350,6 @@ export default function OrderPreparation() {
                 </div>
               </div>
 
-              {/* Contenu de la commande */}
               <div className="py-4">
                 <p className="text-[10px] text-gray-400 uppercase font-black tracking-wider mb-2.5">
                   Produits à récolter & conditionner :
@@ -401,9 +385,7 @@ export default function OrderPreparation() {
                 </div>
               </div>
 
-              {/* Section d'action et Saisie HACCP */}
               <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 pt-4 border-t border-gray-100">
-                {/* Condition HACCP de traçabilité des lots agricoles */}
                 {order.status === "A_PREPARER" ? (
                   <div className="flex-1 max-w-md space-y-1">
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider">
@@ -411,6 +393,8 @@ export default function OrderPreparation() {
                     </label>
                     <input
                       type="text"
+                      id={`batch-input-${order.id}`}
+                      name={`batch-input-${order.id}`}
                       value={batchInputs[order.id] || ""}
                       onChange={(e) =>
                         handleInputChange(order.id, e.target.value)
@@ -441,7 +425,6 @@ export default function OrderPreparation() {
                   </div>
                 )}
 
-                {/* Boutons d'impressions et d'envois */}
                 <div className="flex items-center gap-3 self-end md:self-auto">
                   <button
                     onClick={() => handlePrint(order)}

@@ -8,13 +8,12 @@ import {
 import { db } from "./firestore.service.js";
 
 /**
- * 💼 SERVICE : OrderDocumentGenerator.js ("Legal by Design")
+ * 💼 SERVICE : OrderDocumentGenerator.js ("Legal by Design") - v6 (Hautement Résilient)
  * Centralise la création atomique des Commandes (collection 'orders') et
  * des Bons de Préparation Multi-Producteurs (collection 'sub_orders') dans Firestore.
  *
- * Il réalise également la décrémentation atomique des stocks des produits vendus.
- * Toutes ces opérations sont groupées dans un unique Transaction/Batch Firestore pour garantir
- * qu'en cas de panne, aucune donnée incohérente ou orpheline ne soit créée.
+ * ÉVOLUTION v6 : Traitement 100% synchrone, ultra-rapide et sécurisé en hangar.
+ * Résout le problème de blocage asynchrone et gère robustement les formats d'ID.
  */
 export const OrderDocumentGenerator = {
   /**
@@ -86,13 +85,13 @@ export const OrderDocumentGenerator = {
       }
 
       producersMap[producerId].items.push({
-        productId: item.id,
+        productId: item.productId || item.id,
         name: item.title || item.name || "Produit sans nom",
         quantity: qty,
         unit: item.unit || "kg",
         priceHT: priceHT,
         vatRate: vatRate,
-        batchNumber: item.batchNumber || "", // Sera renseigné plus tard par le producteur pour le HACCP
+        batchNumber: item.batchNumber || "",
       });
 
       producersMap[producerId].totalHT += itemHT;
@@ -114,15 +113,15 @@ export const OrderDocumentGenerator = {
         checkoutData.deliveryAddress ||
         "Livraison standard boutique de retrait",
       paymentMethod: paymentMethod,
-      paymentStatus: paymentMethod === "stripe" ? "PAID" : "A_ECHEANCE", // Billie et Mandats sont payés après service fait
+      paymentStatus: paymentMethod === "stripe" ? "PAID" : "A_ECHEANCE",
       paymentDetails: paymentResult || null,
       totalHT: Number(totalHT.toFixed(2)),
       totalTVA: Number(totalTVA.toFixed(2)),
       totalTTC: Number(totalTTC.toFixed(2)),
-      status: "A_PREPARER", // S'active directement pour que la logistique démarre
+      status: "A_PREPARER",
       createdAt: serverTimestamp(),
       items: cartItems.map((item) => ({
-        productId: item.id,
+        productId: item.productId || item.id,
         title: item.title || item.name || "Produit sans nom",
         priceHT: parseFloat(item.priceHT || item.price || 0),
         vatRate: parseFloat(item.vatRate || item.vat || 5.5),
@@ -160,19 +159,25 @@ export const OrderDocumentGenerator = {
         totalHT: Number(producerData.totalHT.toFixed(2)),
         totalTVA: Number(producerData.totalTVA.toFixed(2)),
         totalTTC: Number(producerData.totalTTC.toFixed(2)),
-        status: "A_PREPARER", // Le maraîcher le verra immédiatement dans son onglet de préparation
+        status: "A_PREPARER",
         createdAt: serverTimestamp(),
       };
 
-      // Ajout du bon de préparation au batch
       batch.set(subOrderDocRef, subOrderData);
     });
 
-    // 6. Décrémentation atomique des stocks dans la collection 'products'
-    // Conforme à la règle de sécurité Firestore qui autorise la modification exclusive du stock par l'acheteur
+    // 6. Décrémentation atomique des stocks dans Firestore
     cartItems.forEach((item) => {
       const qty = parseInt(item.quantityWanted || item.qty || 1, 10);
-      const productDocRef = doc(db, "products", item.id);
+      const itemId = item.productId || item.id;
+      if (!itemId) {
+        console.warn(
+          "⚠️ Impossible de décrémenter le stock : identifiant d'article manquant.",
+          item,
+        );
+        return;
+      }
+      const productDocRef = doc(db, "products", itemId);
 
       batch.update(productDocRef, {
         stock: increment(-qty),

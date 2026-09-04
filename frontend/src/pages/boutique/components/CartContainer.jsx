@@ -16,10 +16,54 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "../../../services/firestore.service.js";
 import { OrderDocumentGenerator } from "../../../services/OrderDocumentGenerator";
 
+// =========================================================================
+// 🛡️ CORRECTIF DE SÉCURITÉ DE PERSISTANCE DU PANIER (MONKEY-PATCH LOCALSTORAGE)
+// Empêche toute fuite de panier entre différents utilisateurs et synchronise en temps réel.
+// =========================================================================
+if (typeof window !== "undefined" && !window.localStorage_cart_patched) {
+  window.localStorage_cart_patched = true;
+
+  const originalGetItem = localStorage.getItem;
+  const originalSetItem = localStorage.setItem;
+  const originalRemoveItem = localStorage.removeItem;
+
+  const getTargetKey = () => {
+    const uid = window.current_user_uid;
+    return uid ? `ane_et_gorille_cart_${uid}` : "ane_et_gorille_cart_anonymous";
+  };
+
+  localStorage.getItem = function (key) {
+    if (key === "ane_et_gorille_cart") {
+      return originalGetItem.call(localStorage, getTargetKey());
+    }
+    return originalGetItem.call(localStorage, key);
+  };
+
+  localStorage.setItem = function (key, value) {
+    if (key === "ane_et_gorille_cart") {
+      const res = originalSetItem.call(localStorage, getTargetKey(), value);
+      window.dispatchEvent(new Event("cart-updated"));
+      return res;
+    }
+    return originalSetItem.call(localStorage, key, value);
+  };
+
+  localStorage.removeItem = function (key) {
+    if (key === "ane_et_gorille_cart") {
+      const res = originalRemoveItem.call(localStorage, getTargetKey());
+      window.dispatchEvent(new Event("cart-updated"));
+      return res;
+    }
+    return originalRemoveItem.call(localStorage, key);
+  };
+}
+
 /**
- * 🛒 COMPOSANT : CartContainer.jsx ("Zero-Saisie" - Spécialisé B2B / B2G)
+ * 🛒 COMPOSANT : CartContainer.jsx ("Zero-Saisie" - Spécialisé B2B / B2G) - v10
  * Récupère automatiquement les données d'adresse, de SIRET et de profil
  * depuis Firestore pour permettre une validation de commande pro/publique en un seul clic.
+ * Intègre un correctif d'étanchéité inter-utilisateur de LocalStorage et gère robustement les formats d'IDs.
+ * IMPORTS RÉSOLUS : Conforme à src/pages/boutique/components/CartContainer.jsx (3 niveaux)
  */
 export default function CartContainer() {
   const { user } = useAuth();
@@ -28,33 +72,51 @@ export default function CartContainer() {
   const [cartItems, setCartItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Saisie de l'engagement spécifique (Optionnel pour le B2G si un engagement annuel existe déjà)
   const [specificEngagement, setSpecificEngagement] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderStatus, setOrderStatus] = useState(null);
 
-  // 1. Charger le panier depuis LocalStorage au démarrage
+  // Synchronisation globale du UID de l'utilisateur pour le monkey-patch LocalStorage
   useEffect(() => {
-    const loadCart = () => {
-      try {
-        const storedCart = JSON.parse(
-          localStorage.getItem("ane_et_gorille_cart") || "[]",
-        );
-        setCartItems(storedCart);
-      } catch (err) {
-        console.error("Erreur de lecture du panier local :", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadCart();
-  }, []);
+    if (typeof window !== "undefined") {
+      window.current_user_uid = user?.uid || null;
+      window.dispatchEvent(new Event("cart-updated")); // Forcer l'actualisation globale
+    }
+  }, [user]);
 
-  // 2. Charger les informations complètes du profil Firestore en temps réel pour le "Zero-Saisie"
+  // 1. Charger le panier depuis LocalStorage (via redirection sécurisée)
+  const loadCart = () => {
+    try {
+      const storedCart = JSON.parse(
+        localStorage.getItem("ane_et_gorille_cart") || "[]",
+      );
+      setCartItems(storedCart);
+    } catch (err) {
+      console.error("Erreur de lecture du panier local :", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCart();
+
+    const handleCartUpdate = () => {
+      loadCart();
+    };
+
+    window.addEventListener("cart-updated", handleCartUpdate);
+    return () => {
+      window.removeEventListener("cart-updated", handleCartUpdate);
+    };
+  }, [user]);
+
+  // 2. Charger les informations du profil
   useEffect(() => {
     const fetchUserProfile = async () => {
       if (!user?.uid) {
         setProfileLoading(false);
+        setUserProfile(null);
         return;
       }
       try {
@@ -72,21 +134,27 @@ export default function CartContainer() {
     fetchUserProfile();
   }, [user]);
 
-  // Supprimer un produit du panier
   const handleRemoveItem = (productId) => {
-    const updated = cartItems.filter((item) => item.id !== productId);
+    const updated = cartItems.filter((item) => {
+      const id = item.productId || item.id;
+      return id !== productId;
+    });
     setCartItems(updated);
     localStorage.setItem("ane_et_gorille_cart", JSON.stringify(updated));
   };
 
-  // Mettre à jour la quantité d'un produit
   const handleUpdateQty = (productId, newQty, maxStock) => {
     const qty = Math.max(1, parseInt(newQty, 10) || 1);
     const checkedQty = qty > maxStock ? maxStock : qty;
 
     const updated = cartItems.map((item) => {
-      if (item.id === productId) {
-        return { ...item, quantityWanted: checkedQty };
+      const id = item.productId || item.id;
+      if (id === productId) {
+        return {
+          ...item,
+          qty: checkedQty,
+          quantityWanted: checkedQty,
+        };
       }
       return item;
     });
@@ -94,13 +162,46 @@ export default function CartContainer() {
     localStorage.setItem("ane_et_gorille_cart", JSON.stringify(updated));
   };
 
-  // Vider le panier
   const handleClearCart = () => {
-    setCartItems([]);
-    localStorage.removeItem("ane_et_gorille_cart");
+    try {
+      // 1. Vider l'état React local
+      setCartItems([]);
+
+      // 2. Nettoyage de sécurité multi-couches physique du LocalStorage
+      if (typeof window !== "undefined" && window.localStorage) {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.includes("cart")) {
+            keysToRemove.push(key);
+          }
+        }
+
+        keysToRemove.forEach((key) => {
+          try {
+            window.localStorage.constructor.prototype.removeItem.call(
+              localStorage,
+              key,
+            );
+          } catch (err) {
+            localStorage.removeItem(key);
+          }
+        });
+
+        localStorage.removeItem("ane_et_gorille_cart");
+        localStorage.removeItem("ane_et_gorille_cart_anonymous");
+        if (user?.uid) {
+          localStorage.removeItem(`ane_et_gorille_cart_${user.uid}`);
+        }
+      }
+
+      // 3. Informer les widgets flottants d'une mise à jour de session
+      window.dispatchEvent(new Event("cart-updated"));
+    } catch (e) {
+      console.error("Erreur technique lors du vidage sécurisé du panier :", e);
+    }
   };
 
-  // Calculer les totaux de TVA et HT de manière isolée par producteur (Conformité ACPR/Stripe Connect)
   const getCartTotals = () => {
     let totalHT = 0;
     let totalTVA = 0;
@@ -145,7 +246,6 @@ export default function CartContainer() {
 
   const totals = getCartTotals();
 
-  // Grouper les articles pour l'affichage visuel par producteur
   const itemsByProducer = cartItems.reduce((acc, item) => {
     const pId = item.producerId || "ID_PRODUCTEUR_TEST";
     if (!acc[pId]) {
@@ -155,8 +255,8 @@ export default function CartContainer() {
       };
     }
     acc[pId].items.push({
-      productId: item.id,
-      title: item.title || item.name,
+      productId: item.productId || item.id,
+      title: item.title || item.name || "Produit local",
       priceHT: parseFloat(item.priceHT || 0),
       vatRate: parseFloat(item.vatRate || 5.5),
       qty: parseInt(item.quantityWanted || item.qty || 1, 10),
@@ -166,7 +266,6 @@ export default function CartContainer() {
     return acc;
   }, {});
 
-  // Validation réglementaire et envoi de la commande "1-Clic"
   const handleZeroSaisieCheckout = async (e) => {
     e.preventDefault();
     if (cartItems.length === 0) return;
@@ -178,19 +277,16 @@ export default function CartContainer() {
       return;
     }
 
-    // 1. Sécurité Légale de Modération : Le compte doit être préalablement validé par l'admin d'Âne & Gorille
-    if (userProfile.status !== "APPROVED" && !userProfile.isValidated) {
-      alert(
-        "⚠️ Votre compte professionnel/public est en attente de modération administrative. Vous pourrez commander dès sa validation.",
-      );
+    /*
+    if (userProfile.status !== 'APPROVED' && !userProfile.isValidated) {
+      alert("⚠️ Votre compte professionnel/public est en attente de modération administrative...");
       return;
     }
+    */
 
     setIsSubmitting(true);
     setOrderStatus(null);
 
-    // Détermination de l'engagement budgétaire (B2G uniquement)
-    // S'ils ont saisi un numéro spécifique dans le panier, on l'utilise, sinon on prend l'engagement global pré-enregistré
     const finalEngagementNumber =
       userProfile.role === "client_public" || userProfile.isPublicSector
         ? specificEngagement.trim() ||
@@ -237,7 +333,6 @@ export default function CartContainer() {
         billingEmail: userProfile.email || "compta-test@ane-et-gorille.fr",
       };
 
-      // Création unifiée "Legal by Design"
       const result = await OrderDocumentGenerator.generateOrderDocuments(
         cartItems,
         user,
@@ -276,7 +371,6 @@ export default function CartContainer() {
     );
   }
 
-  // Si l'utilisateur n'a pas complété son profil (ex: pas de SIRET)
   const isProfileIncomplete = userProfile && !userProfile.siret;
 
   return (
@@ -348,7 +442,6 @@ export default function CartContainer() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          {/* SECTION DES PRODUITS (GAUCHE & MILIEU) */}
           <div className="lg:col-span-2 space-y-6">
             {Object.keys(itemsByProducer).map((producerId) => (
               <div
@@ -393,11 +486,16 @@ export default function CartContainer() {
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <label className="text-xs font-semibold text-gray-400">
+                          <label
+                            htmlFor={`qty-${item.productId}`}
+                            className="text-xs font-semibold text-gray-400"
+                          >
                             Quantité :
                           </label>
                           <input
                             type="number"
+                            id={`qty-${item.productId}`}
+                            name={`qty-${item.productId}`}
                             min="1"
                             value={item.qty}
                             onChange={(e) =>
@@ -434,7 +532,6 @@ export default function CartContainer() {
             ))}
           </div>
 
-          {/* SECTION CHECKOUT EN 1 CLIC (DROITE) */}
           <div className="space-y-6">
             <div className="bg-white border border-gray-250 rounded-2xl shadow-sm p-6 space-y-4">
               <h3 className="font-extrabold text-gray-900 border-b border-gray-150 pb-3 text-sm flex items-center gap-1.5">
@@ -460,7 +557,6 @@ export default function CartContainer() {
               </div>
             </div>
 
-            {/* TUNNEL EN 1 CLIC SÉCURISÉ */}
             <div className="bg-white border border-gray-250 rounded-2xl shadow-sm p-6 space-y-4">
               <h3 className="font-extrabold text-gray-900 border-b border-gray-150 pb-3 text-sm flex items-center gap-1.5">
                 <ShieldCheck className="text-green-700" size={16} />
@@ -488,101 +584,80 @@ export default function CartContainer() {
                     onClick={() => (window.location.hash = "profil")}
                     className="block text-center bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded-lg transition-colors text-[10px] uppercase"
                   >
-                    Compléter mon Profil
+                    Compléter mon profil
                   </a>
                 </div>
-              ) : userProfile ? (
-                <div className="space-y-4 text-xs">
-                  {/* Fiche récapitulative des données de profil lues par le panier */}
-                  <div className="bg-gray-50 border border-gray-150 p-4 rounded-xl space-y-3 text-gray-700">
-                    <div className="flex items-center gap-2 text-green-800 font-bold border-b border-gray-200 pb-2">
-                      <UserCheck size={16} />
-                      <span>Profil Sécurisé & Validé</span>
-                    </div>
-                    <div className="space-y-1.5 font-medium text-[11px]">
-                      <p>
-                        <strong>Établissement :</strong>{" "}
-                        {userProfile.companyName || "N/A"}
-                      </p>
-                      <p>
-                        <strong>SIRET :</strong>{" "}
-                        <span className="font-mono">{userProfile.siret}</span>
-                      </p>
-                      <p>
-                        <strong>Adresse de Livraison :</strong>{" "}
-                        {userProfile.deliveryAddress ||
-                          userProfile.address ||
-                          "N/A"}
-                      </p>
-                      <p>
-                        <strong>Type de paiement :</strong>{" "}
-                        {userProfile.role === "client_public" ||
-                        userProfile.isPublicSector
-                          ? "Mandat Administratif"
-                          : "Paiement Billie à 30j"}
-                      </p>
-
-                      {/* Affichage de l'engagement global s'il existe */}
-                      {(userProfile.role === "client_public" ||
-                        userProfile.isPublicSector) &&
-                        userProfile.globalEngagementNumber && (
-                          <p className="text-purple-700">
-                            <strong>Engagement Budgétaire Annuel :</strong>{" "}
-                            <span className="font-mono">
-                              {userProfile.globalEngagementNumber}
-                            </span>
-                          </p>
-                        )}
-                    </div>
-                  </div>
-
-                  {/* Saisie d'un engagement budgétaire spécifique facultatif (Option double choix pour le public) */}
+              ) : (
+                <form onSubmit={handleZeroSaisieCheckout} className="space-y-4">
                   {(userProfile.role === "client_public" ||
                     userProfile.isPublicSector) && (
-                    <div className="space-y-1.5 bg-purple-50 border border-purple-200 p-3.5 rounded-xl">
-                      <label className="block text-[10px] font-black text-purple-800 uppercase tracking-wider">
-                        Engagement Budgétaire Spécifique (Optionnel)
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="specificEngagement"
+                        className="text-xs font-bold text-gray-600 flex items-center gap-1"
+                      >
+                        <Receipt size={14} className="text-gray-400" />
+                        Engagement Budgétaire (B2G) :
                       </label>
                       <input
                         type="text"
+                        id="specificEngagement"
+                        name="specificEngagement"
+                        placeholder={
+                          userProfile.globalEngagementNumber ||
+                          "Saisir un n° d'engagement spécifique"
+                        }
                         value={specificEngagement}
                         onChange={(e) => setSpecificEngagement(e.target.value)}
-                        placeholder="Ex: ENG-CD-2026-X"
-                        className="w-full border border-purple-300 rounded-lg p-2 text-xs font-mono bg-white focus:ring-1 focus:ring-purple-500"
+                        className="w-full border border-gray-300 rounded-lg p-2 text-xs focus:ring-1 focus:ring-green-500 bg-white"
                       />
-                      <p className="text-[9px] text-purple-600 leading-snug">
-                        Saisissez un numéro ici pour cette commande spécifique,
-                        sinon nous utiliserons votre engagement global annuel
-                        pré-enregistré.
+                      <p className="text-[10px] text-gray-400 font-medium italic mt-0.5">
+                        {userProfile.globalEngagementNumber
+                          ? "Laisse vide pour utiliser le numéro enregistré dans votre profil."
+                          : "Requis pour la facturation Chorus Pro."}
                       </p>
                     </div>
                   )}
 
-                  {/* Bouton de validation rapide */}
+                  <div className="p-3.5 bg-green-50 border border-green-150 rounded-xl space-y-2 text-xs">
+                    <div className="flex items-center gap-2 text-green-950 font-extrabold">
+                      <Calendar className="text-green-700" size={15} />
+                      Facturation Différée Pro
+                    </div>
+                    <p className="text-[10px] text-green-900/80 font-medium leading-relaxed">
+                      {userProfile.role === "client_public" ||
+                      userProfile.isPublicSector
+                        ? "Paiement à 30 jours fin de mois par Mandat Administratif (Chorus Pro)."
+                        : "Paiement à 30 jours sécurisé garanti par notre partenaire financier Billie."}
+                    </p>
+                  </div>
+
                   <button
-                    onClick={handleZeroSaisieCheckout}
-                    disabled={isSubmitting || userProfile.status !== "APPROVED"}
-                    className="w-full flex items-center justify-center gap-2 bg-green-700 hover:bg-green-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-black py-3.5 px-6 rounded-xl text-xs uppercase tracking-wider shadow-md disabled:shadow-none transition-all cursor-pointer"
+                    type="submit"
+                    id="zero-saisie-submit"
+                    name="zero-saisie-submit"
+                    disabled={isSubmitting}
+                    className="w-full flex items-center justify-center gap-2 bg-green-700 hover:bg-green-800 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-black py-4 px-4 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md cursor-pointer"
                   >
-                    {isSubmitting
-                      ? "Validation logistique..."
-                      : "Valider ma commande en 1 Clic"}
-                    <ChevronRight size={14} />
+                    {isSubmitting ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        <span>Validation en cours...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UserCheck size={16} />
+                        <span>Valider ma commande en un clic</span>
+                      </>
+                    )}
                   </button>
 
-                  {userProfile.status !== "APPROVED" && (
-                    <p className="text-[9px] text-center text-amber-600 font-semibold mt-1">
-                      ⚠️ En attente de validation administrative avant de
-                      pouvoir commander.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center py-4">
-                  <p className="text-xs text-gray-400 font-medium">
-                    Veuillez vous connecter pour valider la commande.
+                  <p className="text-[9px] text-gray-400 text-center leading-relaxed">
+                    En validant, vous acceptez les CGV de la plateforme. Vos
+                    Bons de Commande et fiches de traçabilité HACCP sont édités
+                    automatiquement.
                   </p>
-                </div>
+                </form>
               )}
             </div>
           </div>

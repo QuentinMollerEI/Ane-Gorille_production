@@ -7,20 +7,66 @@ import {
   ShoppingBag,
   ArrowRight,
   ShieldCheck,
-  HelpCircle,
 } from "lucide-react";
+import { useAuth } from "../../../context/AuthContext";
+
+if (typeof window !== "undefined" && !window.localStorage_cart_patched) {
+  window.localStorage_cart_patched = true;
+
+  const originalGetItem = localStorage.getItem;
+  const originalSetItem = localStorage.setItem;
+  const originalRemoveItem = localStorage.removeItem;
+
+  const getTargetKey = () => {
+    const uid = window.current_user_uid;
+    return uid ? `ane_et_gorille_cart_${uid}` : "ane_et_gorille_cart_anonymous";
+  };
+
+  localStorage.getItem = function (key) {
+    if (key === "ane_et_gorille_cart") {
+      return originalGetItem.call(localStorage, getTargetKey());
+    }
+    return originalGetItem.call(localStorage, key);
+  };
+
+  localStorage.setItem = function (key, value) {
+    if (key === "ane_et_gorille_cart") {
+      const res = originalSetItem.call(localStorage, getTargetKey(), value);
+      window.dispatchEvent(new Event("cart-updated"));
+      return res;
+    }
+    return originalSetItem.call(localStorage, key, value);
+  };
+
+  localStorage.removeItem = function (key) {
+    if (key === "ane_et_gorille_cart") {
+      const res = originalRemoveItem.call(localStorage, getTargetKey());
+      window.dispatchEvent(new Event("cart-updated"));
+      return res;
+    }
+    return originalRemoveItem.call(localStorage, key);
+  };
+}
 
 /**
- * CartFloatingWidget - Bouton Panier Flottant Moderne et Pratique avec Sidebar Coulissante
- * Intègre un badge dynamique, une animation de "pulse" à l'ajout,
- * et un panneau latéral interactif de résumé avant passage à la caisse.
+ * CartFloatingWidget - Aperçu Rapide du Panier
+ * Tiroir latéral fluide permettant de consulter les articles ajoutés,
+ * d'ajuster les quantités ou de retirer des produits de proximité,
+ * avec un lien unique et propre menant au grand panier pour la validation sécurisée.
  */
 export default function CartFloatingWidget({ onOpenFullCart }) {
+  const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [cartItems, setCartItems] = useState([]);
   const [isPulsing, setIsPulsing] = useState(false);
 
-  // Charger le panier depuis LocalStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.current_user_uid = user?.uid || null;
+      window.dispatchEvent(new Event("cart-updated"));
+    }
+  }, [user]);
+
   const loadCart = () => {
     try {
       const storedCart = JSON.parse(
@@ -32,48 +78,37 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
     }
   };
 
-  // Écoute des changements de panier
   useEffect(() => {
     loadCart();
 
-    // Handler pour l'événement personnalisé d'ajout au panier
     const handleCartUpdate = () => {
       loadCart();
       setIsPulsing(true);
-      // Désactiver l'animation pulse après 1s
       const timer = setTimeout(() => setIsPulsing(false), 1000);
       return () => clearTimeout(timer);
     };
 
-    // Écoute globale sur la fenêtre (pour capter les ajouts depuis d'autres fenêtres/fiches produits)
     window.addEventListener("cart-updated", handleCartUpdate);
-    window.addEventListener("storage", loadCart); // Sync entre onglets si besoin
-
-    // Monkey-patch de localStorage.setItem pour s'assurer que notre propre onglet intercepte les modifs
-    const originalSetItem = localStorage.setItem;
-    localStorage.setItem = function (key, value) {
-      originalSetItem.apply(this, arguments);
-      if (key === "ane_et_gorille_cart") {
-        window.dispatchEvent(new Event("cart-updated"));
-      }
-    };
+    window.addEventListener("storage", loadCart);
 
     return () => {
       window.removeEventListener("cart-updated", handleCartUpdate);
       window.removeEventListener("storage", loadCart);
-      localStorage.setItem = originalSetItem;
     };
-  }, []);
+  }, [user]);
 
-  // Calcul du nombre total d'articles et du montant total
-  const totalItemsCount = cartItems.reduce(
-    (acc, item) => acc + (item.qty || 0),
-    0,
-  );
+  if (!user) {
+    return null;
+  }
+
+  const totalItemsCount = cartItems.reduce((acc, item) => {
+    const itemQty = parseInt(item.qty || item.quantityWanted || 0, 10);
+    return acc + itemQty;
+  }, 0);
 
   const totals = cartItems.reduce(
     (acc, item) => {
-      const qty = Number(item.qty || 1);
+      const qty = Number(item.qty || item.quantityWanted || 1);
       const priceHT = Number(item.priceHT || 0);
       const vatRate = Number(item.vatRate || 5.5);
 
@@ -89,41 +124,51 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
     { totalHT: 0, totalTVA: 0, totalTTC: 0 },
   );
 
-  // Regroupement par producteur pour affichage structuré (comme le panier officiel)
   const itemsByProducer = cartItems.reduce((acc, item) => {
     const producerName = item.producerName || "Producteur local";
     if (!acc[producerName]) {
       acc[producerName] = [];
     }
-    acc[producerName].push(item);
+    acc[producerName].push({
+      productId: item.productId || item.id,
+      title: item.title || item.name || "Produit local",
+      priceHT: parseFloat(item.priceHT || 0),
+      vatRate: parseFloat(item.vatRate || 5.5),
+      qty: parseInt(item.qty || item.quantityWanted || 1, 10),
+      unit: item.unit || "kg",
+      image: item.image || "",
+    });
     return acc;
   }, {});
 
-  // Mettre à jour la quantité directement depuis le widget
   const handleUpdateQty = (productId, newQty) => {
     const qty = parseInt(newQty, 10);
     if (isNaN(qty) || qty < 1) return;
 
     const updatedCart = cartItems.map((item) => {
-      if (item.productId === productId) {
-        return { ...item, qty };
+      const id = item.productId || item.id;
+      if (id === productId) {
+        return {
+          ...item,
+          qty,
+          quantityWanted: qty,
+        };
       }
       return item;
     });
     localStorage.setItem("ane_et_gorille_cart", JSON.stringify(updatedCart));
   };
 
-  // Supprimer un article depuis le widget
   const handleRemoveItem = (productId) => {
-    const updatedCart = cartItems.filter(
-      (item) => item.productId !== productId,
-    );
+    const updatedCart = cartItems.filter((item) => {
+      const id = item.productId || item.id;
+      return id !== productId;
+    });
     localStorage.setItem("ane_et_gorille_cart", JSON.stringify(updatedCart));
   };
 
   return (
     <>
-      {/* 1. BOUTON FLOTTANT SUSPENDU (Floating Action Button) */}
       <button
         onClick={() => setIsOpen(true)}
         className={`fixed bottom-6 right-6 z-50 flex items-center justify-center bg-green-700 hover:bg-green-800 text-white rounded-full p-4 shadow-2xl transition-all duration-300 hover:scale-110 active:scale-95 focus:outline-none focus:ring-4 focus:ring-green-300 ${
@@ -142,24 +187,20 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
         </div>
       </button>
 
-      {/* 2. SIDEBAR COULISSANTE (DRAWER / SLIDE-OVER) */}
       {isOpen && (
         <div className="fixed inset-0 z-55 overflow-hidden transition-all duration-300">
-          {/* Arrière-plan sombre translucide avec effet flou */}
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity duration-300"
             onClick={() => setIsOpen(false)}
           />
 
           <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
-            {/* Conteneur principal de la sidebar */}
             <div className="w-screen max-w-md bg-white shadow-2xl flex flex-col h-full transform transition-all duration-300 animate-slide-in">
-              {/* En-tête de la Sidebar */}
               <div className="px-6 py-5 bg-green-700 text-white flex items-center justify-between shadow-md">
                 <div className="flex items-center gap-2.5">
                   <ShoppingBag className="w-5 h-5 text-green-200" />
                   <h2 className="text-lg font-extrabold tracking-wide">
-                    Mon Panier Local
+                    Aperçu du Panier
                   </h2>
                 </div>
                 <button
@@ -170,7 +211,6 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
                 </button>
               </div>
 
-              {/* Corps de la Sidebar (Scrollable) */}
               <div className="flex-1 overflow-y-auto py-6 px-4 sm:px-6 space-y-6">
                 {cartItems.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-center py-12 space-y-4">
@@ -195,14 +235,12 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {/* Liste des produits groupés par Producteur */}
                     {Object.entries(itemsByProducer).map(
                       ([producerName, items]) => (
                         <div
                           key={producerName}
                           className="border border-gray-150 rounded-2xl overflow-hidden bg-gray-50/50"
                         >
-                          {/* En-tête Maraîcher */}
                           <div className="bg-gray-100 px-4 py-2.5 border-b border-gray-150 flex items-center gap-1.5">
                             <span className="text-xs">🧑‍🌾</span>
                             <span className="text-[10px] font-black uppercase text-gray-600 tracking-wider">
@@ -210,7 +248,6 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
                             </span>
                           </div>
 
-                          {/* Articles */}
                           <div className="divide-y divide-gray-150 bg-white">
                             {items.map((item) => {
                               const itemTTC =
@@ -232,10 +269,11 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
                                     </p>
                                   </div>
 
-                                  {/* Gestion quantité */}
                                   <div className="flex items-center gap-1 bg-gray-50 border rounded-lg p-1">
                                     <input
                                       type="number"
+                                      id={`qty-widget-${item.productId}`}
+                                      name={`qty-widget-${item.productId}`}
                                       min="1"
                                       value={item.qty}
                                       onChange={(e) =>
@@ -248,14 +286,12 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
                                     />
                                   </div>
 
-                                  {/* Prix total TTC de la ligne */}
                                   <div className="text-right min-w-[70px]">
                                     <span className="text-xs font-black text-green-700">
                                       {itemTTC.toFixed(2)} €
                                     </span>
                                   </div>
 
-                                  {/* Suppression */}
                                   <button
                                     onClick={() =>
                                       handleRemoveItem(item.productId)
@@ -276,10 +312,8 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
                 )}
               </div>
 
-              {/* Pied de la Sidebar (Si panier non vide) */}
               {cartItems.length > 0 && (
                 <div className="border-t border-gray-150 p-6 bg-gray-50 space-y-4">
-                  {/* Totaux financiers */}
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs text-gray-500 font-semibold">
                       <span>Total HT :</span>
@@ -297,45 +331,35 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
                     </div>
                   </div>
 
-                  {/* Sécurité */}
                   <div className="flex items-center gap-1.5 p-2 bg-green-50 border border-green-150 rounded-xl text-[9px] text-green-800 font-medium leading-relaxed">
                     <ShieldCheck className="text-green-700 w-4 h-4 flex-shrink-0" />
                     <span>
-                      Transactions sécurisées via Stripe Connect. Transfert
-                      direct garanti.
+                      Aperçu de commande de proximité. Récapitulatif comptable
+                      généré au panier.
                     </span>
                   </div>
 
-                  {/* Boutons d'Action */}
-                  <div className="grid grid-cols-1 gap-2 pt-1">
-                    {/* Aller au Panier Complet */}
+                  <div className="pt-1">
                     {onOpenFullCart ? (
                       <button
                         onClick={() => {
                           onOpenFullCart();
                           setIsOpen(false);
                         }}
-                        className="w-full flex items-center justify-center gap-1.5 border border-gray-300 hover:bg-gray-100 text-gray-700 font-bold py-3 px-4 rounded-xl text-xs transition-all"
+                        className="w-full flex items-center justify-center gap-2 bg-green-700 hover:bg-green-800 text-white font-black py-4 px-4 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md hover:shadow-lg text-center cursor-pointer"
                       >
-                        Voir & Modifier en grand
+                        <span>Voir & modifier mon panier</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
                       </button>
                     ) : (
                       <a
                         href="/cart"
-                        className="w-full flex items-center justify-center gap-1.5 border border-gray-300 hover:bg-gray-100 text-gray-700 font-bold py-3 px-4 rounded-xl text-xs text-center transition-all"
+                        className="w-full flex items-center justify-center gap-2 bg-green-700 hover:bg-green-800 text-white font-black py-4 px-4 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md hover:shadow-lg text-center"
                       >
-                        Voir & Modifier en grand
+                        <span>Voir & modifier mon panier</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
                       </a>
                     )}
-
-                    {/* Passer à la caisse (Checkout) */}
-                    <a
-                      href="/checkout"
-                      className="w-full flex items-center justify-center gap-2 bg-green-700 hover:bg-green-800 text-white font-black py-3.5 px-4 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md hover:shadow-lg text-center"
-                    >
-                      <span>Passer au paiement</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </a>
                   </div>
                 </div>
               )}
@@ -344,7 +368,6 @@ export default function CartFloatingWidget({ onOpenFullCart }) {
         </div>
       )}
 
-      {/* Ajout des styles CSS d'animation nécessaires directement */}
       <style>{`
         @keyframes slideIn {
           from { transform: translateX(100%); }

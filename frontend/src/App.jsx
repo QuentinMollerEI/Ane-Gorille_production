@@ -18,6 +18,7 @@ import ShopContainer from "./components/ShopContainer";
 import Workspace from "./components/Workspace";
 import Login from "./components/auth/Login";
 import Register from "./components/auth/Register";
+import CartContainer from "./pages/boutique/components/CartContainer";
 
 // 🛒 IMPORT DU PANIER FLOTTANT MODERNE
 // (Note : Ajustez légèrement le chemin relatif si votre fichier App.jsx n'est pas à la racine de /src)
@@ -68,6 +69,7 @@ export default function App() {
               <Route path="/" element={<PublicHome />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/cart" element={<CartContainer />} />
 
               {/* Route Privée Connectée */}
               <Route

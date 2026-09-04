@@ -1,154 +1,186 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { auth, db } from '../config/firebase';
+import React, { createContext, useContext, useState, useEffect } from "react";
 import {
-  createUserWithEmailAndPassword,
+  getAuth,
+  onAuthStateChanged,
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut,
-  onAuthStateChanged
-} from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+  updateProfile,
+} from "firebase/auth";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "../services/firestore.service.js";
 
+// 1. CRÉATION DU CONTEXTE D'AUTHENTIFICATION
 const AuthContext = createContext(null);
 
+const auth = getAuth();
+
+/**
+ * 🛡️ PROVIDER : AuthContext-v2.jsx (Hautement Résilient)
+ * Résout définitivement la condition de course (Race Condition) qui bloquait l'utilisateur sur la page de login
+ * en synchronisant atomiquement l'état 'user' et 'loading' lors du chargement de Firestore.
+ */
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Écouteur passif de l'état d'authentification
+  // Écoute de l'état d'authentification en temps réel
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // Si l'utilisateur est détecté, on force le chargement à "true" pendant l'interrogation de Firestore
-        setLoading(true);
-        try {
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
+      // 1. Dès que Firebase Auth signale un changement, on passe en chargement actif
+      setLoading(true);
 
-          if (userDoc.exists()) {
+      if (firebaseUser) {
+        try {
+          const docRef = doc(db, "users", firebaseUser.uid);
+          const docSnap = await getDoc(docRef);
+
+          if (docSnap.exists()) {
+            const firestoreData = docSnap.data();
+
+            // 🛡️ RECTIFICATION CRUCIALE : On injecte de force l'UID d'authentification
             setUser({
               uid: firebaseUser.uid,
               email: firebaseUser.email,
-              displayName: userDoc.data().displayName,
-              role: userDoc.data().role,
-              profileComplete: userDoc.data().profileComplete || false,
-              complianceDocs: userDoc.data().complianceDocs || {},
+              displayName:
+                firebaseUser.displayName ||
+                firestoreData.displayName ||
+                `${firestoreData.firstName || ""} ${firestoreData.lastName || ""}`.trim(),
+              ...firestoreData,
             });
           } else {
-            // Évite d'écraser un état d'inscription en cours d'écriture
-            setUser(prev => prev || {
+            setUser({
               uid: firebaseUser.uid,
               email: firebaseUser.email,
-              role: 'acheteur',
-              profileComplete: false,
+              displayName: firebaseUser.displayName || "Utilisateur",
+              role: "acheteur",
             });
           }
-        } catch (err) {
-          console.error("Erreur de récupération du profil Firestore :", err);
+        } catch (error) {
+          console.error("Erreur de récupération du profil Firestore :", error);
+          setUser(firebaseUser); // Fallback de secours
         }
       } else {
         setUser(null);
+        if (typeof window !== "undefined") {
+          window.current_user_uid = null;
+        }
       }
+
+      // 2. On désactive le chargement UNIQUEMENT quand le profil Firestore ET le UID sont entièrement chargés et définis
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Inscription sécurisée : On écrit sur Firestore AVANT de libérer l'état de chargement
-  const register = async (email, password, displayName, role) => {
-    setLoading(true);
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const firebaseUser = userCredential.user;
+  // Inscription (Sign Up)
+  const signup = async (email, password, additionalData = {}) => {
+    try {
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        email,
+        password,
+      );
+      const newUser = userCredential.user;
 
-    const profileData = {
-      displayName,
-      email,
-      role,
-      profileComplete: false,
-      complianceDocs: {},
-      createdAt: new Date().toISOString()
-    };
+      const fullName =
+        `${additionalData.firstName || ""} ${additionalData.lastName || ""}`.trim();
+      if (fullName) {
+        await updateProfile(newUser, { displayName: fullName });
+      }
 
-    // 1. Écriture immédiate dans Firestore
-    await setDoc(doc(db, 'users', firebaseUser.uid), profileData);
+      const role = additionalData.role || "acheteur";
+      const status =
+        role === "producteur" ||
+        role === "client_pro" ||
+        role === "client_public"
+          ? "PENDING"
+          : "APPROVED";
 
-    // 2. Déclaration synchrone de l'état pour bloquer le fallback de onAuthStateChanged
-    setUser({
-      uid: firebaseUser.uid,
-      email: firebaseUser.email,
-      displayName,
-      role,
-      profileComplete: false,
-      complianceDocs: {},
-    });
+      const userProfile = {
+        firstName: additionalData.firstName || "",
+        lastName: additionalData.lastName || "",
+        displayName:
+          fullName || additionalData.displayName || email.split("@")[0],
+        email: email,
+        role: role,
+        status: status,
+        isValidated: status === "APPROVED",
+        siret: additionalData.siret || null,
+        companyName:
+          additionalData.companyName || additionalData.nomExploitation || null,
+        address: additionalData.address || "",
+        deliveryAddress:
+          additionalData.deliveryAddress || additionalData.address || "",
+        createdAt: serverTimestamp(),
+      };
 
-    setLoading(false);
-    return firebaseUser;
-  };
+      await setDoc(doc(db, "users", newUser.uid), userProfile);
 
-  // Connexion sécurisée : On attend d'avoir le rôle Firestore avant de résoudre la promesse
-  const login = async (email, password) => {
-    setLoading(true);
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const firebaseUser = userCredential.user;
-
-    const userDocRef = doc(db, 'users', firebaseUser.uid);
-    const userDoc = await getDoc(userDocRef);
-
-    if (userDoc.exists()) {
       setUser({
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        displayName: userDoc.data().displayName,
-        role: userDoc.data().role,
-        profileComplete: userDoc.data().profileComplete || false,
-        complianceDocs: userDoc.data().complianceDocs || {},
+        uid: newUser.uid,
+        ...userProfile,
       });
+
+      return newUser;
+    } catch (error) {
+      console.error("Erreur lors de l'inscription :", error);
+      throw error;
     }
-
-    setLoading(false);
-    return firebaseUser;
   };
 
-  // Méthode pour finaliser l'étape 2 (Profil complet)
-  const completeProfile = async (additionalData, docLinks) => {
-    if (!user) return;
-    setLoading(true);
-
-    const userDocRef = doc(db, 'users', user.uid);
-    const updateData = {
-      ...additionalData,
-      complianceDocs: docLinks,
-      profileComplete: true,
-    };
-
-    await updateDoc(userDocRef, updateData);
-
-    // Mise à jour de l'état local pour refléter instantanément la validation du compte
-    setUser(prev => ({
-      ...prev,
-      ...additionalData,
-      complianceDocs: docLinks,
-      profileComplete: true,
-    }));
-
-    setLoading(false);
+  // Connexion (Sign In) - 🛡️ SÉCURISÉ : On ne touche PAS au loading ici pour éviter la condition de course
+  const login = async (email, password) => {
+    try {
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password,
+      );
+      return userCredential.user;
+    } catch (error) {
+      console.error("Erreur lors de la connexion :", error);
+      throw error;
+    }
   };
 
-  const logout = () => {
-    setUser(null);
-    return signOut(auth);
+  // Déconnexion (Sign Out)
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      if (typeof window !== "undefined") {
+        window.current_user_uid = null;
+        window.dispatchEvent(new Event("cart-updated"));
+      }
+    } catch (error) {
+      console.error("Erreur lors de la déconnexion :", error);
+      throw error;
+    }
+  };
+
+  const value = {
+    user,
+    loading,
+    login,
+    signup,
+    logout,
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, completeProfile }}>
-      {children}
+    <AuthContext.Provider value={value}>
+      {!loading && children}
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) throw new Error("useAuth doit être entouré par un AuthProvider");
+  if (!context) {
+    throw new Error(
+      "useAuth() doit être utilisé à l'intérieur de <AuthProvider />",
+    );
+  }
   return context;
 }
