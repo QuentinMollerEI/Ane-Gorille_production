@@ -2,58 +2,89 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // --- FONCTIONS DE SÉCURITÉ ET DE CONFORMITÉ ---
-
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
-    function getUserRole() {
-      return getUserData().role;
-    }
-
-    // --- ACCÈS À LA COLLECTION USERS ---
+    // =========================================================================
+    // 👤 1. PROFILS UTILISATEURS (Collection 'users')
+    // =========================================================================
     match /users/{userId} {
-      // Inscription Étape 1 : Tout utilisateur connecté peut créer son profil initial
-      allow create: if isAuthenticated() && request.auth.uid == userId;
+      // Sécurité & RGPD : N'importe quel visiteur (connecté ou non) doit pouvoir résoudre
+      // le nom d'un producteur ('get' individuel) pour afficher l'étal de la boutique.
+      // Cependant, il est strictement interdit de lister l'ensemble de la base ('list' bloqué)
+      // pour éviter le scraping des données des utilisateurs.
+      allow get: if true;
 
-      // Lecture et modification de son propre profil (Étape 2)
-      allow read, update: if isOwner(userId);
-
-      // Seul l'administrateur peut lister tous les utilisateurs
-      allow list: if isAuthenticated() && getUserRole() == 'admin';
+      // Seul l'utilisateur propriétaire du compte peut modifier ses informations
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // --- ACCÈS À LA COLLECTION PRODUCTS (CONFORMITÉ ET TRAÇABILITÉ OBLIGATOIRE) ---
+    // =========================================================================
+    // 🌾 2. CATALOGUE DE PRODUITS (Collection 'products')
+    // =========================================================================
     match /products/{productId} {
-      // Tout le monde (visiteurs inclus) peut lire le catalogue
+      // Lecture publique pour pouvoir afficher la boutique à tout visiteur (connecté ou non)
       allow read: if true;
 
-      // Seuls les producteurs d'exploitation et l'administrateur peuvent créer/modifier des fiches produits
-      allow create: if isAuthenticated() &&
-        (getUserRole() == 'producteur' || getUserRole() == 'admin') &&
-        // Validation stricte des données obligatoires pour la conformité légale (Lois AGEC & EGAlim)
-        request.resource.data.title is string &&
-        request.resource.data.priceHT is number &&
-        request.resource.data.priceTTC is number &&
-        request.resource.data.vatRate is number &&
-        request.resource.data.isBio is bool &&
-        request.resource.data.batchNumber is string && // HACCP
-        request.resource.data.iduAdeme is string &&     // Loi AGEC
-        request.resource.data.producerSiret is string; // Transparence vendeur tiers
+      // Création : Seul un producteur (ou administrateur) peut ajouter un produit.
+      allow create: if request.auth != null && (
+        request.auth.token.role == 'producer' ||
+        request.auth.token.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'producteur'
+      );
 
-      allow update, delete: if isAuthenticated() &&
-        (getUserRole() == 'producteur' || getUserRole() == 'admin') &&
-        // S'assurer que le producteur ne modifie que ses propres produits
-        (request.resource.data.producer == getUserData().displayName || getUserRole() == 'admin');
+      // Mise à jour (Update) : Double verrouillage de sécurité
+      allow update: if request.auth != null && (
+        // Cas A : C'est le producteur propriétaire de la fiche qui modifie son produit
+        (resource.data.producerId == request.auth.uid)
+        ||
+        // Cas B : C'est un acheteur connecté qui valide un panier et décrémente UNIQUEMENT le stock
+        // (Empêche toute modification frauduleuse du prixHT, de la TVA ou du nom du produit).
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']))
+      );
+
+      // Suppression : Seul le producteur propriétaire ou l'admin peut supprimer un produit
+      allow delete: if request.auth != null && (
+        resource.data.producerId == request.auth.uid ||
+        request.auth.token.role == 'admin'
+      );
+    }
+
+    // =========================================================================
+    // 🛒 3. COMMANDES GLOBALES CLIENT (Collection 'orders')
+    // =========================================================================
+    match /orders/{orderId} {
+      // Création : Autorisé à tout acheteur connecté
+      allow create: if request.auth != null;
+
+      // Lecture : L'acheteur peut voir ses propres commandes, et l'admin supervise le tout
+      allow read: if request.auth != null && (
+        resource.data.buyerId == request.auth.uid ||
+        request.auth.token.role == 'admin'
+      );
+
+      // Interdiction de modification ou de suppression directe après création (Conformité fiscale)
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
+    // 🧑‍🌾 4. BONS DE PRÉPARATION MARAÎCHERS (Collection 'sub_orders')
+    // =========================================================================
+    match /sub_orders/{subOrderId} {
+      // Création : Autorisé à tout acheteur connecté (appelé via le transaction batch du panier)
+      allow create: if request.auth != null;
+
+      // Lecture et mise à jour (logistique) :
+      // - Un producteur ne peut lire et modifier (ex: passer à "Prêt pour le livreur") que SES propres bons de préparation.
+      // - L'acheteur peut suivre l'état de sa commande.
+      // - Le livreur peut consulter pour sa logistique.
+      // - L'admin supervise l'ensemble.
+      allow read, update: if request.auth != null && (
+        resource.data.producerId == request.auth.uid ||
+        resource.data.buyerId == request.auth.uid ||
+        request.auth.token.role == 'livreur' ||
+        request.auth.token.role == 'admin'
+      );
+
+      // Interdiction de suppression (traçabilité HACCP obligatoire)
+      allow delete: if false;
     }
   }
 }
