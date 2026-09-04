@@ -4,13 +4,11 @@ import { Wrench } from "lucide-react";
 
 // 1. IMPORTS DES VUES ACTIVES
 import ShopContainer from "./ShopContainer";
-// Import du composant MiseEnRayon que nous avons déjà créé
 import MiseEnRayon from "../pages/MiseEnRayon/MiseEnRayon";
+import OrderPreparation from "../pages/Preparation/OrderPreparation";
+import MyProfile from "../pages/Profil/MyProfile"; // 👈 IMPORT DE L'ONGLET PROFIL DYNAMIQUE
 
-// (ArchiveComptabilite reste commenté tant que son dossier /src/pages/Comptabilite/ n'est pas créé)
-// import ArchiveComptabilite from '../pages/Comptabilite/ArchiveComptabilite';
-
-// 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non créés)
+// 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non encore intégrés)
 const TabPlaceholder = ({ title, description }) => (
   <div className="bg-white p-10 rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center space-y-4 animate-fade-in">
     <div className="p-4 bg-gray-50 text-gray-400 rounded-full">
@@ -24,11 +22,12 @@ const TabPlaceholder = ({ title, description }) => (
   </div>
 );
 
-// 3. ROUTEUR DE L'ESPACE DE TRAVAIL
+// 3. ROUTEUR DYNAMIQUE DE L'ESPACE DE TRAVAIL (Workspace)
 export default function Workspace({ activeTab }) {
   const { user } = useAuth();
   const role = user?.role || "acheteur";
 
+  // --- RENDU 1 : ONGLET ACHETEUR (PARTICULIER OU ÉTABLISSEMENT PUBLIC) ---
   if (role === "acheteur") {
     switch (activeTab) {
       case "boutique":
@@ -37,126 +36,151 @@ export default function Workspace({ activeTab }) {
         return (
           <TabPlaceholder
             title="Suivi des commandes"
-            description="Historique de vos achats en préparation."
+            description="Historique de vos achats en cours de préparation."
           />
         );
       case "compta":
         return (
           <TabPlaceholder
-            title="Pièces comptables"
-            description="Téléchargement des factures Chorus Pro."
+            title="Pièces comptables & Chorus Pro"
+            description="Téléchargement des factures certifiées et dépôts institutionnels."
           />
         );
       case "stats":
         return (
           <TabPlaceholder
-            title="Statistiques"
-            description="Volume de légumes bio consommés."
+            title="Statistiques d'achat"
+            description="Consultez votre volume de légumes et fruits bio consommés à l'année."
           />
         );
+      case "profil":
+        return <MyProfile />; // 👈 REND LE COMPOSANT DYNAMIQUE DE PROFIL
       default:
-        return (
-          <TabPlaceholder
-            title="Profil Acheteur"
-            description="Vos informations de compte."
-          />
-        );
+        return <ShopContainer />;
     }
   }
 
+  // --- RENDU 2 : ONGLET PRODUCTEUR (MARAÎCHER) ---
   if (role === "producteur") {
     switch (activeTab) {
       case "rayon":
-        // Affiche désormais le vrai composant avec la sidebar et les compartiments
+        // Onglet Mise en Rayon modulaire (Saisie manuelle, Import CSV, Grille de Stocks)
         return <MiseEnRayon />;
       case "preparation":
-        return (
-          <TabPlaceholder
-            title="Préparation"
-            description="Bons de préparation à récolter."
-          />
-        );
+        // Onglet Préparation modulaire connecté en temps réel (HACCP & Impression Bons de Préparation)
+        return <OrderPreparation />;
       case "haccp":
         return (
           <TabPlaceholder
-            title="Suivi Sanitaire"
-            description="Relevés de chambre froide."
+            title="Suivi Sanitaire & HACCP"
+            description="Suivi des relevés de température et protocoles de nettoyage en hangar."
           />
         );
       case "compta":
         return (
           <TabPlaceholder
-            title="Archive & Comptabilité"
-            description="Suivi des virements Stripe."
+            title="Historique Comptable & Ventes"
+            description="Suivi de vos versements et de votre solde séquestre Stripe Connect."
           />
         );
-      default:
+      case "docs":
         return (
           <TabPlaceholder
-            title="Profil Producteur"
-            description="Paramètres de l'exploitation."
+            title="Certifications d'Exploitation"
+            description="Téléversez et gérez vos labels (AB, HVE, Ecocert) pour la conformité EGAlim."
           />
         );
+      case "profil":
+        return <MyProfile />; // 👈 REND LE COMPOSANT DYNAMIQUE DE PROFIL
+      default:
+        return <MiseEnRayon />;
     }
   }
 
+  // --- RENDU 3 : ONGLET LIVREUR ---
   if (role === "livreur") {
     switch (activeTab) {
       case "planification":
         return (
           <TabPlaceholder
-            title="Planification"
-            description="Tournées du jour."
+            title="Planification des tournées"
+            description="Visualisez votre feuille de route et les points de retrait programmés."
           />
         );
       case "livraison":
         return (
-          <TabPlaceholder title="Émargement" description="Bons de livraison." />
+          <TabPlaceholder
+            title="Émargement & Bons de livraison"
+            description="Gérez la validation et la signature numérique des livraisons sur site."
+          />
         );
       case "haccp":
         return (
           <TabPlaceholder
-            title="Chaîne du froid"
-            description="Relevés de température transport."
+            title="Contrôle Chaîne du Froid"
+            description="Saisie des relevés obligatoires de température lors du transport."
           />
         );
-      default:
+      case "compta":
         return (
           <TabPlaceholder
-            title="Profil Transporteur"
-            description="Licences DREAL."
+            title="Relevés de prestations"
+            description="Historique de vos facturations logistiques et frais de route."
           />
         );
+      case "dreal":
+        return (
+          <TabPlaceholder
+            title="Conformité DREAL"
+            description="Vérification de vos licences de transport et assurances de fret."
+          />
+        );
+      case "profil":
+        return <MyProfile />; // 👈 REND LE COMPOSANT DYNAMIQUE DE PROFIL
+      default:
+        return <MyProfile />;
     }
   }
 
+  // --- RENDU 4 : ONGLET ADMINISTRATEUR ---
   if (role === "admin") {
     switch (activeTab) {
       case "fiscal":
         return (
           <TabPlaceholder
             title="Surveillance Fiscale"
-            description="Contrôle des flux Stripe et Chorus Pro."
+            description="Contrôle des flux financiers, Chorus Pro et conformité LME."
           />
         );
       case "haccp":
         return (
           <TabPlaceholder
-            title="Alertes Sanitaires"
-            description="Anomalies de la chaîne du froid."
+            title="Centre d'Alertes Sanitaires"
+            description="Surveillance en temps réel des ruptures de la chaîne du froid."
           />
         );
+      case "moderation":
+        return (
+          <TabPlaceholder
+            title="Modération du Catalogue"
+            description="Validation des fiches produits et contrôle des prix de la marketplace."
+          />
+        );
+      case "assistance":
       default:
         return (
           <TabPlaceholder
-            title="Modération"
-            description="Tickets d'assistance et catalogue."
+            title="Support & Assistance"
+            description="Gestion des tickets d'assistance et support utilisateurs."
           />
         );
     }
   }
 
+  // SECURITE DE SECOURS
   return (
-    <div className="text-center py-20 text-gray-400">Onglet introuvable.</div>
+    <div className="text-center py-20 text-gray-400 italic">
+      Veuillez sélectionner un onglet valide dans la barre de navigation.
+    </div>
   );
 }

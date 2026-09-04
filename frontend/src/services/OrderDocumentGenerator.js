@@ -1,4 +1,3 @@
-import { db } from "../../../services/firestore.service.js";
 import {
   collection,
   doc,
@@ -6,218 +5,199 @@ import {
   serverTimestamp,
   increment,
 } from "firebase/firestore";
+import { db } from "./firestore.service.js";
 
 /**
- * Service de gestion des commandes "Legal by Design"
- * Gère la découpe atomique des paniers multi-producteurs en sous-commandes (Bons de Préparation)
- * et met à jour les stocks dans Firestore de manière sécurisée.
+ * 💼 SERVICE : OrderDocumentGenerator.js ("Legal by Design")
+ * Centralise la création atomique des Commandes (collection 'orders') et
+ * des Bons de Préparation Multi-Producteurs (collection 'sub_orders') dans Firestore.
+ *
+ * Il réalise également la décrémentation atomique des stocks des produits vendus.
+ * Toutes ces opérations sont groupées dans un unique Transaction/Batch Firestore pour garantir
+ * qu'en cas de panne, aucune donnée incohérente ou orpheline ne soit créée.
  */
 export const OrderDocumentGenerator = {
   /**
-   * Crée la commande globale et les bons de préparation producteurs associés
-   * @param {Array} cartItems - Liste des articles dans le panier
-   * @param {Object} currentUser - Utilisateur connecté (Acheteur)
-   * @param {Object} checkoutData - Données du formulaire (Adresse, SIRET, Engagement public...)
-   * @param {String} paymentMethod - 'stripe' (B2C), 'billie' (B2B) ou 'mandat' (B2G)
-   * @param {Object} paymentResult - Métadonnées retournées par Stripe ou Billie (ex: paymentIntentId)
+   * Génère les documents comptables et logistiques à la validation du panier.
+   *
+   * @param {Array} cartItems - Les articles présents dans le panier
+   * @param {Object} user - L'utilisateur connecté (peut être null en mode invité)
+   * @param {Object} checkoutData - Informations complémentaires saisies (adresse, SIRET, N° engagement)
+   * @param {String} paymentMethod - Méthode de paiement ('stripe' | 'billie' | 'mandat_public')
+   * @param {Object} paymentResult - Métadonnées associées de l'interfaçage financier
+   * @returns {Object} Un objet contenant l'ID de la commande générée
    */
-  async generateOrderDocuments(
+  generateOrderDocuments: async (
     cartItems,
-    currentUser,
+    user,
     checkoutData,
     paymentMethod,
-    paymentResult = {},
-  ) {
+    paymentResult,
+  ) => {
     if (!cartItems || cartItems.length === 0) {
       throw new Error("Le panier est vide. Impossible de générer la commande.");
     }
 
+    // 1. Initialisation du Batch Firestore pour une écriture atomique
     const batch = writeBatch(db);
-    const orderId = doc(collection(db, "orders")).id;
-    const globalOrderRef = doc(db, "orders", orderId);
 
-    // 1. Regroupement des articles par producteur pour les Bons de Préparation
-    const itemsByProducer = cartItems.reduce((acc, item) => {
-      const pId = item.producerId || "ID_PRODUCTEUR_TEST";
-      if (!acc[pId]) {
-        acc[pId] = {
-          producerId: pId,
-          producerName: item.producerName || "Producteur local",
-          items: [],
-          totalHT: 0,
-          totalTTC: 0,
-          totalVAT: 0,
-        };
-      }
+    // 2. Préparation des références et génération des IDs uniques
+    const ordersCollection = collection(db, "orders");
+    const subOrdersCollection = collection(db, "sub_orders");
 
-      const qty = parseInt(item.quantityWanted || 1, 10);
-      const priceHT = parseFloat(item.priceHT || 0);
-      const vatRate = parseFloat(item.vatRate || 5.5);
+    const orderDocRef = doc(ordersCollection);
+    const globalOrderId = orderDocRef.id;
+    const humanReadableOrderId =
+      "CMD-" + globalOrderId.substring(0, 8).toUpperCase();
+
+    // 3. Calculs financiers isolés et groupement par Producteur
+    let totalHT = 0;
+    let totalTVA = 0;
+    let totalTTC = 0;
+    const producersMap = {};
+
+    cartItems.forEach((item) => {
+      const qty = parseInt(item.quantityWanted || item.qty || 1, 10);
+      const priceHT = parseFloat(item.priceHT || item.price || 0);
+      const vatRate = parseFloat(item.vatRate || item.vat || 5.5);
 
       const itemHT = priceHT * qty;
       const itemVAT = itemHT * (vatRate / 100);
       const itemTTC = itemHT + itemVAT;
 
-      acc[pId].items.push({
+      totalHT += itemHT;
+      totalTVA += itemVAT;
+      totalTTC += itemTTC;
+
+      // Isolation par producteur
+      const producerId = item.producerId || "ID_PRODUCTEUR_TEST";
+      const producerName =
+        item.producerName || item.producer || "Producteur local";
+
+      if (!producersMap[producerId]) {
+        producersMap[producerId] = {
+          producerId,
+          producerName,
+          items: [],
+          totalHT: 0,
+          totalTVA: 0,
+          totalTTC: 0,
+        };
+      }
+
+      producersMap[producerId].items.push({
         productId: item.id,
-        name: item.title || item.name,
-        category: item.category || "Légumes",
+        name: item.title || item.name || "Produit sans nom",
         quantity: qty,
         unit: item.unit || "kg",
         priceHT: priceHT,
         vatRate: vatRate,
-        priceTTC: priceHT * (1 + vatRate / 100),
-        // Données légales de traçabilité HACCP et loi AGEC
-        batchNumber: item.batchNumber || "N/A",
-        harvestDate: item.harvestDate || "N/A",
-        iduAdeme: item.iduAdeme || "N/A",
-        origin: item.origin || "France",
-        department: item.department || "N/A",
-        distanceKm: parseInt(item.distanceKm || 0, 10),
+        batchNumber: item.batchNumber || "", // Sera renseigné plus tard par le producteur pour le HACCP
       });
 
-      acc[pId].totalHT += itemHT;
-      acc[pId].totalVAT += itemVAT;
-      acc[pId].totalTTC += itemTTC;
-
-      return acc;
-    }, {});
-
-    // Calculs globaux pour l'acheteur (Facturation globale)
-    let globalTotalHT = 0;
-    let globalTotalVAT = 0;
-    let globalTotalTTC = 0;
-
-    Object.values(itemsByProducer).forEach((p) => {
-      globalTotalHT += p.totalHT;
-      globalTotalVAT += p.totalVAT;
-      globalTotalTTC += p.totalTTC;
+      producersMap[producerId].totalHT += itemHT;
+      producersMap[producerId].totalTVA += itemVAT;
+      producersMap[producerId].totalTTC += itemTTC;
     });
 
-    // 2. Préparation du document Commande Globale (Bon de Commande Client)
+    // 4. Construction de la Commande Globale (orders)
     const globalOrderData = {
-      orderId: orderId,
+      id: globalOrderId,
+      orderId: humanReadableOrderId,
+      buyerId: user?.uid || "GUEST",
+      buyerName: checkoutData.billingName || "Client Professionnel",
+      buyerEmail: checkoutData.billingEmail || "client@ane-et-gorille.fr",
+      buyerProfile: checkoutData.buyerProfile || "B2B",
+      siretBuyer: checkoutData.siretBuyer || checkoutData.siret || null,
+      engagementNumber: checkoutData.engagementNumber || null,
+      deliveryAddress:
+        checkoutData.deliveryAddress ||
+        "Livraison standard boutique de retrait",
+      paymentMethod: paymentMethod,
+      paymentStatus: paymentMethod === "stripe" ? "PAID" : "A_ECHEANCE", // Billie et Mandats sont payés après service fait
+      paymentDetails: paymentResult || null,
+      totalHT: Number(totalHT.toFixed(2)),
+      totalTVA: Number(totalTVA.toFixed(2)),
+      totalTTC: Number(totalTTC.toFixed(2)),
+      status: "A_PREPARER", // S'active directement pour que la logistique démarre
       createdAt: serverTimestamp(),
-      buyerId: currentUser?.uid || "INVITE_TEST",
-      buyerName:
-        currentUser?.displayName || checkoutData.billingName || "Client local",
-      buyerEmail: currentUser?.email || checkoutData.billingEmail || "",
-      buyerProfile: checkoutData.buyerProfile || "B2C", // B2C, B2B, B2G
-      deliveryAddress: checkoutData.deliveryAddress || "",
-
-      // Totaux financiers agrégés
-      totalHT: parseFloat(globalTotalHT.toFixed(2)),
-      totalVAT: parseFloat(globalTotalVAT.toFixed(2)),
-      totalTTC: parseFloat(globalTotalTTC.toFixed(2)),
-
-      // Ventilation des taxes par taux pour conformité comptable
-      vatBreakdown: this._calculateVatBreakdown(cartItems),
-
-      // Informations de paiement réglementaires
-      payment: {
-        method: paymentMethod, // 'stripe', 'billie', 'mandat_public'
-        status:
-          paymentMethod === "mandat_public" ? "A_FACTURE_CHORUS" : "COMPLETE",
-        stripePaymentIntentId: paymentResult.stripePaymentIntentId || null,
-        billieInvoiceReference: paymentResult.billieInvoiceReference || null,
-        publicEngagementNumber: checkoutData.engagementNumber || null, // Requis Chorus Pro (B2G)
-        siretBuyer: checkoutData.siretBuyer || null, // Requis B2B / B2G
-      },
-
-      // Liste de tous les produits commandés (synthèse)
       items: cartItems.map((item) => ({
         productId: item.id,
-        name: item.title || item.name,
-        quantity: parseInt(item.quantityWanted || 1, 10),
+        title: item.title || item.name || "Produit sans nom",
+        priceHT: parseFloat(item.priceHT || item.price || 0),
+        vatRate: parseFloat(item.vatRate || item.vat || 5.5),
+        qty: parseInt(item.quantityWanted || item.qty || 1, 10),
         unit: item.unit || "kg",
-        priceHT: parseFloat(item.priceHT || 0),
-        vatRate: parseFloat(item.vatRate || 5.5),
-        producerName: item.producerName || "Producteur local",
+        producerId: item.producerId || "ID_PRODUCTEUR_TEST",
+        producerName: item.producerName || item.producer || "Producteur local",
       })),
     };
 
-    // Enregistrement de la commande globale
-    batch.set(globalOrderRef, globalOrderData);
+    // Ajout de la commande globale au batch
+    batch.set(orderDocRef, globalOrderData);
 
-    // 3. Génération des sous-commandes (Bons de Préparation Producteurs)
-    Object.values(itemsByProducer).forEach((prodOrder) => {
-      const subOrderId = doc(collection(db, "sub_orders")).id;
-      const subOrderRef = doc(db, "sub_orders", subOrderId);
+    // 5. Construction de chaque Bon de Préparation Maraîcher (sub_orders)
+    Object.keys(producersMap).forEach((producerId) => {
+      const producerData = producersMap[producerId];
+      const subOrderDocRef = doc(subOrdersCollection);
+      const subOrderId = subOrderDocRef.id;
+      const humanReadableSubOrderId =
+        "BPR-" + subOrderId.substring(0, 8).toUpperCase();
 
       const subOrderData = {
-        subOrderId: subOrderId,
-        parentOrderId: orderId,
+        id: subOrderId,
+        subOrderId: humanReadableSubOrderId,
+        orderId: globalOrderId,
+        parentOrderId: humanReadableOrderId,
+        producerId: producerId,
+        producerName: producerData.producerName,
+        buyerId: user?.uid || "GUEST",
+        buyerName: checkoutData.billingName || "Client Professionnel",
+        deliveryAddress:
+          checkoutData.deliveryAddress ||
+          "Livraison standard boutique de retrait",
+        items: producerData.items,
+        totalHT: Number(producerData.totalHT.toFixed(2)),
+        totalTVA: Number(producerData.totalTVA.toFixed(2)),
+        totalTTC: Number(producerData.totalTTC.toFixed(2)),
+        status: "A_PREPARER", // Le maraîcher le verra immédiatement dans son onglet de préparation
         createdAt: serverTimestamp(),
-        producerId: prodOrder.producerId,
-        producerName: prodOrder.producerName,
-        buyerId: globalOrderData.buyerId,
-        buyerName: globalOrderData.buyerName,
-        deliveryAddress: globalOrderData.deliveryAddress,
-
-        // Données financières spécifiques au producteur (pour ventilation Stripe Connect)
-        totalHT: parseFloat(prodOrder.totalHT.toFixed(2)),
-        totalVAT: parseFloat(prodOrder.totalVAT.toFixed(2)),
-        totalTTC: parseFloat(prodOrder.totalTTC.toFixed(2)),
-
-        // Statut logistique HACCP
-        status: "A_PREPARER", // A_PREPARER, PRET_A_EXPEDIER, EN_LIVRAISON, LIVRE, INCIDENT
-
-        // Articles spécifiques à ce producteur avec données de traçabilité obligatoires
-        items: prodOrder.items,
       };
 
-      batch.set(subOrderRef, subOrderData);
+      // Ajout du bon de préparation au batch
+      batch.set(subOrderDocRef, subOrderData);
+    });
 
-      // 4. Décrémentation dynamique des stocks de chaque produit (sécurité anti-surcharges)
-      prodOrder.items.forEach((item) => {
-        const productRef = doc(db, "products", item.productId);
-        batch.update(productRef, {
-          stock: increment(-item.quantity), // Déduction en temps réel dans Firestore
-        });
+    // 6. Décrémentation atomique des stocks dans la collection 'products'
+    // Conforme à la règle de sécurité Firestore qui autorise la modification exclusive du stock par l'acheteur
+    cartItems.forEach((item) => {
+      const qty = parseInt(item.quantityWanted || item.qty || 1, 10);
+      const productDocRef = doc(db, "products", item.id);
+
+      batch.update(productDocRef, {
+        stock: increment(-qty),
       });
     });
 
-    // Validation unifiée de la transaction Firestore
-    await batch.commit();
-
-    return {
-      orderId,
-      totals: {
-        totalHT: globalOrderData.totalHT,
-        totalVAT: globalOrderData.totalVAT,
-        totalTTC: globalOrderData.totalTTC,
-      },
-      producersConcernedCount: Object.keys(itemsByProducer).length,
-    };
-  },
-
-  /**
-   * Calcule la ventilation de la TVA par taux pour la facture finale
-   * @private
-   */
-  _calculateVatBreakdown(cartItems) {
-    const breakdown = {};
-    cartItems.forEach((item) => {
-      const rate = parseFloat(item.vatRate || 5.5).toFixed(1);
-      const qty = parseInt(item.quantityWanted || 1, 10);
-      const ht = parseFloat(item.priceHT || 0) * qty;
-      const vat = ht * (parseFloat(rate) / 100);
-
-      if (!breakdown[rate]) {
-        breakdown[rate] = { baseHT: 0, vatAmount: 0 };
-      }
-      breakdown[rate].baseHT += ht;
-      breakdown[rate].vatAmount += vat;
-    });
-
-    // Arrondir proprement les totaux de TVA
-    Object.keys(breakdown).forEach((rate) => {
-      breakdown[rate].baseHT = parseFloat(breakdown[rate].baseHT.toFixed(2));
-      breakdown[rate].vatAmount = parseFloat(
-        breakdown[rate].vatAmount.toFixed(2),
+    // 7. Validation et exécution de l'écriture en une transaction unique
+    try {
+      await batch.commit();
+      console.log(
+        `🎉 Commande ${humanReadableOrderId} et sous-commandes créées avec succès dans Firestore !`,
       );
-    });
-
-    return breakdown;
+      return {
+        orderId: humanReadableOrderId,
+        id: globalOrderId,
+        totalTTC: totalTTC,
+      };
+    } catch (error) {
+      console.error(
+        "❌ Erreur critique lors de la transaction Firestore de commande :",
+        error,
+      );
+      throw new Error(
+        "Impossible de valider votre commande en base de données. Transaction annulée.",
+      );
+    }
   },
 };
