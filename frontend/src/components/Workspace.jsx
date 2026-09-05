@@ -9,6 +9,8 @@ import OrderPreparation from "../pages/Preparation/OrderPreparation";
 import MyProfile from "../pages/Profil/MyProfile"; // IMPORT DE L'ONGLET PROFIL DYNAMIQUE
 import OrderTracking from "../pages/SuiviDesCommandes/OrderTracking";
 import RoutePlanner from "../pages/FeuilleDeRoute/RoutePlanner";
+import MyDeliveries from "../pages/MesLivraisons/MyDeliveries";
+import PiecesComptables from "../pages/PiecesComptables/PiecesComptables";
 
 // 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non encore intégrés)
 const TabPlaceholder = ({ title, description }) => (
@@ -56,12 +58,7 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "compta":
-        return (
-          <TabPlaceholder
-            title="Pièces comptables & Chorus Pro"
-            description="Téléchargement des factures certifiées et dépôts institutionnels."
-          />
-        );
+        return <PiecesComptables />;
       case "stats":
         return (
           <TabPlaceholder
@@ -123,12 +120,8 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "livraison":
-        return (
-          <TabPlaceholder
-            title="Émargement & Bons de livraison"
-            description="Gerez la validation et la signature numérique des livraisons sur site."
-          />
-        );
+        return <MyDeliveries />;
+
       case "haccp":
         return (
           <TabPlaceholder
