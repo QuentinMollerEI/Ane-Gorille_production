@@ -20,10 +20,6 @@ import Login from "./components/auth/Login";
 import Register from "./components/auth/Register";
 import CartContainer from "./pages/boutique/components/CartContainer";
 
-// 🛒 IMPORT DU PANIER FLOTTANT MODERNE
-// (Note : Ajustez légèrement le chemin relatif si votre fichier App.jsx n'est pas à la racine de /src)
-import CartFloatingWidget from "./pages/boutique/components/CartFloatingWidget";
-
 /**
  * Gardien de sécurité (PrivateRoute)
  * Bloque l'accès si déconnecté et affiche un écran de chargement propre.
@@ -90,11 +86,6 @@ export default function App() {
 
           {/* Footer universel : sa structure visuelle est gérée uniquement dans son fichier */}
           <Footer />
-
-          {/* 🛒 LE PANIER FLOTTANT GLOBAL
-              Placé ici, il reste visible et réactif sur toutes les pages publiques (Boutique, Login, Register...)
-              et se met à jour automatiquement dès qu'un produit est ajouté ! */}
-          <CartFloatingWidget />
         </div>
       </Router>
     </AuthProvider>

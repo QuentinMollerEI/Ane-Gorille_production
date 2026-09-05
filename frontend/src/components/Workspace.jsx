@@ -6,7 +6,7 @@ import { Wrench } from "lucide-react";
 import ShopContainer from "./ShopContainer";
 import MiseEnRayon from "../pages/MiseEnRayon/MiseEnRayon";
 import OrderPreparation from "../pages/Preparation/OrderPreparation";
-import MyProfile from "../pages/Profil/MyProfile"; // IMPORT DE L'ONGLET PROFIL DYNAMIQUE
+import MonProfilContainer from "../pages/MonProfil/MonProfilContainer";
 import OrderTracking from "../pages/SuiviDesCommandes/OrderTracking";
 import RoutePlanner from "../pages/FeuilleDeRoute/RoutePlanner";
 import MyDeliveries from "../pages/MesLivraisons/MyDeliveries";
@@ -68,7 +68,7 @@ export default function Workspace({ activeTab }) {
         );
       case "profil":
       default:
-        return <MyProfile />; // Rendu dynamique de votre onglet Profil unifié
+        return <MonProfilContainer />; // Rendu dynamique de votre onglet Profil unifié
     }
   }
 
@@ -104,7 +104,7 @@ export default function Workspace({ activeTab }) {
         );
       case "profil":
       default:
-        return <MyProfile />; // Rendu dynamique de votre onglet Profil unifié
+        return <MonProfilContainer />; // Rendu dynamique de votre onglet Profil unifié
     }
   }
 
@@ -145,7 +145,7 @@ export default function Workspace({ activeTab }) {
         );
       case "profil":
       default:
-        return <MyProfile />; // Rendu dynamique de votre onglet Profil unifié
+        return <MonProfilContainer />; // Rendu dynamique de votre onglet Profil unifié
     }
   }
 

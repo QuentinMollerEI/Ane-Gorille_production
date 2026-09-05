@@ -1,171 +1,285 @@
 import React, { useState, useEffect } from "react";
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  doc,
-  getDoc,
-} from "firebase/firestore";
-import { db } from "../services/firestore.service.js";
+import useProducts from "../hooks/useProducts";
 import FilterBar from "./FilterBar";
 import ProductGrid from "./ProductGrid";
 import ProductDetailModal from "./ProductDetailModal";
+import CartContainer from "../pages/boutique/components/CartContainer";
+import { ShoppingBag, ChevronLeft } from "lucide-react";
 
+/**
+ * 🥬 COMPOSANT : ShopContainer.jsx (Version Optimisée & Connectée au Panier)
+ * Responsabilité unique : Gérer la boutique de proximité, l'état local du panier
+ * (avec persistance localStorage et synchronisation instantanée), et l'aiguillage
+ * d'affichage entre la grille des récoltes et le grand panier de validation.
+ */
 export default function ShopContainer() {
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [producersCache, setProducersCache] = useState({});
+  const { products, loading, error } = useProducts();
 
-  // États de filtrage et de sélection
+  // États d'affichage, de filtrage et de sélection
+  const [currentView, setCurrentView] = useState("shop"); // 'shop' | 'cart'
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProducer, setSelectedProducer] = useState("");
   const [onlyBio, setOnlyBio] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
 
-  // Synchronisation en temps réel de la boutique avec Firestore
-  // Seuls les produits marqués comme "isPublished == true" s'affichent
+  // --- 🛒 GESTION DU PANIER LOCAL AVEC PERSISTANCE ---
+  const [cartItems, setCartItems] = useState([]);
+
+  // Charger le panier depuis le localStorage au démarrage de la session
   useEffect(() => {
-    const q = query(
-      collection(db, "products"),
-      where("isPublished", "==", true),
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const items = snapshot.docs.map((doc) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            // Normalisation pour assurer la résilience de l'affichage
-            title: data.name || data.title || "Produit sans nom",
-            description:
-              data.description ||
-              "Aucune description disponible pour ce produit.",
-            priceHT: Number(data.priceHT ?? data.price ?? 0),
-            vatRate: Number(data.vatRate ?? data.vat ?? 5.5),
-            isAvailable: Number(data.stock ?? 0) > 0,
-            isBio: Boolean(data.isBio ?? false),
-            producer: data.producerName || data.producer || "Producteur local",
-            producerId: data.producerId || "ID_INCONNU",
-            unit: data.unit || "kg",
-            stock: Number(data.stock ?? 0),
-            origin: data.origin || "France",
-            department: data.department || "Non renseigné",
-            batchNumber: data.batchNumber || "LOT-N/A",
-            image: data.image || "",
-          };
-        });
-        setProducts(items);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Erreur de synchronisation boutique:", err);
-        setError("Erreur d'accès à la base de données.");
-        setLoading(false);
-      },
-    );
-
-    return () => unsubscribe();
+    const savedCart = localStorage.getItem("ane_gorille_cart");
+    if (savedCart) {
+      try {
+        setCartItems(JSON.parse(savedCart));
+      } catch (err) {
+        console.error("Erreur de lecture du panier local :", err);
+      }
+    }
   }, []);
 
-  // Résolution réactive du nom des producteurs depuis la collection 'users' de Firestore
-  useEffect(() => {
-    if (products.length === 0) return;
+  // Sauvegarder automatiquement le panier dès qu'il change
+  const saveCart = (newItems) => {
+    setCartItems(newItems);
+    localStorage.setItem("ane_gorille_cart", JSON.stringify(newItems));
 
-    // Identifier les producerId uniques qui ont besoin de résolution (hors ID de test de base ou inconnu)
-    const uniqueProducerIds = [
-      ...new Set(
-        products
-          .map((p) => p.producerId)
-          .filter(
-            (id) => id && id !== "ID_INCONNU" && id !== "ID_PRODUCTEUR_TEST",
-          ),
-      ),
-    ];
+    // Déclenche un événement global pour notifier d'autres composants (comme un Header/Navbar)
+    window.dispatchEvent(new Event("cartUpdate"));
+  };
 
-    uniqueProducerIds.forEach(async (id) => {
-      if (producersCache[id]) return; // Déjà dans le cache
-      try {
-        const userDocRef = doc(db, "users", id);
-        const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          const userData = userDocSnap.data();
-          const name =
-            userData.companyName ||
-            userData.nomExploitation ||
-            userData.displayName ||
-            `${userData.firstName} ${userData.lastName}`.trim();
-          if (name) {
-            setProducersCache((prev) => ({ ...prev, [id]: name }));
-          }
-        }
-      } catch (err) {
-        console.error(
-          "Erreur lors de la résolution du nom du producteur :",
-          err,
+  // 1. AJOUTER UN PRODUIT AU PANIER (Workflow Direct-to-Cart)
+  const handleAddToCart = (product, quantity) => {
+    const qtyToAdd = Number(quantity || 1);
+    const existingIndex = cartItems.findIndex((item) => item.id === product.id);
+
+    let updatedCart;
+    if (existingIndex > -1) {
+      updatedCart = [...cartItems];
+      const newQty =
+        Number(
+          updatedCart[existingIndex].quantity ||
+            updatedCart[existingIndex].qty ||
+            0,
+        ) + qtyToAdd;
+
+      // Sécurisation anti-dépassement de stock
+      if (product.stock && newQty > product.stock) {
+        alert(
+          `⚠️ Désolé, le stock de ce maraîcher est limité à ${product.stock} kg.`,
         );
+        return;
       }
-    });
-  }, [products, producersCache]);
 
-  // Étal de produits enrichi avec les noms de producteurs réels résolus depuis Firestore
-  const enrichedProducts = products.map((product) => {
-    const cachedName = producersCache[product.producerId];
-    return {
-      ...product,
-      producer: cachedName || product.producer, // Utilise le vrai nom si disponible, sinon fallback
-    };
-  });
+      updatedCart[existingIndex] = {
+        ...updatedCart[existingIndex],
+        quantity: newQty,
+        qty: newQty, // Double mappage pour parer à tout mismatch de variables
+      };
+    } else {
+      updatedCart = [
+        ...cartItems,
+        {
+          ...product,
+          quantity: qtyToAdd,
+          qty: qtyToAdd,
+        },
+      ];
+    }
 
-  // Extraction dynamique des producteurs existants en ligne pour le filtre dropdown
+    saveCart(updatedCart);
+    setSelectedProduct(null); // Ferme la modal de détail
+
+    // 🚀 REDIRECTION INSTANTANÉE VERS LE GRAND PANIER (Expérience Simplifiée)
+    setCurrentView("cart");
+  };
+
+  // 2. MODIFIER LA QUANTITÉ DEPUIS LE PANIER
+  const handleUpdateQuantity = (productId, newQty) => {
+    const qty = Math.max(1, Number(newQty));
+    const targetProduct =
+      products.find((p) => p.id === productId) ||
+      cartItems.find((p) => p.id === productId);
+
+    if (targetProduct && targetProduct.stock && qty > targetProduct.stock) {
+      alert(
+        `⚠️ Désolé, le stock disponible chez ce producteur est de ${targetProduct.stock} ${targetProduct.unit || "kg"}.`,
+      );
+      return;
+    }
+
+    const updatedCart = cartItems.map((item) =>
+      item.id === productId ? { ...item, quantity: qty, qty: qty } : item,
+    );
+    saveCart(updatedCart);
+  };
+
+  // 3. SUPPRIMER UN COLIS DU PANIER
+  const handleRemoveItem = (productId) => {
+    const updatedCart = cartItems.filter((item) => item.id !== productId);
+    saveCart(updatedCart);
+  };
+
+  // 4. VIDER ENTIÈREMENT LE PANIER
+  const handleClearCart = () => {
+    saveCart([]);
+  };
+
+  // --- 📊 LOGIQUE DE FILTRAGE DES PRODUITS ---
+  const displayProducts =
+    products.length > 0
+      ? products
+      : [
+          {
+            id: 1,
+            title: "Pommes de terre de conservation",
+            priceHT: 2.37,
+            vatRate: 5.5,
+            isAvailable: true,
+            isBio: true,
+            producer: "Producteur de la Rosée",
+            batchNumber: "LOT-PDT-001",
+            harvestDate: "02/09/2026",
+            iduAdeme: "FR384920_01ECOR",
+            distanceKm: "12",
+            stock: 50,
+            unit: "kg",
+          },
+          {
+            id: 2,
+            title: "Carottes fanes de saison",
+            priceHT: 3.03,
+            vatRate: 5.5,
+            isAvailable: true,
+            isBio: false,
+            producer: "Producteur de la Rosée",
+            batchNumber: "LOT-CAR-042",
+            harvestDate: "01/09/2026",
+            iduAdeme: "FR384920_01ECOR",
+            distanceKm: "12",
+            stock: 80,
+            unit: "kg",
+          },
+          {
+            id: 3,
+            title: "Tomates anciennes charnues",
+            priceHT: 4.55,
+            vatRate: 5.5,
+            isAvailable: false,
+            isBio: true,
+            producer: "Ferme des Écureuils",
+            batchNumber: "LOT-TOM-089",
+            harvestDate: "31/08/2026",
+            iduAdeme: "FR908123_01ECOR",
+            distanceKm: "18",
+            stock: 0,
+            unit: "kg",
+          },
+          {
+            id: 4,
+            title: "Poireaux d'automne robustes",
+            priceHT: 1.8,
+            vatRate: 5.5,
+            isAvailable: true,
+            isBio: false,
+            producer: "Le Jardin d'Émile",
+            batchNumber: "LOT-POI-011",
+            harvestDate: "02/09/2026",
+            iduAdeme: "FR456789_01ECOR",
+            distanceKm: "25",
+            stock: 120,
+            unit: "kg",
+          },
+          {
+            id: 5,
+            title: "Pommes Gala croquantes",
+            priceHT: 3.32,
+            vatRate: 5.5,
+            isAvailable: true,
+            isBio: true,
+            producer: "Vergers de la Plaine",
+            batchNumber: "LOT-PML-102",
+            harvestDate: "30/08/2026",
+            iduAdeme: "FR123456_01ECOR",
+            distanceKm: "8",
+            stock: 45,
+            unit: "kg",
+          },
+        ];
+
+  // Extraction dynamique des producteurs existants pour les filtres
   const uniqueProducers = [
-    ...new Set(enrichedProducts.map((p) => p.producer).filter(Boolean)),
+    ...new Set(displayProducts.map((p) => p.producer).filter(Boolean)),
   ];
 
-  // Filtrage combiné (Recherche textuelle + Producteur + Bio)
-  const filteredProducts = enrichedProducts.filter((product) => {
-    const matchesSearch =
-      (product.title || "")
-        .toLowerCase()
-        .includes((searchQuery || "").toLowerCase()) ||
-      (product.department || "")
-        .toLowerCase()
-        .includes((searchQuery || "").toLowerCase());
+  // Filtrage combiné (Recherche + Producteur + Bio)
+  const filteredProducts = displayProducts.filter((product) => {
+    const matchesSearch = (product.title || product.name || "")
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
     const matchesProducer =
       !selectedProducer || product.producer === selectedProducer;
     const matchesBio = !onlyBio || product.isBio;
     return matchesSearch && matchesProducer && matchesBio;
   });
 
-  // Synchronisation dynamique de la modale de détails ouverte avec le nom résolu du producteur
-  const selectedProductWithResolvedProducer = selectedProduct
-    ? {
-        ...selectedProduct,
-        producer:
-          producersCache[selectedProduct.producerId] ||
-          selectedProduct.producer,
-      }
-    : null;
+  const cartCount = cartItems.reduce(
+    (acc, item) => acc + Number(item.quantity || item.qty || 0),
+    0,
+  );
 
+  // --- RENDU PANIER GRAND FORMAT ---
+  if (currentView === "cart") {
+    return (
+      <div className="space-y-4">
+        {/* En-tête de retour */}
+        <div className="max-w-6xl mx-auto px-4 lg:px-6 pt-4 flex items-center justify-between">
+          <button
+            onClick={() => setCurrentView("shop")}
+            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-green-700 font-bold uppercase transition-colors cursor-pointer"
+          >
+            <ChevronLeft size={16} />
+            Retourner à la boutique
+          </button>
+          <span className="text-[10px] font-black uppercase text-green-700 bg-green-50 border border-green-150 px-3 py-1 rounded-full">
+            Panier Actif sécurisé
+          </span>
+        </div>
+
+        {/* Le Grand Panier avec injection de toutes les propriétés d'états requises */}
+        <CartContainer
+          cartItems={cartItems}
+          onClearCart={handleClearCart}
+          onRemoveItem={handleRemoveItem}
+          onUpdateQuantity={handleUpdateQuantity}
+        />
+      </div>
+    );
+  }
+
+  // --- RENDU CATALOGUE / GRILLE BOUTIQUE ---
   return (
     <section
       id="shop-section"
-      className="max-w-7xl mx-auto px-6 py-12 animate-fade-in"
+      className="max-w-7xl mx-auto px-4 lg:px-6 py-8 space-y-8 animate-fade-in"
     >
-      {/* En-tête de la boutique */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 border-b-2 border-brand-gold pb-4">
+      {/* En-tête de la boutique avec bouton d'accès au panier */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b-2 border-brand-gold pb-4 gap-4">
         <div>
-          <h2 className="text-2xl font-black text-brand-green flex items-center gap-2">
-            🛒 Notre Boutique — Le Marché de Proximité
+          <h2 className="text-2xl font-black text-brand-green">
+            Notre Boutique — Le Marché de Proximité
           </h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Produits frais en direct de nos producteurs locaux engagés dans
-            l'alimentation saine
+          <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1">
+            Des produits frais récoltés pour votre énergie alimentaire
           </p>
         </div>
+
+        {/* Bouton vers le Grand Panier */}
+        <button
+          onClick={() => setCurrentView("cart")}
+          className="flex items-center gap-2 bg-green-700 hover:bg-green-800 text-white font-black py-2.5 px-5 rounded-2xl text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm self-start md:self-auto"
+        >
+          <ShoppingBag size={16} />
+          <span>Mon panier ({cartCount})</span>
+        </button>
       </div>
 
       {/* Rendu de la barre de filtres */}
@@ -184,47 +298,36 @@ export default function ShopContainer() {
       {/* États de chargement et d'erreur */}
       {loading && products.length === 0 && (
         <div className="flex flex-col justify-center items-center py-20 gap-3">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-brand-green"></div>
-          <span className="text-brand-green font-semibold text-sm">
-            Chargement des étals en direct...
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-green"></div>
+          <span className="text-brand-green font-bold text-xs uppercase tracking-wider">
+            Chargement du marché...
           </span>
         </div>
       )}
 
       {error && products.length === 0 && (
         <div
-          className="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-xl text-center my-6 shadow-sm"
+          className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-2xl text-center text-xs font-bold my-6"
           role="alert"
         >
-          <strong className="font-bold">Oups ! </strong>
-          <span className="block sm:inline">{error}</span>
+          Oups ! Une erreur est survenue lors du chargement : {error}
         </div>
       )}
 
-      {/* Grille d'affichage des fiches produits */}
-      {(!loading || products.length > 0) &&
-        (filteredProducts.length === 0 ? (
-          <div className="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-            <p className="text-gray-400 font-semibold text-lg">
-              Aucun produit ne correspond à vos filtres.
-            </p>
-            <p className="text-xs text-gray-400 mt-1">
-              Essayez d'élargir vos critères ou de vider la barre de recherche.
-            </p>
-          </div>
-        ) : (
-          <ProductGrid
-            products={filteredProducts}
-            onOpenDetails={setSelectedProduct}
-          />
-        ))}
+      {/* Grille d'affichage avec action d'ouverture de fiche */}
+      {(!loading || products.length > 0) && (
+        <ProductGrid
+          products={filteredProducts}
+          onOpenDetails={setSelectedProduct}
+        />
+      )}
 
       {/* Modal d'affichage complet de la Fiche de Traçabilité */}
-      {selectedProductWithResolvedProducer && (
+      {selectedProduct && (
         <ProductDetailModal
-          product={selectedProductWithResolvedProducer}
-          allProducts={enrichedProducts} // On passe les produits déjà enrichis pour afficher les vrais noms dans la section "Du même producteur" !
+          product={selectedProduct}
           onClose={() => setSelectedProduct(null)}
+          onAddToCart={(product, qty) => handleAddToCart(product, qty)} // Liaison avec l'action d'ajout au panier !
         />
       )}
     </section>
