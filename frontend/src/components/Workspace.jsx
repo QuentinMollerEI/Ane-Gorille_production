@@ -7,6 +7,8 @@ import ShopContainer from "./ShopContainer";
 import MiseEnRayon from "../pages/MiseEnRayon/MiseEnRayon";
 import OrderPreparation from "../pages/Preparation/OrderPreparation";
 import MyProfile from "../pages/Profil/MyProfile"; // IMPORT DE L'ONGLET PROFIL DYNAMIQUE
+import OrderTracking from "../pages/SuiviDesCommandes/OrderTracking";
+import RoutePlanner from "../pages/FeuilleDeRoute/RoutePlanner";
 
 // 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non encore intégrés)
 const TabPlaceholder = ({ title, description }) => (
@@ -46,6 +48,7 @@ export default function Workspace({ activeTab }) {
       case "boutique":
         return <ShopContainer />;
       case "suivi":
+        return <OrderTracking />;
         return (
           <TabPlaceholder
             title="Suivi des commandes"
@@ -112,6 +115,7 @@ export default function Workspace({ activeTab }) {
   if (role === "livreur") {
     switch (activeTab) {
       case "planification":
+        return <RoutePlanner />;
         return (
           <TabPlaceholder
             title="Planification des tournées"

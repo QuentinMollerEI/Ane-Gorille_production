@@ -288,14 +288,14 @@ export default function CartContainer() {
     setOrderStatus(null);
 
     const finalEngagementNumber =
-      userProfile.role === "client_public" || userProfile.isPublicSector
+      userProfile?.role === "client_public" || userProfile?.isPublicSector
         ? specificEngagement.trim() ||
           userProfile.globalEngagementNumber ||
           null
         : null;
 
     if (
-      (userProfile.role === "client_public" || userProfile.isPublicSector) &&
+      (userProfile?.role === "client_public" || userProfile?.isPublicSector) &&
       !finalEngagementNumber
     ) {
       alert(
@@ -563,7 +563,33 @@ export default function CartContainer() {
                 Validation "Zero-Saisie"
               </h3>
 
-              {isProfileIncomplete ? (
+              {!userProfile ? (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-3 text-xs text-amber-900">
+                  <div className="flex gap-2 items-start">
+                    <AlertTriangle
+                      className="text-amber-700 flex-shrink-0 mt-0.5"
+                      size={16}
+                    />
+                    <div>
+                      <strong className="font-bold">
+                        Profil de connexion requis
+                      </strong>
+                      <p className="mt-1 font-medium leading-relaxed">
+                        Impossible de charger vos données professionnelles.
+                        Veuillez vous connecter ou enregistrer vos informations
+                        de profil.
+                      </p>
+                    </div>
+                  </div>
+                  <a
+                    href="#profil"
+                    onClick={() => (window.location.hash = "profil")}
+                    className="block text-center bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded-lg transition-colors text-[10px] uppercase"
+                  >
+                    Compléter mon profil
+                  </a>
+                </div>
+              ) : isProfileIncomplete ? (
                 <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-3 text-xs text-amber-900">
                   <div className="flex gap-2 items-start">
                     <AlertTriangle
@@ -589,8 +615,8 @@ export default function CartContainer() {
                 </div>
               ) : (
                 <form onSubmit={handleZeroSaisieCheckout} className="space-y-4">
-                  {(userProfile.role === "client_public" ||
-                    userProfile.isPublicSector) && (
+                  {(userProfile?.role === "client_public" ||
+                    userProfile?.isPublicSector) && (
                     <div className="space-y-1">
                       <label
                         htmlFor="specificEngagement"
@@ -604,7 +630,7 @@ export default function CartContainer() {
                         id="specificEngagement"
                         name="specificEngagement"
                         placeholder={
-                          userProfile.globalEngagementNumber ||
+                          userProfile?.globalEngagementNumber ||
                           "Saisir un n° d'engagement spécifique"
                         }
                         value={specificEngagement}
@@ -612,7 +638,7 @@ export default function CartContainer() {
                         className="w-full border border-gray-300 rounded-lg p-2 text-xs focus:ring-1 focus:ring-green-500 bg-white"
                       />
                       <p className="text-[10px] text-gray-400 font-medium italic mt-0.5">
-                        {userProfile.globalEngagementNumber
+                        {userProfile?.globalEngagementNumber
                           ? "Laisse vide pour utiliser le numéro enregistré dans votre profil."
                           : "Requis pour la facturation Chorus Pro."}
                       </p>
@@ -625,8 +651,8 @@ export default function CartContainer() {
                       Facturation Différée Pro
                     </div>
                     <p className="text-[10px] text-green-900/80 font-medium leading-relaxed">
-                      {userProfile.role === "client_public" ||
-                      userProfile.isPublicSector
+                      {userProfile?.role === "client_public" ||
+                      userProfile?.isPublicSector
                         ? "Paiement à 30 jours fin de mois par Mandat Administratif (Chorus Pro)."
                         : "Paiement à 30 jours sécurisé garanti par notre partenaire financier Billie."}
                     </p>
