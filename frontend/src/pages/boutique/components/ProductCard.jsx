@@ -4,7 +4,7 @@ import { Camera, MapPin, Tag } from "lucide-react";
 export default function ProductCard({ product, onOpenDetails }) {
   if (!product) return null;
 
-  // Calcul automatique du Prix TTC basé sur la taxe applicable (loi LME / Conformité fiscale B2B/B2G)
+  // Calcul automatique du Prix TTC
   const priceHT = Number(product?.priceHT ?? 0);
   const vatRate = Number(product?.vatRate ?? 5.5);
   const taxMultiplier = 1 + vatRate / 100;
@@ -30,11 +30,12 @@ export default function ProductCard({ product, onOpenDetails }) {
           <img
             src={image}
             alt={title}
+            loading="lazy" /* Optimisation vitale des performances web */
             className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
         ) : (
           <div className="flex flex-col items-center justify-center text-gray-300 group-hover:text-green-600 transition-colors">
-            <Camera size={36} className="stroke-1" />
+            <Camera size={36} className="stroke-1" aria-hidden="true" />
             <span className="text-[10px] font-semibold mt-2">
               Aucun visuel fourni
             </span>
@@ -62,7 +63,7 @@ export default function ProductCard({ product, onOpenDetails }) {
 
         {/* Localisation - Département */}
         <div className="absolute bottom-3 left-3 bg-black/60 text-white text-[10px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 backdrop-blur-xs">
-          <MapPin size={10} className="text-red-400" />
+          <MapPin size={10} className="text-red-400" aria-hidden="true" />
           <span>Dépt: {department}</span>
         </div>
       </div>
@@ -71,7 +72,7 @@ export default function ProductCard({ product, onOpenDetails }) {
       <div className="p-5 flex flex-col flex-grow justify-between space-y-4">
         <div>
           <div className="flex items-center gap-1.5 text-gray-400 text-[10px] font-bold uppercase tracking-widest leading-none mb-1">
-            <Tag size={10} />
+            <Tag size={10} aria-hidden="true" />
             <span>{producer}</span>
           </div>
           <h3 className="font-extrabold text-sm text-gray-900 line-clamp-2 leading-snug group-hover:text-green-700 transition-colors">
@@ -81,7 +82,6 @@ export default function ProductCard({ product, onOpenDetails }) {
 
         {/* Grille Tarifs et Stock */}
         <div className="space-y-3 pt-3 border-t border-gray-100">
-          {/* Tarification Double (HT & TTC) pour conformité B2B/B2G */}
           <div className="flex justify-between items-end">
             <div>
               <p className="text-[9px] text-gray-400 font-bold uppercase leading-none mb-1">
@@ -104,7 +104,6 @@ export default function ProductCard({ product, onOpenDetails }) {
             </div>
           </div>
 
-          {/* État des Stocks restant en direct */}
           <div className="flex justify-between items-center text-xs text-gray-500 bg-gray-50 p-2 rounded-xl border border-gray-100">
             <span className="font-medium">Stock dispo :</span>
             <span

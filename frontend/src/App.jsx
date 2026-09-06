@@ -14,11 +14,9 @@ import DashboardLayout from "./layouts/DashboardLayout";
 
 // Import de vos vues applicatives
 import Hero from "./components/Hero";
-import ShopContainer from "./components/ShopContainer";
 import Workspace from "./components/Workspace";
 import Login from "./components/auth/Login";
 import Register from "./components/auth/Register";
-import CartContainer from "./pages/boutique/components/CartContainer";
 
 /**
  * Gardien de sécurité (PrivateRoute)
@@ -45,7 +43,6 @@ function PublicHome() {
   return (
     <>
       <Hero />
-      <ShopContainer />
     </>
   );
 }
@@ -65,7 +62,6 @@ export default function App() {
               <Route path="/" element={<PublicHome />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
-              <Route path="/cart" element={<CartContainer />} />
 
               {/* Route Privée Connectée */}
               <Route

@@ -1,7 +1,13 @@
-import React from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import { ShoppingBag, LayoutDashboard, LogOut, UserCheck, ShieldCheck, ShieldAlert } from 'lucide-react';
+import React from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import {
+  LayoutDashboard,
+  LogOut,
+  UserCheck,
+  ShieldCheck,
+  ShieldAlert,
+} from "lucide-react";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -11,7 +17,7 @@ export default function Navbar() {
   const handleLogout = async () => {
     try {
       await logout();
-      navigate('/');
+      navigate("/");
     } catch (err) {
       console.error("Erreur de déconnexion :", err);
     }
@@ -23,7 +29,6 @@ export default function Navbar() {
   return (
     <nav className="bg-white/95 backdrop-blur-md border-b border-gray-150 sticky top-0 z-40 shadow-sm transition-all duration-300">
       <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-
         {/* LOGO & NOM DE MARQUE */}
         <Link to="/" className="flex items-center space-x-3.5 group">
           {/* Logo officiel servi depuis le dossier public avec bordure jaune de marque */}
@@ -47,29 +52,15 @@ export default function Navbar() {
 
         {/* CONTROLES DE NAVIGATION & AUTHENTIFICATION */}
         <div className="flex items-center space-x-6">
-
-          {/* Lien Boutique Public */}
-          <Link
-            to="/"
-            className={`text-sm font-bold flex items-center space-x-2 transition-colors py-2 px-1 border-b-2 ${
-              isActive('/')
-                ? 'border-brand-green text-brand-green'
-                : 'border-transparent text-gray-500 hover:text-brand-green'
-            }`}
-          >
-            <ShoppingBag size={16} />
-            <span>Boutique</span>
-          </Link>
-
           {user ? (
             <>
               {/* Bouton Tableau de Bord connecté */}
               <Link
                 to="/dashboard"
                 className={`text-sm font-bold flex items-center space-x-2 transition-all py-2 px-3.5 rounded-xl border ${
-                  isActive('/dashboard')
-                    ? 'bg-brand-green text-white border-brand-green shadow-sm'
-                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                  isActive("/dashboard")
+                    ? "bg-brand-green text-white border-brand-green shadow-sm"
+                    : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
                 }`}
               >
                 <LayoutDashboard size={16} />
@@ -80,11 +71,12 @@ export default function Navbar() {
 
               {/* COMPOSANT D'IDENTITÉ UTILISATEUR */}
               <div className="flex items-center space-x-4">
-
                 {/* Bloc Informations Profil */}
                 <div className="text-right hidden md:block">
                   <div className="flex items-center justify-end space-x-1.5">
-                    <p className="text-xs font-bold text-brand-dark">{user.displayName}</p>
+                    <p className="text-xs font-bold text-brand-dark">
+                      {user.displayName}
+                    </p>
 
                     {/* Indicateur visuel de conformité réglementaire (Étape 2) */}
                     {user.profileComplete ? (
@@ -117,7 +109,6 @@ export default function Navbar() {
                   <LogOut size={14} />
                   <span className="hidden sm:inline">Déconnexion</span>
                 </button>
-
               </div>
             </>
           ) : (
@@ -139,7 +130,6 @@ export default function Navbar() {
             </>
           )}
         </div>
-
       </div>
     </nav>
   );

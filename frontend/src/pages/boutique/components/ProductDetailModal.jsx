@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   X,
   Shield,
@@ -14,19 +14,9 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-/**
- * 🥬 COMPOSANT : ProductDetailModal.jsx (Version Bulletproof & Traçabilité Certifiée)
- *
- * Responsabilité unique (SRP) : Afficher la fiche d'identité et de traçabilité
- * complète d'un légume (HACCP, ADEME, EGAlim), gérer la sélection sécurisée de
- * la quantité souhaitée, et valider l'ajout au panier.
- *
- * Ce composant est conçu "Legal by Design" pour protéger l'application contre les crashs
- * liés à des données facultatives manquantes (gestion des undefined via fallback et optional chaining).
- */
 export default function ProductDetailModal({
   product,
-  products = [], // Valeur par défaut pour éviter le plantage de .filter() si non fourni par le parent
+  products = [],
   onClose,
   onAddToCart,
 }) {
@@ -34,7 +24,6 @@ export default function ProductDetailModal({
 
   if (!product) return null;
 
-  // Extraction sécurisée des propriétés avec valeurs par défaut de secours (Bulletproof)
   const title = product.title || product.name || "Légume local de saison";
   const priceHT = Number(product.priceHT || product.price || 0);
   const vatRate = Number(product.vatRate || product.vat || 5.5);
@@ -49,20 +38,23 @@ export default function ProductDetailModal({
   const producerName =
     product.producer || product.producerName || "Maraîcher partenaire";
   const harvestDate = product.harvestDate || "Récemment";
-  const batchNumber = product.batchNumber || "Non spécifié (Vente directe)";
+  const batchNumber = product.batchNumber || "Non spécifié";
   const iduAdeme = product.iduAdeme || "En cours d'attribution";
   const distanceKm = product.distanceKm || "Local";
   const isBio = Boolean(product.isBio || product.bio);
 
-  // Évite le plantage : si "products" est undefined ou vide, on n'affiche simplement pas la section "autres produits"
-  const safeProductsList = Array.isArray(products) ? products : [];
-  const otherProducerProducts = safeProductsList.filter(
-    (p) => p.producer === producerName && p.id !== product.id,
-  );
+  // Mémorisation pour des performances optimales
+  const otherProducerProducts = useMemo(() => {
+    const safeProductsList = Array.isArray(products) ? products : [];
+    return safeProductsList.filter(
+      (p) => p.producer === producerName && p.id !== product.id,
+    );
+  }, [products, producerName, product.id]);
 
   // --- ACTIONS SÉCURISÉES ---
   const handleQtyChange = (val) => {
-    const num = Number(val);
+    // Force la valeur en entier pour éviter des comportements inattendus avec des décimales
+    const num = parseInt(val, 10);
     if (isNaN(num)) return;
 
     if (num > stock) {
@@ -89,12 +81,12 @@ export default function ProductDetailModal({
   return (
     <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto animate-fade-in">
       <div className="bg-white border border-gray-200 rounded-3xl max-w-2xl w-full shadow-2xl relative overflow-hidden flex flex-col my-8 max-h-[90vh]">
-        {/* En-tête visuel avec badge Bio */}
+        {/* En-tête */}
         <div className="bg-green-50/50 border-b border-gray-100 p-6 flex justify-between items-start gap-4">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] font-black uppercase tracking-wider bg-green-100 text-green-800 border border-green-200 px-2.5 py-1 rounded-lg flex items-center gap-1">
-                <Leaf size={12} /> Fiche Traçabilité
+                <Leaf size={12} aria-hidden="true" /> Fiche Traçabilité
               </span>
               {isBio && (
                 <span className="text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-lg">
@@ -115,13 +107,12 @@ export default function ProductDetailModal({
             className="p-2 border border-gray-200 hover:bg-gray-100 text-gray-400 hover:text-gray-700 rounded-2xl bg-white transition-colors cursor-pointer"
             title="Fermer la fiche"
           >
-            <X size={16} />
+            <X size={16} aria-hidden="true" />
           </button>
         </div>
 
-        {/* Corps de la fiche de traçabilité (Défilant si nécessaire) */}
+        {/* Corps */}
         <div className="p-6 overflow-y-auto space-y-6 flex-1 text-left">
-          {/* Section 1 : Informations de base & Prix */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-gray-50 border border-gray-200 p-4 rounded-2xl flex flex-col justify-center">
               <p className="text-[10px] text-gray-400 font-extrabold uppercase tracking-wider leading-none">
@@ -168,13 +159,11 @@ export default function ProductDetailModal({
             </div>
           </div>
 
-          {/* Section 2 : Passeport Traçabilité & Conformité EGAlim */}
           <div className="border border-gray-250 rounded-2xl p-5 space-y-4 bg-white shadow-xs">
             <h3 className="text-xs font-black uppercase text-gray-800 tracking-wider flex items-center gap-1.5 border-b border-gray-100 pb-2.5">
-              <Shield size={14} className="text-green-700" /> Passeport
-              Sanitaire & Réglementation HACCP
+              <Shield size={14} className="text-green-700" aria-hidden="true" />{" "}
+              Passeport Sanitaire & Réglementation HACCP
             </h3>
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 text-xs">
               <div className="space-y-1">
                 <p className="text-[9px] text-gray-400 font-extrabold uppercase tracking-wider">
@@ -184,7 +173,6 @@ export default function ProductDetailModal({
                   {batchNumber}
                 </p>
               </div>
-
               <div className="space-y-1">
                 <p className="text-[9px] text-gray-400 font-extrabold uppercase tracking-wider">
                   Identifiant Unique ADEME (REP)
@@ -193,37 +181,42 @@ export default function ProductDetailModal({
                   {iduAdeme}
                 </p>
               </div>
-
               <div className="space-y-1">
                 <p className="text-[9px] text-gray-400 font-extrabold uppercase tracking-wider">
                   Date de Récolte
                 </p>
                 <p className="font-bold text-gray-800 flex items-center gap-1">
-                  <Calendar size={14} className="text-gray-400" /> {harvestDate}
+                  <Calendar
+                    size={14}
+                    className="text-gray-400"
+                    aria-hidden="true"
+                  />{" "}
+                  {harvestDate}
                 </p>
               </div>
-
               <div className="space-y-1">
                 <p className="text-[9px] text-gray-400 font-extrabold uppercase tracking-wider">
                   Logistique de Proximité
                 </p>
                 <p className="font-bold text-gray-800 flex items-center gap-1">
-                  <Truck size={14} className="text-gray-400" /> {distanceKm} km
-                  de votre point d'approvisionnement
+                  <Truck
+                    size={14}
+                    className="text-gray-400"
+                    aria-hidden="true"
+                  />{" "}
+                  {distanceKm} km de votre point d'approvisionnement
                 </p>
               </div>
             </div>
-
             <div className="bg-green-50/50 border border-green-150 p-3.5 rounded-xl text-[10px] text-green-950 font-medium leading-relaxed">
               <strong>✓ Certification de Confiance :</strong> Ce lot de légumes
               respecte à 100 % les critères de qualité de la loi{" "}
               <strong>EGAlim</strong> pour la restauration collective (circuit
               court de proximité, préservation des sols, et juste rémunération
-              des producteurs) [cite: 11].
+              des producteurs).
             </div>
           </div>
 
-          {/* Section 3 : Autres produits de ce maraîcher (Conditionnel pour éviter crash) */}
           {otherProducerProducts.length > 0 && (
             <div className="space-y-3">
               <h3 className="text-xs font-black uppercase text-gray-800 tracking-wider flex items-center gap-1">
@@ -255,11 +248,10 @@ export default function ProductDetailModal({
           )}
         </div>
 
-        {/* Pied de modal avec sélecteur de quantité et action */}
+        {/* Pied de modal avec sélecteur */}
         <div className="p-6 border-t border-gray-150 bg-gray-50 flex flex-col sm:flex-row justify-between items-center gap-4">
           {isAvailable ? (
             <>
-              {/* Sélecteur de quantité */}
               <div className="flex items-center gap-3">
                 <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
                   Quantité :
@@ -294,14 +286,12 @@ export default function ProductDetailModal({
                   {unit}
                 </span>
               </div>
-
-              {/* Action d'ajout */}
               <button
                 type="button"
                 onClick={handleConfirmAdd}
                 className="w-full sm:w-auto flex items-center justify-center gap-2 bg-green-700 hover:bg-green-800 text-white font-black py-3 px-6 rounded-2xl text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm"
               >
-                <ShoppingBag size={14} />
+                <ShoppingBag size={14} aria-hidden="true" />
                 <span>
                   Ajouter {(quantity * priceHT).toFixed(2)} € HT au panier
                 </span>
@@ -309,7 +299,7 @@ export default function ProductDetailModal({
             </>
           ) : (
             <div className="w-full flex items-center gap-2 text-red-700 bg-red-50 border border-red-150 p-3 rounded-2xl text-xs font-bold justify-center">
-              <AlertTriangle size={16} />
+              <AlertTriangle size={16} aria-hidden="true" />
               <span>
                 Ce produit est actuellement indisponible dans les hangars.
               </span>

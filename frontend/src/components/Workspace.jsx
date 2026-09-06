@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { Wrench } from "lucide-react";
 
 // 1. IMPORTS DES VUES ACTIVES
-import ShopContainer from "./ShopContainer";
+import ShopContainer from "../pages/Boutique/ShopContainer";
 import MiseEnRayon from "../pages/MiseEnRayon/MiseEnRayon";
 import OrderPreparation from "../pages/Preparation/OrderPreparation";
 import MonProfilContainer from "../pages/MonProfil/MonProfilContainer";
