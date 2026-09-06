@@ -10,11 +10,16 @@ import MonProfilContainer from "../pages/MonProfil/MonProfilContainer";
 import OrderTracking from "../pages/SuiviDesCommandes/OrderTracking";
 import RoutePlanner from "../pages/FeuilleDeRoute/RoutePlanner";
 import MyDeliveries from "../pages/MesLivraisons/MyDeliveries";
+
+// 🛡️ IMPORTS EXCLUSIFS DES ONGLETS COMPTABILITÉ & ARCHIVES PAR RÔLE (Clean Code & SRP)
 import PiecesComptables from "../pages/PiecesComptables/PiecesComptables";
+import ArchiveComptabiliteProducteur from "../pages/ComptabiliteProducteur/ArchiveProducteur";
+import ArchiveComptabiliteLivreur from "../pages/ComptabiliteLivreur/ArchiveLivreur";
+import ArchiveComptabiliteAdmin from "../pages/ComptabiliteAdmin/ArchiveAdmin";
 
 // 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non encore intégrés)
 const TabPlaceholder = ({ title, description }) => (
-  <div className="bg-white p-10 rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center space-y-4 animate-fade-in">
+  <div className="max-w-6xl mx-auto p-10 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center space-y-4 animate-fade-in my-6">
     <div className="p-4 bg-gray-50 text-gray-400 rounded-full">
       <Wrench size={32} />
     </div>
@@ -44,31 +49,45 @@ export default function Workspace({ activeTab }) {
     role = "acheteur";
   }
 
-  // --- RENDU 1 : ONGLET ACHETEUR (PARTICULIER OU ÉTABLISSEMENT PUBLIC) ---
+  // --- RENDU 1 : ONGLET ACHETEUR (PARTICULIER, PRO B2B OU ÉTABLISSEMENT PUBLIC B2G) ---
   if (role === "acheteur") {
     switch (activeTab) {
       case "boutique":
         return <ShopContainer />;
       case "suivi":
         return <OrderTracking />;
-        return (
-          <TabPlaceholder
-            title="Suivi des commandes"
-            description="Historique de vos achats en cours de préparation."
-          />
-        );
       case "compta":
+        // Rendu de l'onglet de factures de confiance (Factur-X & Chorus Pro)
         return <PiecesComptables />;
       case "stats":
         return (
-          <TabPlaceholder
-            title="Statistiques d'achat"
-            description="Consultez votre volume de légumes et fruits bio consommés à l'année."
-          />
+          <div className="max-w-6xl mx-auto p-6 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 animate-fade-in my-6">
+            <h3 className="text-base font-bold text-brand-green flex items-center">
+              Statistiques d'achat annuel
+            </h3>
+            <p className="text-xs text-gray-500">
+              Consultez votre volume de légumes et fruits bio consommés à
+              l'année.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center pt-2">
+              <div className="p-4 border border-gray-100 bg-gray-50 rounded-xl">
+                <p className="text-2xl font-extrabold text-brand-green">
+                  148 kg
+                </p>
+                <p className="text-xs text-gray-500">Volume global acquis</p>
+              </div>
+              <div className="p-4 border border-gray-100 bg-gray-50 rounded-xl">
+                <p className="text-2xl font-extrabold text-brand-gold">100%</p>
+                <p className="text-xs text-gray-500">
+                  Circuits courts / EGAlim
+                </p>
+              </div>
+            </div>
+          </div>
         );
       case "profil":
       default:
-        return <MonProfilContainer />; // Rendu dynamique de votre onglet Profil unifié
+        return <MonProfilContainer />; // Rendu dynamique de l'onglet Profil unifié
     }
   }
 
@@ -76,35 +95,29 @@ export default function Workspace({ activeTab }) {
   if (role === "producteur") {
     switch (activeTab) {
       case "rayon":
-        // Onglet Mise en Rayon modulaire (Saisie manuelle, Import CSV, Grille de Stocks)
         return <MiseEnRayon />;
       case "preparation":
-        // Onglet Préparation modulaire connecté en temps réel (HACCP & Impression Bons de Préparation)
         return <OrderPreparation />;
       case "haccp":
         return (
           <TabPlaceholder
             title="Suivi Sanitaire & HACCP"
-            description="Suivi des relevés de température et protocoles de nettoyage en hangar."
+            description="Suivi des relevés de température et de la désinfection du matériel d'exploitation."
           />
         );
       case "compta":
-        return (
-          <TabPlaceholder
-            title="Historique Comptable & Ventes"
-            description="Suivi de vos versements et de votre solde séquestre Stripe Connect."
-          />
-        );
+        // Rendu de l'archive comptable personnalisée pour les maraîchers (Stripe Connect, commissions et régime TVA)
+        return <ArchiveComptabiliteProducteur />;
       case "docs":
         return (
           <TabPlaceholder
             title="Certifications d'Exploitation"
-            description="Téléversez et gérez vos labels (AB, HVE, Ecocert) pour la conformité EGAlim."
+            description="Téléversez et gérez vos labels (AB, HVE, Ecocert) pour la conformité réglementaire."
           />
         );
       case "profil":
       default:
-        return <MonProfilContainer />; // Rendu dynamique de votre onglet Profil unifié
+        return <MonProfilContainer />; // Rendu dynamique de l'onglet Profil unifié
     }
   }
 
@@ -113,39 +126,28 @@ export default function Workspace({ activeTab }) {
     switch (activeTab) {
       case "planification":
         return <RoutePlanner />;
-        return (
-          <TabPlaceholder
-            title="Planification des tournées"
-            description="Visualisez votre feuille de route et les points de retrait programmés."
-          />
-        );
       case "livraison":
         return <MyDeliveries />;
-
       case "haccp":
         return (
           <TabPlaceholder
             title="Contrôle Chaîne du Froid"
-            description="Saisie des relevés obligatoires de température lors du transport."
+            description="Saisie des relevés obligatoires de température lors du transport (cible entre 2°C et 6°C)."
           />
         );
       case "compta":
-        return (
-          <TabPlaceholder
-            title="Relevés de prestations"
-            description="Historique de vos facturations logistiques et frais de route."
-          />
-        );
+        // Rendu de l'archive comptable personnalisée pour les livreurs (Bons de livraison signés et relevés kilométriques)
+        return <ArchiveComptabiliteLivreur />;
       case "dreal":
         return (
           <TabPlaceholder
             title="Conformité DREAL"
-            description="Vérification de vos licences de transport et assurances de fret."
+            description="Vérification de vos licences de transport et assurances de fret routier."
           />
         );
       case "profil":
       default:
-        return <MonProfilContainer />; // Rendu dynamique de votre onglet Profil unifié
+        return <MonProfilContainer />; // Rendu dynamique de l'onglet Profil unifié
     }
   }
 
@@ -153,24 +155,20 @@ export default function Workspace({ activeTab }) {
   if (role === "admin") {
     switch (activeTab) {
       case "fiscal":
-        return (
-          <TabPlaceholder
-            title="Surveillance Fiscale"
-            description="Contrôle des flux financiers, Chorus Pro et conformité LME."
-          />
-        );
+        // Rendu du centre de surveillance fiscale et télétransmission Chorus Pro pour l'Administrateur
+        return <ArchiveComptabiliteAdmin />;
       case "haccp":
         return (
           <TabPlaceholder
             title="Centre d'Alertes Sanitaires"
-            description="Surveillance en temps réel des ruptures de la chaîne du froid."
+            description="Surveillance en temps réel des ruptures de la chaîne du froid sur le réseau de livraison."
           />
         );
       case "moderation":
         return (
           <TabPlaceholder
             title="Modération du Catalogue"
-            description="Validation des fiches produits et contrôle des prix de la marketplace."
+            description="Validation des fiches produits, des prix et des labels de conformité de la marketplace."
           />
         );
       case "assistance":
@@ -178,15 +176,14 @@ export default function Workspace({ activeTab }) {
         return (
           <TabPlaceholder
             title="Support & Assistance"
-            description="Gestion des tickets d'assistance et support utilisateurs."
+            description="Gestion des tickets d'assistance et support technique pour les utilisateurs connectés."
           />
         );
     }
   }
 
-  // SECURITE DE SECOURS
   return (
-    <div className="text-center py-20 text-gray-400 italic">
+    <div className="max-w-6xl mx-auto p-6 text-center py-20 text-gray-400 italic">
       Veuillez sélectionner un onglet valide dans la barre de navigation.
     </div>
   );

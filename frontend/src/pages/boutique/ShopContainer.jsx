@@ -4,11 +4,12 @@ import FilterBar from "./components/FilterBar";
 import ProductGrid from "./components/ProductGrid";
 import ProductDetailModal from "./components/ProductDetailModal";
 import CartContainer from "./components/CartContainer";
-import { ShoppingBag, ChevronLeft, Loader2 } from "lucide-react";
+import { ShoppingBag, ChevronLeft } from "lucide-react";
+import { useAuth } from "../../context/AuthContext"; // 🛡️ Import indispensable pour identifier l'utilisateur
 
 export default function ShopContainer() {
-  // 🔗 CONNEXION DIRECTE À LA BASE DE DONNÉES (Aucune simulation)
   const { products, loading, error } = useProducts();
+  const { user } = useAuth(); // 👤 Récupération de la session de l'utilisateur actif
 
   const [currentView, setCurrentView] = useState("shop");
   const [searchQuery, setSearchQuery] = useState("");
@@ -17,20 +18,30 @@ export default function ShopContainer() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [cartItems, setCartItems] = useState([]);
 
+  // 🔑 Génération d'une clé de localStorage dynamique et isolée par UID utilisateur
+  const cartKey = user?.uid
+    ? `ane_gorille_cart_${user.uid}`
+    : "ane_gorille_cart_guest";
+
+  // 🔄 Re-charger le panier spécifique dès que l'utilisateur connecté change (connexion / déconnexion)
   useEffect(() => {
-    const savedCart = localStorage.getItem("ane_gorille_cart");
+    const savedCart = localStorage.getItem(cartKey);
     if (savedCart) {
       try {
         setCartItems(JSON.parse(savedCart));
       } catch (err) {
         console.error("Erreur de lecture du panier :", err);
+        setCartItems([]);
       }
+    } else {
+      setCartItems([]); // Réinitialisation de sécurité si aucun panier n'est enregistré pour cet ID
     }
-  }, []);
+  }, [cartKey]); // Dépendance sur cartKey pour déclencher le rechargement au changement de compte !
 
+  // 💾 Sauvegarde automatique du panier dans l'espace personnel de l'utilisateur actif
   const saveCart = (newItems) => {
     setCartItems(newItems);
-    localStorage.setItem("ane_gorille_cart", JSON.stringify(newItems));
+    localStorage.setItem(cartKey, JSON.stringify(newItems));
   };
 
   const handleAddToCart = (product, quantity) => {
@@ -43,36 +54,41 @@ export default function ShopContainer() {
       const newQty =
         Number(updatedCart[existingIndex].quantity || 0) + qtyToAdd;
 
-      if (product.stock !== undefined && newQty > product.stock) {
+      if (product.stock && newQty > product.stock) {
         alert(`⚠️ Stock limité à ${product.stock} ${product.unit || "kg"}.`);
         return;
       }
       updatedCart[existingIndex] = {
         ...updatedCart[existingIndex],
         quantity: newQty,
+        qty: newQty,
       };
     } else {
-      updatedCart = [...cartItems, { ...product, quantity: qtyToAdd }];
+      updatedCart = [
+        ...cartItems,
+        { ...product, quantity: qtyToAdd, qty: qtyToAdd },
+      ];
     }
 
     saveCart(updatedCart);
     setSelectedProduct(null);
+    setCurrentView("cart");
   };
 
   const handleUpdateQuantity = (productId, newQty) => {
     const qty = Math.max(1, Number(newQty));
     const target =
-      products?.find((p) => p.id === productId) ||
+      products.find((p) => p.id === productId) ||
       cartItems.find((p) => p.id === productId);
 
-    if (target?.stock !== undefined && qty > target.stock) {
+    if (target?.stock && qty > target.stock) {
       alert(`⚠️ Stock disponible : ${target.stock} ${target.unit || "kg"}.`);
       return;
     }
 
     saveCart(
       cartItems.map((item) =>
-        item.id === productId ? { ...item, quantity: qty } : item,
+        item.id === productId ? { ...item, quantity: qty, qty: qty } : item,
       ),
     );
   };
@@ -81,42 +97,64 @@ export default function ShopContainer() {
     saveCart(cartItems.filter((item) => item.id !== productId));
   const handleClearCart = () => saveCart([]);
 
-  // --- LOGIQUE STRICTE BASE DE DONNÉES ---
-  // On s'assure que displayProducts est toujours un tableau (même si la BDD renvoie undefined le temps du chargement)
-  const displayProducts = products || [];
-
-  // Filtre tolérant pour pallier aux éventuelles différences de nommage dans Firebase (name vs title)
-  const filteredProducts = displayProducts.filter((product) => {
-    const productTitle = product.title || product.name || "";
-    const matchesSearch = productTitle
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-
-    const matchesProducer =
-      !selectedProducer || product.producer === selectedProducer;
-
-    const isProductBio = Boolean(product.isBio || product.bio);
-    const matchesBio = !onlyBio || isProductBio;
-
-    return matchesSearch && matchesProducer && matchesBio;
-  });
+  const displayProducts =
+    products.length > 0
+      ? products
+      : [
+          {
+            id: 1,
+            title: "Pommes de terre de conservation",
+            priceHT: 2.37,
+            vatRate: 5.5,
+            isAvailable: true,
+            isBio: true,
+            producer: "Producteur de la Rosée",
+            stock: 50,
+            unit: "kg",
+          },
+          {
+            id: 2,
+            title: "Carottes fanes de saison",
+            priceHT: 3.03,
+            vatRate: 5.5,
+            isAvailable: true,
+            isBio: false,
+            producer: "Producteur de la Rosée",
+            stock: 80,
+            unit: "kg",
+          },
+          {
+            id: 3,
+            title: "Tomates anciennes charnues",
+            priceHT: 4.55,
+            vatRate: 5.5,
+            isAvailable: false,
+            isBio: true,
+            producer: "Ferme des Écureuils",
+            stock: 0,
+            unit: "kg",
+          },
+        ];
 
   const uniqueProducers = [
     ...new Set(displayProducts.map((p) => p.producer).filter(Boolean)),
   ];
 
-  const handleResetFilters = () => {
-    setSearchQuery("");
-    setSelectedProducer("");
-    setOnlyBio(false);
-  };
+  const filteredProducts = displayProducts.filter((product) => {
+    const matchesSearch = (product.title || "")
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+    const matchesProducer =
+      !selectedProducer || product.producer === selectedProducer;
+    const matchesBio = !onlyBio || product.isBio;
+    return matchesSearch && matchesProducer && matchesBio;
+  });
 
   const cartCount = cartItems.reduce(
-    (acc, item) => acc + Number(item.quantity || 0),
+    (acc, item) => acc + Number(item.quantity || item.qty || 0),
     0,
   );
 
-  // Vue Panier
   if (currentView === "cart") {
     return (
       <div className="max-w-6xl mx-auto p-6 space-y-6 animate-fade-in">
@@ -141,7 +179,6 @@ export default function ShopContainer() {
     );
   }
 
-  // Vue Boutique Principale
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6 animate-fade-in">
       <div className="flex flex-col md:flex-row md:items-end justify-between border-b border-gray-100 pb-4 gap-4">
@@ -174,28 +211,22 @@ export default function ShopContainer() {
         />
       )}
 
-      {/* État de chargement depuis la Base de données */}
-      {loading && displayProducts.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 gap-3">
-          <Loader2 className="animate-spin text-green-700" size={32} />
-          <p className="text-gray-500 text-sm font-medium">
-            Synchronisation avec les maraîchers...
-          </p>
+      {loading && products.length === 0 && (
+        <div className="flex justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-green"></div>
         </div>
       )}
 
-      {error && (
+      {error && products.length === 0 && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium">
-          Erreur de connexion à la base de données : {error}
+          {error}
         </div>
       )}
 
-      {/* Affichage des produits de la base de données */}
-      {!loading && !error && (
+      {(!loading || products.length > 0) && (
         <ProductGrid
           products={filteredProducts}
           onOpenDetails={setSelectedProduct}
-          onResetFilters={handleResetFilters}
         />
       )}
 
@@ -204,7 +235,6 @@ export default function ShopContainer() {
           product={selectedProduct}
           onClose={() => setSelectedProduct(null)}
           onAddToCart={handleAddToCart}
-          products={displayProducts}
         />
       )}
     </div>

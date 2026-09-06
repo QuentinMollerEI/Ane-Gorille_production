@@ -1,62 +1,35 @@
 import React, { useState, useEffect } from "react";
-import {
-  Landmark,
-  FileSpreadsheet,
-  ShieldCheck,
-  AlertCircle,
-} from "lucide-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
-import { db } from "../../services/firestore.service.js";
 import { useAuth } from "../../context/AuthContext";
-
-import AccountingFilters from "./components/AccountingFilters";
-import AccountingTotals from "./components/AccountingTotals";
-import InvoiceCard from "./components/InvoiceCard";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "../../services/firestore.service";
+import { FileText } from "lucide-react";
+import BuyerIndicators from "./components/BuyerIndicators";
+import BuyerDocumentsTable from "./components/BuyerDocumentsTable";
+import BuyerBillingSettings from "./components/BuyerBillingSettings";
 
 export default function PiecesComptables() {
   const { user } = useAuth();
-  const [invoices, setInvoices] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedType, setSelectedType] = useState("ALL");
-  const [dateRange, setDateRange] = useState({ start: "", end: "" });
-  const [expandedInvoiceId, setExpandedInvoiceId] = useState(null);
 
   useEffect(() => {
-    if (!user?.uid) {
-      setLoading(false);
-      return;
-    }
+    if (!user?.uid) return;
 
-    setLoading(true);
-    setError(null);
-
+    // Récupération en temps réel des commandes réelles de l'acheteur depuis Firestore
     const q = query(collection(db, "orders"), where("buyerId", "==", user.uid));
 
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
+        const ordersData = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         }));
-
-        data.sort((a, b) => {
-          const dateA = a.createdAt?.seconds || 0;
-          const dateB = b.createdAt?.seconds || 0;
-          return dateB - dateA;
-        });
-
-        setInvoices(data);
+        setOrders(ordersData);
         setLoading(false);
       },
-      (err) => {
-        console.error("Erreur de synchronisation des pieces comptables :", err);
-        setError(
-          "Impossible d'accéder à vos documents comptables en temps réel.",
-        );
+      (error) => {
+        console.error("Erreur lors de la récupération des commandes :", error);
         setLoading(false);
       },
     );
@@ -64,126 +37,103 @@ export default function PiecesComptables() {
     return () => unsubscribe();
   }, [user?.uid]);
 
-  const filteredInvoices = invoices.filter((invoice) => {
-    if (selectedType === "B2G" && invoice.buyerProfile !== "B2G") return false;
-    if (selectedType === "B2B" && invoice.buyerProfile === "B2G") return false;
+  // Transformation dynamique des commandes réelles en pièces comptables réelles (Bons, Factures)
+  const documents = [];
+  orders.forEach((order) => {
+    const orderDate = order.createdAt?.toDate
+      ? order.createdAt.toDate().toLocaleDateString("fr-FR")
+      : new Date(order.createdAt || Date.now()).toLocaleDateString("fr-FR");
 
-    if (invoice.createdAt) {
-      const invoiceDate = new Date(invoice.createdAt.seconds * 1000);
-      if (dateRange.start && invoiceDate < new Date(dateRange.start))
-        return false;
-      if (dateRange.end) {
-        const endDate = new Date(dateRange.end);
-        endDate.setHours(23, 59, 59, 999);
-        if (invoiceDate > endDate) return false;
-      }
+    // 1. Bon de commande (BC)
+    documents.push({
+      id: `BC-${order.id.slice(0, 8).toUpperCase()}`,
+      orderId: order.id,
+      date: orderDate,
+      type: "Bon de commande",
+      entity: order.producerName || "Plateforme Âne et Gorille",
+      amount: order.totalAmount || order.price || 0,
+      vatRate: order.vatRate || 5.5,
+      status: order.status === "A_PREPARER" ? "pending_30d" : "paid",
+      isChorus: false,
+      refEngagement: order.refEngagement || "-",
+    });
+
+    // 2. Bon de livraison (BL) si la commande est en cours ou livrée
+    if (
+      ["EN_COURS_DE_LIVRAISON", "LIVRE", "PAYE", "TERMINE"].includes(
+        order.status,
+      )
+    ) {
+      documents.push({
+        id: `BL-${order.id.slice(0, 8).toUpperCase()}`,
+        orderId: order.id,
+        date: orderDate,
+        type: "Bon de livraison",
+        entity: order.carrierName || "Livreur Âne & Gorille",
+        amount: null,
+        vatRate: 0,
+        status:
+          order.status === "LIVRE" || order.status === "TERMINE"
+            ? "archived"
+            : "pending_30d",
+        isChorus: false,
+        refEngagement: "-",
+      });
     }
 
-    if (searchQuery.trim() !== "") {
-      const q = searchQuery.toLowerCase();
-      const matchId =
-        invoice.id.toLowerCase().includes(q) ||
-        (invoice.orderId && invoice.orderId.toLowerCase().includes(q));
-      const matchName = (invoice.billingName || "").toLowerCase().includes(q);
-      const matchSiret = (invoice.siretBuyer || "").toLowerCase().includes(q);
-      const matchEngagement = (invoice.engagementNumber || "")
-        .toLowerCase()
-        .includes(q);
-      return matchId || matchName || matchSiret || matchEngagement;
+    // 3. Facture d'achat dématérialisée
+    if (
+      order.status === "PAYE" ||
+      order.status === "TERMINE" ||
+      order.paymentMethod === "mandat"
+    ) {
+      documents.push({
+        id: `FAC-${order.id.slice(0, 8).toUpperCase()}`,
+        orderId: order.id,
+        date: orderDate,
+        type: "Facture",
+        entity: order.producerName || "Producteur local",
+        amount: order.totalAmount || order.price || 0,
+        vatRate: order.vatRate || 5.5,
+        status:
+          order.status === "PAYE" || order.status === "TERMINE"
+            ? "paid"
+            : "pending_chorus",
+        isChorus:
+          order.paymentMethod === "mandat" ||
+          user?.role === "client_public" ||
+          user?.role === "acheteur_public",
+        refEngagement: order.refEngagement || "-",
+      });
     }
-
-    return true;
   });
-
-  if (loading) {
-    return (
-      <div className="flex flex-col justify-center items-center py-20 gap-3">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-green-700"></div>
-        <span className="text-green-800 font-semibold text-sm">
-          Sécurisation et archivage de vos factures...
-        </span>
-      </div>
-    );
-  }
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in">
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-gray-100 pb-5 gap-4">
-        <div>
-          <h1 className="text-2xl font-black text-gray-900 flex items-center gap-2">
-            <Landmark className="text-green-700" size={28} />
-            Espace Comptabilité & Dépôt Chorus Pro
-          </h1>
-          <p className="text-xs text-gray-500 mt-1">
-            Consultez, analysez et exportez vos factures immuables de circuit
-            court au format réglementaire Factur-X et pilotez vos transmissions
-            Chorus Pro (B2G) et Billie (B2B).
-          </p>
-        </div>
-        <div className="bg-green-50 text-green-800 border border-green-200 px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-semibold self-start md:self-auto">
-          <ShieldCheck size={16} className="text-green-700" />
-          <span>Archivage Fiscal Certifié LME</span>
-        </div>
+      <div className="border-b border-gray-150 pb-5">
+        <h1 className="text-3xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
+          <span className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg">
+            <FileText size={28} />
+          </span>
+          Pièces Comptables & Chorus Pro
+        </h1>
+        <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1.5">
+          Consultez et téléchargez vos justificatifs d'achat, factures de
+          circuit court et données Chorus Pro.
+        </p>
       </div>
 
-      {error && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-semibold flex items-center gap-2">
-          <AlertCircle size={16} />
-          {error}
-        </div>
-      )}
-
-      <AccountingTotals invoices={filteredInvoices} />
-
-      <AccountingFilters
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        selectedType={selectedType}
-        setSelectedType={setSelectedType}
-        dateRange={dateRange}
-        setDateRange={setDateRange}
-      />
-
-      {filteredInvoices.length === 0 ? (
-        <div className="text-center py-20 border-2 border-dashed border-gray-200 rounded-3xl bg-gray-50/50">
-          <FileSpreadsheet
-            className="mx-auto text-gray-300 mb-4 stroke-1"
-            size={48}
-          />
-          <p className="text-gray-500 font-extrabold text-sm">
-            Aucune pièce comptable disponible.
-          </p>
-          <p className="text-[10px] text-gray-400 mt-1">
-            Vos factures réglementaires s'archivent ici dès validation de vos
-            paniers de proximité.
-          </p>
+      {loading ? (
+        <div className="flex justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-700"></div>
         </div>
       ) : (
-        <div className="space-y-6">
-          {filteredInvoices.map((invoice) => (
-            <InvoiceCard
-              key={invoice.id}
-              invoice={invoice}
-              isExpanded={expandedInvoiceId === invoice.id}
-              onToggle={() =>
-                setExpandedInvoiceId(
-                  expandedInvoiceId === invoice.id ? null : invoice.id,
-                )
-              }
-            />
-          ))}
+        <div className="flex flex-col gap-6">
+          <BuyerIndicators documents={documents} />
+          <BuyerDocumentsTable documents={documents} />
+          <BuyerBillingSettings />
         </div>
       )}
-
-      <style>{`
-        @keyframes slideIn {
-          from { transform: translateY(-10px); opacity: 0; }
-          to { transform: translateY(0); opacity: 1; }
-        }
-        .animate-slide-in {
-          animation: slideIn 0.25s ease-out forwards;
-        }
-      `}</style>
     </div>
   );
 }
