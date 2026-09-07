@@ -15,7 +15,12 @@ import MyDeliveries from "../pages/MesLivraisons/MyDeliveries";
 import PiecesComptables from "../pages/PiecesComptables/PiecesComptables";
 import ArchiveComptabiliteProducteur from "../pages/ComptabiliteProducteur/ArchiveProducteur";
 import ArchiveComptabiliteLivreur from "../pages/ComptabiliteLivreur/ArchiveLivreur";
+
+// 📊 COMPTABILITÉ FINANCIÈRE DE L'ADMINISTRATEUR (Dossier dédié ComptabiliteAdmin)
 import ArchiveComptabiliteAdmin from "../pages/ComptabiliteAdmin/ArchiveAdmin";
+
+// ⚖️ NOUVEL ONGLET EXCLUSIF : CADRE LÉGAL & CONFIGURATION DE L'ENTREPRISE (Dossier dédié LegalAdmin)
+import AdminLegalLexicon from "../pages/LegalAdmin/AdminLegalLexicon";
 
 // 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non encore intégrés)
 const TabPlaceholder = ({ title, description }) => (
@@ -36,8 +41,6 @@ export default function Workspace({ activeTab }) {
   const { user } = useAuth();
 
   // 🛡️ NORMALISATION DES RÔLES ("Legal by Design" & Robustesse RBAC)
-  // Permet de mapper tous les sous-profils acheteurs (particulier, pro/B2B, public/B2G)
-  // vers le canal d'onglets 'acheteur' pour qu'ils aient tous accès à la Boutique, Suivi, Compta et Profil.
   let role = user?.role || "acheteur";
   if (
     role === "client_pro" ||
@@ -57,7 +60,6 @@ export default function Workspace({ activeTab }) {
       case "suivi":
         return <OrderTracking />;
       case "compta":
-        // Rendu de l'onglet de factures de confiance (Factur-X & Chorus Pro)
         return <PiecesComptables />;
       case "stats":
         return (
@@ -87,7 +89,7 @@ export default function Workspace({ activeTab }) {
         );
       case "profil":
       default:
-        return <MonProfilContainer />; // Rendu dynamique de l'onglet Profil unifié
+        return <MonProfilContainer />;
     }
   }
 
@@ -106,7 +108,6 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "compta":
-        // Rendu de l'archive comptable personnalisée pour les maraîchers (Stripe Connect, commissions et régime TVA)
         return <ArchiveComptabiliteProducteur />;
       case "docs":
         return (
@@ -117,7 +118,7 @@ export default function Workspace({ activeTab }) {
         );
       case "profil":
       default:
-        return <MonProfilContainer />; // Rendu dynamique de l'onglet Profil unifié
+        return <MonProfilContainer />;
     }
   }
 
@@ -136,7 +137,6 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "compta":
-        // Rendu de l'archive comptable personnalisée pour les livreurs (Bons de livraison signés et relevés kilométriques)
         return <ArchiveComptabiliteLivreur />;
       case "dreal":
         return (
@@ -147,15 +147,18 @@ export default function Workspace({ activeTab }) {
         );
       case "profil":
       default:
-        return <MonProfilContainer />; // Rendu dynamique de l'onglet Profil unifié
+        return <MonProfilContainer />;
     }
   }
 
   // --- RENDU 4 : ONGLET ADMINISTRATEUR ---
   if (role === "admin") {
     switch (activeTab) {
+      case "legal":
+        // ⚖️ NOUVEL ONGLET : Rendu du cahier des charges et lexique de conformité administrative (Dossier dédié LegalAdmin)
+        return <AdminLegalLexicon />;
       case "fiscal":
-        // Rendu du centre de surveillance fiscale et télétransmission Chorus Pro pour l'Administrateur
+        // Rendu du centre de surveillance fiscale et financière globale (Dossier dédié ComptabiliteAdmin)
         return <ArchiveComptabiliteAdmin />;
       case "haccp":
         return (

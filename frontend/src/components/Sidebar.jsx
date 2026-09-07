@@ -19,6 +19,7 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  Scale,
 } from "lucide-react";
 
 /**
@@ -75,6 +76,7 @@ export default function Sidebar({ activeTab, setActiveTab }) {
       { id: "moderation", label: "Modération Catalogue", icon: CheckSquare },
       { id: "assistance", label: "Support & Tickets", icon: MessageSquare },
       { id: "profil", label: "Profil Administrateur", icon: User },
+      { id: "legal", label: "Cadre Légal & Dev", icon: Scale },
     ],
   };
 
