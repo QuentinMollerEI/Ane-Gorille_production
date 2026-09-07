@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 
 export default function AdminGlobalRegister({ orders = [] }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [methodFilter, setMethodFilter] = useState("all");
 

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { TrendingUp, Clock, ChevronUp, ChevronDown, Award } from "lucide-react";
 
 export default function ProducerIndicators({ documents = [] }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
 
   // Filtrage et calculs 100% dynamiques basés sur les données réelles
   const saleDocs = documents.filter((doc) => doc.type === "Facture de Vente");

@@ -3,7 +3,6 @@ import { useAuth } from "../context/AuthContext";
 import { Wrench } from "lucide-react";
 
 // 1. IMPORTS DES VUES ACTIVES
-// Correction du chemin vers le nouveau dossier boutique[cite: 1, 2]
 import ShopContainer from "../pages/boutique/ShopContainer";
 import MiseEnRayon from "../pages/MiseEnRayon/MiseEnRayon";
 import OrderPreparation from "../pages/Preparation/OrderPreparation";
@@ -12,6 +11,10 @@ import OrderTracking from "../pages/SuiviDesCommandes/OrderTracking";
 import RoutePlanner from "../pages/FeuilleDeRoute/RoutePlanner";
 import MyDeliveries from "../pages/MesLivraisons/MyDeliveries";
 import PiecesComptables from "../pages/PiecesComptables/PiecesComptables";
+
+// 🛡️ NOUVEAUX IMPORTS : COMPTABILITÉ PRODUCTEUR ET LIVREUR
+import ArchiveComptabiliteProducteur from "../pages/ComptabiliteProducteur/ArchiveProducteur";
+import ArchiveComptabiliteLivreur from "../pages/ComptabiliteLivreur/ArchiveLivreur";
 
 // 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non encore intégrés)
 const TabPlaceholder = ({ title, description }) => (
@@ -80,12 +83,8 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "compta":
-        return (
-          <TabPlaceholder
-            title="Historique Comptable & Ventes"
-            description="Suivi de vos versements et de votre solde séquestre Stripe Connect."
-          />
-        );
+        // Affichage des données comptables du producteur
+        return <ArchiveComptabiliteProducteur />;
       case "docs":
         return (
           <TabPlaceholder
@@ -114,12 +113,8 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "compta":
-        return (
-          <TabPlaceholder
-            title="Relevés de prestations"
-            description="Historique de vos facturations logistiques et frais de route."
-          />
-        );
+        // Affichage des données comptables du livreur
+        return <ArchiveComptabiliteLivreur />;
       case "dreal":
         return (
           <TabPlaceholder

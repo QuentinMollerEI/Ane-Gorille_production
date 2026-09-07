@@ -13,7 +13,7 @@ import {
 
 export default function ProducerPayoutsSettings() {
   const { user } = useAuth();
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSaved, setIsSaved] = useState(false);

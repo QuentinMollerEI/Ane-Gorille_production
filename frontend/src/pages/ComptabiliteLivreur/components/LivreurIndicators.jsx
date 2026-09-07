@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 export default function LivreurIndicators({ documents = [] }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
 
   // Calcul dynamique basé sur l'historique réel
   const logInvoices = documents.filter((doc) => doc.type === "Note de Course");

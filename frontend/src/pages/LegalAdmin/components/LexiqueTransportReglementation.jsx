@@ -12,7 +12,7 @@ import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../../../services/firestore.service";
 
 export default function LexiqueTransportReglementation({ lawData, onRefresh }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 

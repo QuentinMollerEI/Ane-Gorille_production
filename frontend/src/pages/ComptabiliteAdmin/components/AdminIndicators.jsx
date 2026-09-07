@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 export default function AdminIndicators({ orders = [] }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
 
   // Calculs 100% dynamiques sur l'ensemble de l'écosystème
   const completedOrders = orders.filter(

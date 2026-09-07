@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 export default function PrivateIndicators({ documents }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
 
   const totalDepenses = documents
     .filter((doc) => doc.type === "Facture")

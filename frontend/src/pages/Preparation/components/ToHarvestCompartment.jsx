@@ -22,7 +22,7 @@ export default function ToHarvestCompartment({
   onValidate,
   onPrint,
 }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [batchInputs, setBatchInputs] = useState({});
 
   const handleInputChange = (id, val) => {

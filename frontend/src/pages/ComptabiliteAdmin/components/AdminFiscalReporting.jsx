@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 export default function AdminFiscalReporting({ orders = [] }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [producers, setProducers] = useState([]);
   const [loading, setLoading] = useState(true);
 

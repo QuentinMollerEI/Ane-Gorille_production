@@ -13,7 +13,7 @@ import {
 
 export default function LogisticsDrealHaccp({ config }) {
   const { user } = useAuth();
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSaved] = useState(false);

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ChevronUp, ChevronDown, Scale } from "lucide-react";
 
 export default function PublicLegalContext() {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm transition-all duration-300">

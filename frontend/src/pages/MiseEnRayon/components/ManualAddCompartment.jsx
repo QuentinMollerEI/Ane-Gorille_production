@@ -21,7 +21,7 @@ import { useAuth } from "../../../context/AuthContext";
 
 export default function ManualAddCompartment({ hasValidCertifications }) {
   const { user } = useAuth();
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState(null); // { type: 'success' | 'error', message: string }
   const [imagePreview, setImagePreview] = useState(null);

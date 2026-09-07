@@ -17,7 +17,7 @@ import {
  * Historise les numéros de lots déjà saisis et permet l'impression des étiquettes.
  */
 export default function ReadyToShipCompartment({ subOrders, onPrint }) {
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
 
   return (
     <div className="bg-white border border-gray-200 rounded-3xl shadow-xs overflow-hidden">

@@ -32,7 +32,7 @@ import { useAuth } from "../../../context/AuthContext";
 
 export default function StockCompartment() {
   const { user } = useAuth();
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
 

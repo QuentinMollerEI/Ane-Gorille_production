@@ -13,7 +13,7 @@ import {
 
 export default function LegalPlatformSpecs({ config }) {
   const { user } = useAuth();
-  const [isRetracted, setIsRetracted] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [commissionRate, setCommissionRate] = useState(
