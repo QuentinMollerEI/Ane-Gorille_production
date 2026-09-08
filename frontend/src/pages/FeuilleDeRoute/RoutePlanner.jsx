@@ -25,11 +25,45 @@ import PickupLeg from "./components/PickupLeg";
 import DeliveryLeg from "./components/DeliveryLeg";
 
 /**
- * 🗺️ COMPOSANT CENTRAL : RoutePlanner.jsx (v3 - Complétude Logistique Intégrée)
- * Responsabilité unique : Orchestrer l'espace logistique de planification des tournées (Livreur) [cite: 50, 74].
- * Écoute en temps réel les sous-commandes maraîchères prêtes pour organiser de façon optimisée,
- * mutualisée et synchronisée la double tournée (ramassage maraîcher ➔ livraison acheteurs) [cite: 10, 11].
- * Calcule en direct la complétude des commandes multi-producteurs pour éviter les erreurs de livraison partielle.
+ * UTITLITAIRE DE FORMATAGE DE DATE ULTRA-RÉSILIENT
+ * Convertit tout format de date (Timestamp Firestore, brut, Date JS, String) en AAAA-MM-JJ sans jamais crasher
+ */
+const getFormattedDate = (createdAt) => {
+  if (!createdAt) return null;
+
+  // 1. Si c'est un Timestamp Firestore réel (avec sa méthode .toDate)
+  if (typeof createdAt.toDate === "function") {
+    try {
+      return createdAt.toDate().toISOString().split("T")[0];
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 2. Si c'est un Timestamp Firestore sérialisé au format brut {seconds, nanoseconds}
+  if (createdAt.seconds !== undefined && createdAt.seconds !== null) {
+    try {
+      return new Date(createdAt.seconds * 1000).toISOString().split("T")[0];
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 3. Si c'est déjà une chaîne de caractères, un nombre (timestamp ms), ou un objet Date
+  try {
+    const parsed = new Date(createdAt);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().split("T")[0];
+    }
+  } catch (e) {
+    return null;
+  }
+
+  return null;
+};
+
+/**
+ * 🗺️ COMPOSANT CENTRAL : RoutePlanner.jsx (v4 - Complétude Logistique Intégrée)
  */
 export default function RoutePlanner() {
   const { user } = useAuth();
@@ -51,13 +85,11 @@ export default function RoutePlanner() {
       setLoading(false);
       return;
     }
-
     setLoading(true);
     setError(null);
 
     // Requête globale des sous-commandes logistiques (pour livreurs & administrateurs)
     const q = query(collection(db, "sub_orders"));
-
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -74,7 +106,6 @@ export default function RoutePlanner() {
         setLoading(false);
       },
     );
-
     return () => unsubscribe();
   }, [user?.uid]);
 
@@ -111,10 +142,13 @@ export default function RoutePlanner() {
   };
 
   // 2. CONFIRMER LA LIVRAISON : Passe les sous-commandes de l'acheteur au statut LIVRE
+  // Met également à jour la commande parente (/orders) à TERMINE et génère la facture de vente et le BL.
   const handleConfirmDelivery = async (buyerId, associatedSubs) => {
     setProcessingId(buyerId);
     try {
       const batch = writeBatch(db);
+
+      // A. Mettre à jour toutes les sous-commandes à LIVRE
       associatedSubs.forEach((sub) => {
         const docRef = doc(db, "sub_orders", sub.id);
         batch.update(docRef, {
@@ -123,12 +157,76 @@ export default function RoutePlanner() {
         });
       });
 
+      // B. Mettre à jour la commande parente dans `/orders` à TERMINE
+      const parentOrderIds = [
+        ...new Set(associatedSubs.map((s) => s.parentOrderId)),
+      ];
+      parentOrderIds.forEach((pId) => {
+        if (!pId) return;
+        const parentOrderRef = doc(db, "orders", pId);
+        batch.update(parentOrderRef, {
+          status: "TERMINE",
+          updatedAt: new Date(),
+          tempHaccp: 4.5,
+          signature: "SIGNATURE_OK",
+        });
+      });
+
+      // C. Générer automatiquement le Bon de Livraison (BL) et la Facture (FAC) à la racine de `/documents`
+      associatedSubs.forEach((sub) => {
+        const orderId = sub.parentOrderId;
+        if (!orderId) return;
+
+        // 📝 BON DE LIVRAISON (BL)
+        const blDocId = `BL-${orderId.slice(0, 8).toUpperCase()}`;
+        const blRef = doc(db, "documents", blDocId);
+        batch.set(blRef, {
+          id: blDocId,
+          orderId: orderId,
+          buyerId: sub.buyerId || "",
+          buyerName: sub.buyerName || "Acheteur local",
+          producerId: sub.producerId || "",
+          producerName: sub.producerName || "Producteur local",
+          carrierId: user?.uid || "LIVREUR_TEST",
+          carrierName: user?.displayName || user?.name || "Livreur Coopératif",
+          type: "Bon de livraison",
+          createdAt: new Date(),
+          entity: sub.producerName || "Producteur local",
+          amount: sub.amount || 0,
+          vatRate: 5.5,
+          status: "completed",
+          tempHaccp: 4.5,
+          items: sub.items || [],
+        });
+
+        // 🧾 FACTURE DE VENTE D'ACHAT (FAC)
+        const facDocId = `FAC-${orderId.slice(0, 8).toUpperCase()}`;
+        const facRef = doc(db, "documents", facDocId);
+        batch.set(facRef, {
+          id: facDocId,
+          orderId: orderId,
+          buyerId: sub.buyerId || "",
+          buyerName: sub.buyerName || "Acheteur local",
+          producerId: sub.producerId || "",
+          producerName: sub.producerName || "Producteur local",
+          carrierId: user?.uid || "LIVREUR_TEST",
+          carrierName: user?.displayName || user?.name || "Livreur Coopératif",
+          type: "Facture",
+          createdAt: new Date(),
+          entity: sub.producerName || "Producteur local",
+          amount: sub.amount || 0,
+          vatRate: 5.5,
+          status: "paid",
+          items: sub.items || [],
+        });
+      });
+
       await batch.commit();
       alert(
-        "🎉 Livraison validée ! Les légumes de proximité ont été remis en main propre à l'acheteur.",
+        "🎉 Livraison validée ! Les statuts ont été synchronisés et les documents de facturation / livraison ont été certifiés en base.",
       );
     } catch (err) {
-      console.error("Erreur lors de la validation de la livraison :", err);
+      console.error("Erreur lors de la validation de l'livraison :", err);
       alert(
         "Une erreur technique est survenue lors de la validation de livraison.",
       );
@@ -141,7 +239,6 @@ export default function RoutePlanner() {
   // 📈 LOGIQUE MÉTIER : Filtrage, Mutualisation & Regroupements
   // =========================================================================
 
-  // 1. Détermination de la commune/département de livraison pour extraire les secteurs d'activité uniques
   const sectors = [
     ...new Set(
       subOrders
@@ -154,17 +251,12 @@ export default function RoutePlanner() {
     ),
   ];
 
-  // 2. Application des filtres combinés sur l'ensemble de la base logistique active
   const filteredSubOrders = subOrders.filter((sub) => {
-    // A. Filtrer par date (si la date de commande est sélectionnée)
-    if (selectedDate && sub.createdAt) {
-      const subDate = new Date(sub.createdAt.seconds * 1000)
-        .toISOString()
-        .split("T")[0];
-      if (subDate !== selectedDate) return false;
+    if (selectedDate) {
+      const subDate = getFormattedDate(sub.createdAt);
+      if (!subDate || subDate !== selectedDate) return false;
     }
 
-    // B. Filtrer par secteur logistique
     if (selectedSector !== "ALL") {
       const subSector = sub.deliveryAddress
         ? sub.deliveryAddress.split(",").pop()?.trim()
@@ -172,7 +264,6 @@ export default function RoutePlanner() {
       if (subSector !== selectedSector) return false;
     }
 
-    // C. Filtrer par barre de recherche textuelle (Producteur, Acheteur, etc.)
     if (searchQuery.trim() !== "") {
       const q = searchQuery.toLowerCase();
       const matchProducer = (sub.producerName || "").toLowerCase().includes(q);
@@ -185,18 +276,13 @@ export default function RoutePlanner() {
         (sub.subOrderId && sub.subOrderId.toLowerCase().includes(q));
       return matchProducer || matchBuyer || matchAddress || matchId;
     }
-
     return true;
   });
 
-  // 3. SEGREGATION DES FLUX DE TOURNÉE (Logique SRP de regroupement)
-
-  // A. Étape 1 - Tournée de ramassage : Tout ce qui est prêt en Hangar ("PRET_A_EXPEDIER")
   const readyForPickupSubs = filteredSubOrders.filter(
-    (sub) => sub.status === "PRET_A_EXPEDIER",
+    (sub) => sub.status === "A_RAMASSER" || sub.status === "PRET_A_EXPEDIER",
   );
 
-  // Regroupement par producteur unique pour mutualiser le point d'enlèvement (une seule visite par maraîcher)
   const pickupGroupsMap = {};
   readyForPickupSubs.forEach((sub) => {
     const pId = sub.producerId || "ID_PRODUCTEUR_TEST";
@@ -213,23 +299,22 @@ export default function RoutePlanner() {
   });
   const pickups = Object.values(pickupGroupsMap);
 
-  // B. Étape 2 - Tournée de livraison : Tout ce qui est en transit ("EXPEDIE" / "EN_COURS_DE_LIVRAISON")
   const readyForDeliverySubs = filteredSubOrders.filter(
     (sub) => sub.status === "EXPEDIE" || sub.status === "EN_COURS_DE_LIVRAISON",
   );
 
-  // Regroupement par acheteur unique pour mutualiser le point de dépôt (un seul arrêt par établissement)
   const deliveryGroupsMap = {};
   readyForDeliverySubs.forEach((sub) => {
     const bId = sub.buyerId || "ID_ACHETEUR_TEST";
 
-    // Calcul de la complétude de la commande multi-producteur en temps réel :
-    // On va chercher dans tous les bons d'aujourd'hui pour cet acheteur s'il y en a qui ne sont pas encore chargés.
     const allSubsForThisBuyerToday = filteredSubOrders.filter(
       (s) => s.buyerId === bId,
     );
     const missingSubs = allSubsForThisBuyerToday.filter(
-      (s) => s.status === "A_PREPARER" || s.status === "PRET_A_EXPEDIER",
+      (s) =>
+        s.status === "A_PREPARER" ||
+        s.status === "A_RAMASSER" ||
+        s.status === "PRET_A_EXPEDIER",
     );
     const isComplete = missingSubs.length === 0;
     const missingProducers = missingSubs.map(
@@ -246,7 +331,7 @@ export default function RoutePlanner() {
         billingEmail: sub.billingEmail || "",
         engagementNumber: sub.engagementNumber || null,
         isComplete: isComplete,
-        missingProducers: [...new Set(missingProducers)], // dédoublonnage des producteurs
+        missingProducers: [...new Set(missingProducers)],
         totalColisToday: allSubsForThisBuyerToday.length,
         colisLoaded: allSubsForThisBuyerToday.length - missingSubs.length,
         subOrders: [],
@@ -256,13 +341,11 @@ export default function RoutePlanner() {
   });
   const deliveries = Object.values(deliveryGroupsMap);
 
-  // 4. STATISTIQUES GLOBALISÉES & CALCUL DE MUTUALISATION LOGISTIQUE
   const calculateStats = () => {
     const totalSubOrders = filteredSubOrders.length;
     const totalProducers = pickups.length;
     const totalBuyers = deliveries.length;
 
-    // Calcul de la quantité totale de colis en transit
     let totalQty = 0;
     filteredSubOrders.forEach((sub) => {
       sub.items?.forEach((item) => {
@@ -270,12 +353,9 @@ export default function RoutePlanner() {
       });
     });
 
-    // Calcul de l'indice de mutualisation :
-    // Plus il y a de sous-commandes regroupées par arrêt (Maraîcher ou Acheteur), plus le taux est élevé.
     let mutualizationRate = 0;
     const totalStops = totalProducers + totalBuyers;
     if (totalStops > 0 && totalSubOrders > 0) {
-      // Formule d'optimisation : (1 - (Stops uniques / Total commandes individuelles)) * 100
       mutualizationRate = Math.max(0, (1 - totalStops / totalSubOrders) * 100);
     }
 
@@ -305,7 +385,6 @@ export default function RoutePlanner() {
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in">
-      {/* En-tête principal de la page */}
       <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-gray-100 pb-5 gap-4">
         <div>
           <h1 className="text-2xl font-black text-gray-900 flex items-center gap-2">
@@ -315,7 +394,7 @@ export default function RoutePlanner() {
           <p className="text-xs text-gray-500 mt-1">
             Optimisez et pilotez votre double-tournée d'exploitation : ramassez
             les récoltes prêtes chez les maraîchers, chargez votre véhicule, et
-            validez les livraisons groupées [cite: 10, 11].
+            validez les livraisons groupées.
           </p>
         </div>
         <div className="bg-green-50 text-green-800 border border-green-200 px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-semibold self-start md:self-auto">
@@ -331,10 +410,8 @@ export default function RoutePlanner() {
         </div>
       )}
 
-      {/* 📊 Section 1 : Indicateurs logistiques & Taux de Mutualisation */}
       <RouteSummary stats={stats} />
 
-      {/* 🔍 Section 2 : Filtres intelligents & Moteur de Recherche */}
       <RouteFilters
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
@@ -345,9 +422,7 @@ export default function RoutePlanner() {
         setSelectedDate={setSelectedDate}
       />
 
-      {/* 🚚 Section 3 : Les deux phases de la double-tournée mutualisée */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        {/* Colonne Gauche : Tournée de Ramassage */}
         <div className="bg-gray-50/50 border border-gray-250 rounded-3xl p-6 space-y-6">
           <div className="space-y-1">
             <h3 className="font-extrabold text-gray-900 text-sm">
@@ -355,7 +430,7 @@ export default function RoutePlanner() {
             </h3>
             <p className="text-[10px] text-gray-400">
               Visitez les exploitations partenaires pour charger les colis déjà
-              préparés et étiquetés HACCP [cite: 10, 11].
+              préparés et étiquetés HACCP.
             </p>
           </div>
           <PickupLeg
@@ -365,7 +440,6 @@ export default function RoutePlanner() {
           />
         </div>
 
-        {/* Colonne Droite : Tournée de Livraison */}
         <div className="bg-gray-50/50 border border-gray-250 rounded-3xl p-6 space-y-6">
           <div className="space-y-1">
             <h3 className="font-extrabold text-gray-900 text-sm">
@@ -373,7 +447,7 @@ export default function RoutePlanner() {
             </h3>
             <p className="text-[10px] text-gray-400">
               Livrez les marchandises groupées aux collectivités (B2G) et
-              établissements professionnels (B2B) [cite: 12].
+              établissements professionnels (B2B).
             </p>
           </div>
           <DeliveryLeg

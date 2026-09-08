@@ -1,20 +1,32 @@
-import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
-// Configuration de votre projet Firebase
-// Remplacez ces valeurs par vos identifiants réels issus de votre console Firebase
+// 🔑 Récupération dynamique de vos clés d'API configurées dans votre fichier .env local par Vite [cite: 10]
 const firebaseConfig = {
-  apiKey: "AIzaSyDFB8w4ii-HOhjrMRoIjmBEC4NfPhJW46Q",
-  authDomain: "ane-et-gorille-v2.firebaseapp.com",
-  projectId: "ane-et-gorille-v2",
-  storageBucket: "ane-et-gorille-v2.firebasestorage.app",
-  messagingSenderId: "1047443529140",
-  appId: "1:1047443529140:web:cc842685181028147026e1",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
+// Initialisation unique de l'application Firebase (évite les doublons)
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Instances d'authentification et de base de données à importer dans l'application
-export const auth = getAuth(app);
+// 🎯 FORCE LA CONNEXION À VOTRE BASE NOMMÉE "ane-et-gorille-v2"
 export const db = getFirestore(app, "ane-et-gorille-v2");
+
+// 🔑 EXPORT DU SERVICE D'AUTHENTIFICATION (Requis par AuthContext.jsx)
+export const auth = getAuth(app);
+
+// 🔌 EXPORTS CENTRALISÉS FIRESTORE (Prévient les doublons de paquets sous Vite et aligne les instances)
+export {
+  collection,
+  doc,
+  runTransaction,
+  serverTimestamp,
+} from "firebase/firestore";
+
+export { app };

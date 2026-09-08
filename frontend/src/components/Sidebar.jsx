@@ -109,7 +109,7 @@ export default function Sidebar({ activeTab, setActiveTab }) {
               </p>
             </div>
           ) : (
-            <span className="text-center w-full text-lg">🥬</span>
+            <span className="text-center w-full text-lg">-</span>
           )}
 
           {/* Bouton pour rétracter la sidebar */}

@@ -6,22 +6,12 @@ service cloud.firestore {
     // 👤 1. PROFILS UTILISATEURS (Collection 'users')
     // =========================================================================
     match /users/{userId} {
-      // Sécurité & RGPD : Tout visiteur peut afficher l'étal individuel d'un producteur ('get')
       allow get: if true;
-
-      // CORRECTIF SÉCURISÉ : Seul l'administrateur peut faire des requêtes de liste ou requêter
-      // l'ensemble des vendeurs de l'éco-système (requis pour le bilan fiscal)
       allow list: if request.auth != null && (
         request.auth.token.role == 'admin' ||
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
       );
-
-      // Écriture : Seul le propriétaire ou l'administrateur peut modifier ou valider un profil
-      allow write: if request.auth != null && (
-        request.auth.uid == userId ||
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-      );
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // =========================================================================
@@ -30,24 +20,19 @@ service cloud.firestore {
     match /products/{productId} {
       allow read: if true;
 
-      allow create: if request.auth != null && (
+      // Création et suppression : réservées aux producteurs et administrateurs
+      allow create, delete: if request.auth != null && (
         request.auth.token.role == 'producer' ||
         request.auth.token.role == 'admin' ||
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'producteur' ||
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
       );
 
+      // Mise à jour : le producteur modifie sa fiche OU l'acheteur décrémente UNIQUEMENT le stock
       allow update: if request.auth != null && (
         (resource.data.producerId == request.auth.uid) ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock'])) ||
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-      );
-
-      allow delete: if request.auth != null && (
-        resource.data.producerId == request.auth.uid ||
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']) &&
+         request.resource.data.stock <= resource.data.stock)
       );
     }
 
@@ -55,48 +40,58 @@ service cloud.firestore {
     // 🛒 3. COMMANDES GLOBALES CLIENT (Collection 'orders')
     // =========================================================================
     match /orders/{orderId} {
-      allow create: if request.auth != null;
+      // Création : initiée par l'acheteur connecté (la Cloud Function v2 ou le client)
+      allow create: if request.auth != null && request.resource.data.status == 'A_PREPARER';
 
+      // Lecture : réservée à l'acheteur propriétaire ou à l'administrateur / livreur
       allow read: if request.auth != null && (
         resource.data.buyerId == request.auth.uid ||
+        request.auth.token.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'livreur'
+      );
+
+      // Interdiction absolue de mise à jour ou suppression directe par le client (Scellé fiscalement)
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
+    // 📄 4. PIÈCES COMPTABLES (Collection 'documents' racine)
+    // CORRECTIF CRITIQUE : Cette collection doit être à la racine car le frontend
+    // l'écoute via collection(db, "documents") et non comme une sous-collection de orders !
+    // =========================================================================
+    match /documents/{documentId} {
+      // Création : Autorisée lors du checkout pour sceller le Bon de Commande (BC)
+      allow create: if request.auth != null;
+
+      // Lecture cloisonnée : l'acheteur accède à ses pièces, le producteur/livreur aux siennes
+      allow read: if request.auth != null && (
+        resource.data.buyerId == request.auth.uid ||
+        resource.data.producerId == request.auth.uid ||
+        resource.data.carrierId == request.auth.uid ||
         request.auth.token.role == 'admin' ||
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
       );
 
-      allow update, delete: if false; // Conformité comptable stricte
+      // Protection légale : Immutabilité stricte des pièces comptables (interdit toute modification/suppression)
+      allow update, delete: if false;
     }
 
     // =========================================================================
-    // 🧑‍🌾 4. BONS DE PRÉPARATION MARAÎCHERS (Collection 'sub_orders')
+    // 🧑‍🌾 5. BONS DE PRÉPARATION MARAÎCHERS (Collection 'sub_orders')
     // =========================================================================
     match /sub_orders/{subOrderId} {
       allow create: if request.auth != null;
-
       allow read, update: if request.auth != null && (
         resource.data.producerId == request.auth.uid ||
-        resource.data.producerId == "ID_PRODUCTEUR_TEST" ||
         resource.data.buyerId == request.auth.uid ||
         request.auth.token.role == 'livreur' ||
         request.auth.token.role == 'admin' ||
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'livreur' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'producteur' ||
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
       );
-
       allow delete: if false;
-    }
-
-    // =========================================================================
-    // ⚙️ 5. CONFIGURATIONS RÉGLEMENTAIRES (Collection 'config')
-    // =========================================================================
-    match /config/{documentId} {
-      // CORRECTIF CONFIG : Tout utilisateur authentifié peut lire les règles d'exploitation (commission 18%, etc.)
-      allow read: if request.auth != null;
-
-      // Sécurité absolue : Seul l'administrateur peut modifier ces paramètres à l'écran
-      allow write: if request.auth != null && (
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-      );
     }
   }
 }
