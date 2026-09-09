@@ -6,8 +6,9 @@ import {
   Navigate,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { CartProvider } from "./context/CartContext"; // 👈 Ajout indispensable pour le panier global
 
-// Import des éléments de structure globaux (qui gèrent désormais leur propre visuel)
+// Import des éléments de structure globaux
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import DashboardLayout from "./layouts/DashboardLayout";
@@ -37,7 +38,7 @@ function PrivateRoute({ children }) {
 }
 
 /**
- * Vue Publique de la Boutique
+ * Vue Publique de la Boutique / Accueil
  */
 function PublicHome() {
   return (
@@ -50,40 +51,46 @@ function PublicHome() {
 export default function App() {
   return (
     <AuthProvider>
-      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <div className="min-h-screen flex flex-col bg-brand-light relative">
-          {/* Navbar universelle : sa structure visuelle est gérée uniquement dans son fichier */}
-          <Navbar />
+      <CartProvider>
+        {" "}
+        {/* 👈 Enveloppe le Router pour fournir le contexte du panier à toute l'application */}
+        <Router
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
+          <div className="min-h-screen flex flex-col bg-brand-light relative">
+            {/* Navbar universelle */}
+            <Navbar />
 
-          {/* Zone de contenu dynamique */}
-          <div className="flex-grow flex flex-col">
-            <Routes>
-              {/* Routes Publiques */}
-              <Route path="/" element={<PublicHome />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<Register />} />
+            {/* Zone de contenu dynamique */}
+            <div className="flex-grow flex flex-col">
+              <Routes>
+                {/* Routes Publiques */}
+                <Route path="/" element={<PublicHome />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/register" element={<Register />} />
 
-              {/* Route Privée Connectée */}
-              <Route
-                path="/dashboard"
-                element={
-                  <PrivateRoute>
-                    <DashboardLayout>
-                      <Workspace />
-                    </DashboardLayout>
-                  </PrivateRoute>
-                }
-              />
+                {/* Route Privée Connectée */}
+                <Route
+                  path="/dashboard"
+                  element={
+                    <PrivateRoute>
+                      <DashboardLayout>
+                        <Workspace />
+                      </DashboardLayout>
+                    </PrivateRoute>
+                  }
+                />
 
-              {/* Redirection automatique de secours */}
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+                {/* Redirection automatique de secours */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </div>
+
+            {/* Footer universel */}
+            <Footer />
           </div>
-
-          {/* Footer universel : sa structure visuelle est gérée uniquement dans son fichier */}
-          <Footer />
-        </div>
-      </Router>
+        </Router>
+      </CartProvider>
     </AuthProvider>
   );
 }

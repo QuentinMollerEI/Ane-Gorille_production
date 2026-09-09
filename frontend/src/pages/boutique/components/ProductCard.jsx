@@ -1,114 +1,151 @@
-import React from "react";
-import { Camera, MapPin, Tag } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Tag, MapPin, Camera } from "lucide-react";
 
+/**
+ * 🥕 COMPOSANT : ProductCard.jsx
+ * Responsabilité unique : Afficher la fiche unitaire d'un produit dans la boutique
+ * exactement selon la maquette visuelle (image/visuel, badges, prix HT/TTC, stock).
+ */
 export default function ProductCard({ product, onOpenDetails }) {
   if (!product) return null;
 
-  // Calcul automatique du Prix TTC
-  const priceHT = Number(product?.priceHT ?? 0);
-  const vatRate = Number(product?.vatRate ?? 5.5);
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [product]);
+
+  const priceHT = Number(product?.priceHT ?? product?.price ?? 0);
+  const vatRate = Number(product?.vatRate ?? product?.vat ?? 5.5);
   const taxMultiplier = 1 + vatRate / 100;
   const priceTTC = priceHT * taxMultiplier;
 
-  const isAvailable = Number(product?.stock ?? 0) > 0;
-  const isBio = Boolean(product?.isBio ?? false);
+  const stock = Number(product?.stock ?? product?.quantity ?? 0);
+  const isAvailable = Boolean(product?.isAvailable ?? stock > 0);
+  const isBio = Boolean(product?.isBio ?? product?.bio ?? false);
   const title = product?.title ?? product?.name ?? "Produit sans nom";
-  const producer = product?.producer ?? "Producteur Anonyme";
-  const department = product?.department ?? "Local";
+  const producer = (
+    product?.producer ??
+    product?.producerName ??
+    "Producteur Local"
+  ).toUpperCase();
   const unit = product?.unit ?? "kg";
-  const stock = Number(product?.stock ?? 0);
-  const image = product?.image || "";
+  const origin = product?.origin || product?.department || "Dépt: Local";
+
+  let imageUrl = null;
+  const rawImg =
+    product?.imageUrl ||
+    product?.image ||
+    product?.photo ||
+    product?.imgUrl ||
+    product?.img ||
+    product?.picture ||
+    product?.url;
+
+  if (rawImg) {
+    if (typeof rawImg === "string" && rawImg.trim() !== "") {
+      imageUrl = rawImg.trim();
+    } else if (rawImg instanceof File || rawImg instanceof Blob) {
+      imageUrl = URL.createObjectURL(rawImg);
+    }
+  }
+
+  const showPlaceholder = !imageUrl || imgError;
 
   return (
     <div
-      onClick={() => onOpenDetails(product)}
-      className="bg-white rounded-2xl shadow-sm border border-gray-150 overflow-hidden hover:shadow-lg hover:border-gray-300 transition-all duration-300 cursor-pointer flex flex-col h-full transform hover:-translate-y-1 group"
+      onClick={() => onOpenDetails && onOpenDetails(product)}
+      className="bg-white rounded-2xl shadow-sm border border-gray-150 overflow-hidden hover:shadow-md transition-all duration-300 cursor-pointer flex flex-col h-full transform hover:-translate-y-0.5 group"
     >
-      {/* Zone Image / Photo du produit */}
-      <div className="h-48 bg-gray-50 relative flex items-center justify-center overflow-hidden border-b border-gray-100">
-        {image ? (
+      {/* 🖼️ ZONE IMAGE / VISUEL */}
+      <div className="h-48 bg-gray-50/80 relative overflow-hidden flex items-center justify-center">
+        {!showPlaceholder ? (
           <img
-            src={image}
+            src={imageUrl}
             alt={title}
-            loading="lazy" /* Optimisation vitale des performances web */
-            className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            onError={() => setImgError(true)}
           />
         ) : (
-          <div className="flex flex-col items-center justify-center text-gray-300 group-hover:text-green-600 transition-colors">
-            <Camera size={36} className="stroke-1" aria-hidden="true" />
-            <span className="text-[10px] font-semibold mt-2">
+          <div className="flex flex-col items-center justify-center text-gray-300 space-y-1.5 p-4 text-center">
+            <Camera size={36} className="text-gray-300 stroke-[1.5]" />
+            <span className="text-xs font-semibold text-gray-400">
               Aucun visuel fourni
             </span>
           </div>
         )}
 
-        {/* Badges de Labels et Disponibilité */}
-        <div className="absolute top-3 left-3 flex flex-col gap-1.5">
-          {isBio && (
-            <span className="text-[10px] font-extrabold px-3 py-1 rounded-full bg-amber-400 text-amber-950 shadow-sm uppercase tracking-wider border border-amber-300">
-              🥦 Bio AB
+        {/* Badge Bio (Haut Gauche) */}
+        {isBio && (
+          <div className="absolute top-3 left-3 z-10">
+            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-400 text-gray-900 shadow-sm uppercase tracking-wider">
+              Bio
             </span>
-          )}
-        </div>
+          </div>
+        )}
 
-        <div className="absolute top-3 right-3">
+        {/* Badge Disponibilité (Haut Droite) */}
+        <div className="absolute top-3 right-3 z-10">
           <span
-            className={`text-[9px] font-black px-2.5 py-1 rounded-full text-white shadow-sm uppercase tracking-wider ${
-              isAvailable ? "bg-green-600" : "bg-red-500"
+            className={`text-[11px] font-extrabold px-3 py-1 rounded-full text-white shadow-sm uppercase tracking-wider ${
+              isAvailable ? "bg-emerald-600" : "bg-red-500"
             }`}
           >
-            {isAvailable ? "En Stock" : "Épuisé"}
+            {isAvailable ? "EN STOCK" : "ÉPUISÉ"}
           </span>
         </div>
 
-        {/* Localisation - Département */}
-        <div className="absolute bottom-3 left-3 bg-black/60 text-white text-[10px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 backdrop-blur-xs">
-          <MapPin size={10} className="text-red-400" aria-hidden="true" />
-          <span>Dépt: {department}</span>
+        {/* Badge Localisation / Origine (Bas Gauche) */}
+        <div className="absolute bottom-3 left-3 z-10">
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg shadow-sm">
+            <MapPin size={11} className="text-red-400" />
+            <span>{origin}</span>
+          </span>
         </div>
       </div>
 
-      {/* Informations Textuelles */}
-      <div className="p-5 flex flex-col flex-grow justify-between space-y-4">
+      {/* 📝 CORPS DE LA FICHE */}
+      <div className="p-4 space-y-3 flex flex-col flex-grow justify-between">
         <div>
-          <div className="flex items-center gap-1.5 text-gray-400 text-[10px] font-bold uppercase tracking-widest leading-none mb-1">
-            <Tag size={10} aria-hidden="true" />
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+            <Tag size={12} className="text-gray-400" />
             <span>{producer}</span>
           </div>
-          <h3 className="font-extrabold text-sm text-gray-900 line-clamp-2 leading-snug group-hover:text-green-700 transition-colors">
+
+          <h3 className="font-bold text-base text-gray-900 leading-tight line-clamp-2">
             {title}
           </h3>
         </div>
 
-        {/* Grille Tarifs et Stock */}
-        <div className="space-y-3 pt-3 border-t border-gray-100">
-          <div className="flex justify-between items-end">
+        <div>
+          <div className="border-b border-gray-100 my-2" />
+
+          <div className="flex items-end justify-between pt-1">
             <div>
-              <p className="text-[9px] text-gray-400 font-bold uppercase leading-none mb-1">
-                Prix HT
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                PRIX HT
               </p>
-              <span className="text-xs font-bold text-gray-500">
+              <p className="text-sm font-bold text-gray-700">
                 {priceHT.toFixed(2)} €
-              </span>
-            </div>
-            <div className="text-right">
-              <p className="text-[9px] text-green-700 font-black uppercase leading-none mb-1">
-                Prix TTC ({vatRate}%)
               </p>
-              <span className="text-base font-black text-green-700">
+            </div>
+
+            <div className="text-right">
+              <p className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
+                PRIX TTC ({vatRate}%)
+              </p>
+              <p className="text-lg font-black text-emerald-700 leading-none">
                 {priceTTC.toFixed(2)} €{" "}
-                <span className="text-[10px] font-normal text-gray-500">
+                <span className="text-xs font-semibold text-gray-500">
                   / {unit}
                 </span>
-              </span>
+              </p>
             </div>
           </div>
 
-          <div className="flex justify-between items-center text-xs text-gray-500 bg-gray-50 p-2 rounded-xl border border-gray-100">
-            <span className="font-medium">Stock dispo :</span>
-            <span
-              className={`font-bold ${stock > 15 ? "text-green-700" : stock > 0 ? "text-amber-700" : "text-red-600"}`}
-            >
+          <div className="bg-gray-50/90 border border-gray-100 rounded-xl px-3 py-2 flex items-center justify-between text-xs font-semibold text-gray-600 mt-3">
+            <span>Stock dispo :</span>
+            <span className="font-bold text-amber-800">
               {stock} {unit}
             </span>
           </div>

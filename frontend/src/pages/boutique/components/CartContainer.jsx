@@ -1,85 +1,85 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ShoppingBag,
   Trash2,
-  ArrowRight,
+  ArrowLeft,
   ShieldCheck,
   CreditCard,
   Building,
-  AlertCircle,
   CheckCircle2,
   Loader2,
-  FileText,
+  AlertCircle,
+  PackageCheck,
+  Plus,
+  Minus,
 } from "lucide-react";
-import { useAuth } from "../../../context/AuthContext.jsx";
-import { CheckoutService } from "../../../services/checkoutService";
+import { useAuth } from "../../../context/AuthContext";
+import { useCart } from "../../../context/CartContext";
+import { DocumentWorkflowService } from "../../../services/documentWorkflowService";
 
 /**
- * 🛒 COMPOSANT : CartContainer.jsx (v4 - Double-Sécurisation & Normalisation)
- *
- * Responsabilité unique (SRP) : Afficher le récapitulatif détaillé du panier,
- * calculer de manière conforme la TVA et les totaux (Loi LME/circuit court),
- * recueillir les métadonnées comptables (Chorus Pro B2G / Stripe B2B),
- * et normaliser défensivement le panier avant d'appeler le service Cloud Run v2.
+ * 🛒 COMPOSANT : CartContainer.jsx (Le Grand Panier & Checkout B2B / B2G)
+ * Responsabilité unique : Récapitulatif financier (HT/TVA/TTC), gestion des quantités par producteur,
+ * et tunnel de validation avec pré-remplissage réactif depuis le profil utilisateur.
  */
-export default function CartContainer({
-  cartItems = [],
-  onClearCart,
-  onRemoveItem,
-  onUpdateQuantity,
-}) {
-  const auth = useAuth() || {};
-  const { user = null, userProfile = null } = auth;
+export default function CartContainer({ onBackToShop }) {
+  const { user } = useAuth();
+  const { cart, removeFromCart, clearCart, addToCart } = useCart();
+
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [specificEngagement, setSpecificEngagement] = useState("");
+  const [refEngagement, setRefEngagement] = useState("");
+  const [siretBuyer, setSiretBuyer] = useState("");
+  const [codeService, setCodeService] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [paymentChoice, setPaymentPreference] = useState("stripe"); // 'stripe' | 'sepa' | 'mandat'
   const [orderStatus, setOrderStatus] = useState(null);
 
-  // Détermination réglementaire du rôle de l'acheteur (B2G Public vs B2B/B2C Privé)
-  const isPublicSector =
-    userProfile?.isPublicSector ||
-    userProfile?.buyerProfile === "B2G" ||
-    userProfile?.role === "client_public" ||
-    user?.role === "client_public";
+  // Détection du rôle
+  const rawRole = user?.role || "client_public";
+  const isPublicSector = Boolean(
+    rawRole === "client_public" || rawRole === "acheteur_public",
+  );
 
-  // Formulaire local pour informations d'engagement si l'acheteur n'a pas tout enregistré dans son profil
-  const [billingInfo, setBillingInfo] = useState({
-    siret: userProfile?.siret || user?.siret || "",
-    codeService: userProfile?.codeService || user?.codeService || "",
-    billingContact: userProfile?.billingContact || user?.email || "",
-  });
+  // 🔄 ÉCOUTE DU PROFIL ENSEMBLE AVEC PRÉ-REMPLISSAGE AUTOMATIQUE
+  useEffect(() => {
+    if (user) {
+      setSiretBuyer(user.siret || user.siretNumber || "");
+      setCodeService(user.codeService || "");
+      setRefEngagement(user.refEngagement || user.defaultEngagement || "");
+      setDeliveryAddress(
+        user.address
+          ? `${user.address}${user.zipCode ? `, ${user.zipCode}` : ""}${user.city ? ` ${user.city}` : ""}`
+          : "",
+      );
+      setPaymentPreference(
+        isPublicSector ? "mandat" : user.paymentPreference || "stripe",
+      );
+    }
+  }, [user, isPublicSector]);
 
-  // --- CALCULS DES TOTAUX SÉCURISÉS (CONFORMATION FISCALE) ---
-  const calculateTotals = () => {
-    let totalHT = 0;
-    let totalTVA = 0;
-    const safeCartItems = Array.isArray(cartItems) ? cartItems : [];
+  const cartItems = Array.isArray(cart) ? cart : [];
 
-    safeCartItems.forEach((item) => {
-      const qty = parseInt(item?.quantity || item?.qty || 0, 10);
-      const priceHT = Number(item?.price || item?.priceHT || 0);
-      const vatRate = Number(item?.vatRate || item?.vat || 5.5);
-      const itemHT = priceHT * qty;
-      const itemTVA = itemHT * (vatRate / 100);
-      totalHT += itemHT;
-      totalTVA += itemTVA;
-    });
+  // Calculs financiers
+  const totalHT = cartItems.reduce((sum, item) => {
+    const qty = Number(item.quantity || item.qty || 1);
+    const price = Number(item.priceHT ?? item.price ?? 0);
+    return sum + price * qty;
+  }, 0);
 
-    return {
-      totalHT,
-      totalTVA,
-      totalTTC: totalHT + totalTVA,
-    };
-  };
+  const totalTVA = cartItems.reduce((sum, item) => {
+    const qty = Number(item.quantity || item.qty || 1);
+    const price = Number(item.priceHT ?? item.price ?? 0);
+    const vat = Number(item.vatRate ?? item.vat ?? 5.5);
+    return sum + price * (vat / 100) * qty;
+  }, 0);
 
-  const { totalHT, totalTVA, totalTTC } = calculateTotals();
-  const totalArticles = Array.isArray(cartItems)
-    ? cartItems.reduce(
-        (acc, item) => acc + parseInt(item?.quantity || item?.qty || 0, 10),
-        0,
-      )
-    : 0;
+  const totalTTC = totalHT + totalTVA;
+  const itemCount = cartItems.reduce(
+    (sum, item) => sum + Number(item.quantity || item.qty || 1),
+    0,
+  );
 
-  // --- TRAITEMENT ET DIRECT-VALIDATION DE LA COMMANDE ---
+  // Soumission de la commande
   const handleCheckoutSubmit = async (e) => {
     e.preventDefault();
     if (cartItems.length === 0) return;
@@ -87,281 +87,261 @@ export default function CartContainer({
     if (!user) {
       setOrderStatus({
         type: "error",
-        message: "Vous devez être authentifié pour finaliser une commande.",
+        message:
+          "Vous devez être connecté à votre compte acheteur pour valider la commande.",
       });
       return;
     }
 
-    if (isPublicSector) {
-      // Validation de conformité Chorus Pro (14 chiffres requis pour SIRET)
-      const cleanSiret = billingInfo.siret.replace(/\s/g, "");
-      if (!/^\d{14}$/.test(cleanSiret)) {
-        setOrderStatus({
-          type: "error",
-          message:
-            "⚠️ Réglementation Chorus Pro : Un numéro de SIRET de 14 chiffres valide est obligatoire pour valider la facturation publique.",
-        });
-        return;
-      }
-
-      // Numéro d'engagement (Bon de commande public) obligatoire pour le mandat public
-      if (!specificEngagement.trim()) {
-        setOrderStatus({
-          type: "error",
-          message:
-            "⚠️ Loi LME & Chorus Pro : Un numéro d'engagement budgétaire est obligatoire pour valider un paiement par mandat administratif.",
-        });
-        return;
-      }
+    if (isPublicSector && !refEngagement.trim()) {
+      setOrderStatus({
+        type: "error",
+        message:
+          "⚠️ Le numéro d'engagement budgétaire est obligatoire pour la facturation Chorus Pro.",
+      });
+      return;
     }
 
     setIsSubmitting(true);
     setOrderStatus(null);
 
+    const paymentMethod = isPublicSector ? "mandat" : paymentChoice;
+    const buyerInfo = {
+      uid: user.uid,
+      displayName:
+        user.companyName || user.displayName || user.name || "Acheteur Pro",
+      email: user.email,
+      role: rawRole,
+      siret: siretBuyer || "-",
+      codeService: codeService || "-",
+      refEngagement: refEngagement || "-",
+    };
+
+    const checkoutData = {
+      companyName: user.companyName || user.displayName || "Acheteur Pro",
+      siret: siretBuyer,
+      codeService: codeService,
+      refEngagement: refEngagement,
+      deliveryAddress: deliveryAddress || "Adresse enregistrée du compte",
+      paymentChoice: paymentChoice,
+    };
+
     try {
-      // Étape 1 : Structuration des métadonnées de facturation acheteur
-      const buyerInfo = {
-        uid: user.uid,
-        name:
-          userProfile?.companyName ||
-          userProfile?.displayName ||
-          userProfile?.name ||
-          user?.displayName ||
-          "Acheteur Professionnel",
-        role:
-          userProfile?.role ||
-          user?.role ||
-          (isPublicSector ? "client_public" : "client_prive"),
-        siret: isPublicSector ? billingInfo.siret.replace(/\s/g, "") : "-",
-        codeService:
-          isPublicSector && billingInfo.codeService
-            ? billingInfo.codeService.trim()
-            : "-",
-        refEngagement: isPublicSector ? specificEngagement.trim() : "-",
-        billingContact: billingInfo.billingContact.trim() || user.email || "-",
-      };
-
-      // 🛡️ Étape 2 : DOUBLE-SÉCURISATION & NORMALISATION DU PANIER (Anti-Crash Server)
-      // Garantit que chaque item transmis possède absolument un identifiant "id", un prix sain,
-      // un taux de TVA et un producteur valide. Résout l'erreur 5 NOT_FOUND: [500] en base.
-      const mappedCartItems = cartItems.map((item) => {
-        const finalId = item.id || item.productId || item._id;
-        if (!finalId) {
-          throw new Error(
-            `Structure de panier corrompue : l'article "${item.title || item.name || "sans nom"}" ne comporte pas d'identifiant 'id' ou 'productId'.`,
-          );
-        }
-        return {
-          id: finalId,
-          name: item.title || item.name || "Légume local",
-          price: Number(item.price || item.priceHT || 0),
-          quantity: parseInt(item.quantity || item.qty || 1, 10),
-          vatRate: Number(item.vatRate || item.vat || 5.5),
-          producerId: item.producerId || "PROD_INCONNU",
-          producerName:
-            item.producerName || item.producer || "Maraîcher partenaire",
-        };
-      });
-
-      const paymentMethod = isPublicSector ? "mandat" : "stripe";
-
-      // Étape 3 : Relais vers l'API d'initialisation transactionnelle d'Europe-West9 (Paris)
-      const orderId = await CheckoutService.validateAndCreateOrder(
+      const orderId = await DocumentWorkflowService.createOrderAndBps(
         buyerInfo,
-        mappedCartItems,
+        cartItems,
         paymentMethod,
+        checkoutData,
       );
 
-      // Étape 4 : Succès total, nettoyage du panier local
-      if (onClearCart) onClearCart();
-
+      clearCart();
       setOrderStatus({
         type: "success",
-        message:
-          "Votre commande a été traitée, enregistrée et scellée fiscalement avec succès.",
-        orderId: orderId,
+        orderId: orderId || "CMD-2026-CONFIRMED",
+        message: isPublicSector
+          ? "Commande B2G enregistrée avec succès. Bon de commande émis sous mandat LME 30 jours."
+          : paymentChoice === "sepa"
+            ? "Prélèvement SEPA B2B enregistré ! La facture à échéance vous sera transmise."
+            : "Paiement sécurisé validé ! Votre commande est transmise aux maraîchers.",
       });
     } catch (error) {
-      console.error("Erreur lors de la validation du panier :", error);
+      console.error("Erreur de commande :", error);
       setOrderStatus({
         type: "error",
         message:
           error.message ||
-          "Une erreur inconnue s'est produite lors de la validation du checkout.",
+          "Une erreur technique est survenue lors de la validation.",
       });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // 1️⃣ État : Succès de commande (Affichage propre de l'état validé)
   if (orderStatus?.type === "success") {
     return (
-      <div className="max-w-2xl mx-auto p-8 bg-white border border-gray-250 rounded-3xl shadow-md text-center space-y-6 my-10 animate-fade-in">
-        <div className="inline-flex p-4 bg-emerald-50 text-emerald-700 rounded-full">
-          <CheckCircle2 size={48} />
+      <div className="max-w-3xl mx-auto p-8 bg-white rounded-3xl border border-gray-200 shadow-md text-center space-y-6 animate-fade-in my-8">
+        <div className="w-16 h-16 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto shadow-sm">
+          <CheckCircle2 size={36} />
         </div>
         <div className="space-y-2">
           <h2 className="text-2xl font-black text-gray-900 tracking-tight">
-            Commande Validée avec Succès !
+            Commande Confirmée !
           </h2>
-          <p className="text-sm text-gray-500 max-w-md mx-auto">
-            {orderStatus.message} Les stocks de vos maraîchers ont été réservés
-            et vos justificatifs fiscaux ont été émis.
+          <p className="text-xs font-bold text-emerald-800 bg-emerald-50 inline-block px-3 py-1 rounded-full uppercase tracking-wider">
+            Réf : {orderStatus.orderId}
+          </p>
+          <p className="text-sm text-gray-600 max-w-md mx-auto pt-2 leading-relaxed">
+            {orderStatus.message}
           </p>
         </div>
 
-        <div className="bg-gray-50 border border-gray-150 rounded-2xl p-5 text-left space-y-3">
-          <div className="flex justify-between items-center border-b border-gray-200 pb-2.5">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Référence Commande
-            </span>
-            <span className="text-sm font-black text-emerald-800">
-              #{orderStatus.orderId}
-            </span>
-          </div>
-          <div className="flex justify-between items-center border-b border-gray-200 pb-2.5">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Règlement
-            </span>
-            <span className="text-xs font-bold text-gray-700 uppercase">
-              {isPublicSector ? "Mandat Administratif (30j)" : "Stripe B2B"}
-            </span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Montant total engagé
-            </span>
-            <span className="text-base font-black text-gray-900">
-              {totalTTC.toFixed(2)} €
-            </span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
-          <a
-            href="/pieces-comptables"
-            className="flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider transition-all shadow-sm"
-          >
-            <FileText size={16} /> Pièces comptables
-          </a>
+        <div className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row justify-center gap-4">
           <button
-            onClick={() => window.location.reload()}
-            className="flex items-center justify-center gap-2 border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider transition-all"
+            type="button"
+            onClick={onBackToShop}
+            className="px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm"
           >
-            Continuer mes achats
+            Retourner au Marché
           </button>
         </div>
       </div>
     );
   }
 
-  // 2️⃣ État : Panier Vide
-  if (!cartItems || cartItems.length === 0) {
+  if (cartItems.length === 0) {
     return (
-      <div className="max-w-4xl mx-auto p-12 bg-white border border-gray-200 rounded-3xl shadow-sm text-center space-y-4 my-10 animate-fade-in">
-        <div className="inline-flex p-4 bg-gray-50 text-gray-400 rounded-full">
+      <div className="max-w-4xl mx-auto p-12 bg-white rounded-3xl border border-gray-200 shadow-sm text-center space-y-5 animate-fade-in my-8">
+        <div className="w-16 h-16 bg-gray-50 text-gray-300 rounded-full flex items-center justify-center mx-auto">
           <ShoppingBag size={32} />
         </div>
-        <h2 className="text-xl font-bold text-gray-900">
-          Votre panier est vide
-        </h2>
-        <p className="text-sm text-gray-500 max-w-sm mx-auto">
-          Découvrez les récoltes maraîchères de notre coopérative locale et
-          commencez à préparer vos approvisionnements en circuit court.
-        </p>
+        <div>
+          <h2 className="text-xl font-black text-gray-900">
+            Votre Panier est Vide
+          </h2>
+          <p className="text-xs text-gray-400 font-medium mt-1">
+            Découvrez nos produits locaux et ajoutez vos récoltes fraîches au
+            panier.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onBackToShop}
+          className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm"
+        >
+          <ArrowLeft size={16} />
+          <span>Parcourir la Boutique</span>
+        </button>
       </div>
     );
   }
 
-  // 3️⃣ Rendu principal du panier actif
+  const validateButtonText = isSubmitting
+    ? "Validation de la commande..."
+    : isPublicSector
+      ? "Valider par Mandat Administratif (30j Chorus)"
+      : paymentChoice === "sepa"
+        ? `Valider le Prélèvement SEPA (${totalTTC.toFixed(2)} € TTC)`
+        : `Valider & Payer par Carte (${totalTTC.toFixed(2)} € TTC)`;
+
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in">
+    <div className="max-w-6xl mx-auto p-4 lg:p-6 space-y-8 animate-fade-in">
+      <div className="flex items-center justify-between border-b border-gray-200 pb-4">
+        <button
+          type="button"
+          onClick={onBackToShop}
+          className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-wider text-gray-700 hover:text-emerald-700 bg-gray-100 hover:bg-emerald-50 px-4 py-2 rounded-xl transition-all border border-gray-200"
+        >
+          <ArrowLeft size={16} />
+          <span>Continuer mes achats</span>
+        </button>
+
+        <span className="text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3.5 py-1.5 rounded-full">
+          Grand Panier Actif ({itemCount} article{itemCount > 1 ? "s" : ""})
+        </span>
+      </div>
+
       {orderStatus?.type === "error" && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-sm flex items-center gap-2.5">
-          <AlertCircle size={18} className="flex-shrink-0" />
-          <span className="font-semibold">{orderStatus.message}</span>
+        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-2xl text-xs font-bold flex items-center gap-2">
+          <AlertCircle size={18} className="text-red-600 shrink-0" />
+          <span>{orderStatus.message}</span>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* COLONNE DE GAUCHE : Liste des articles */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-4">
-            <div className="flex justify-between items-center border-b border-gray-100 pb-3">
-              <h2 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
-                <span>🛒</span> Articles dans votre panier ({totalArticles})
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        {/* COLONNE GAUCHE : DÉTAIL DES ARTICLES (7/12) */}
+        <div className="lg:col-span-7 space-y-4">
+          <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-6">
+            <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+              <h2 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                <ShoppingBag className="text-emerald-600" size={20} />
+                Récapitulatif des Récoltes
               </h2>
               <button
-                onClick={onClearCart}
-                className="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider"
+                type="button"
+                onClick={clearCart}
+                className="text-xs font-bold text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1"
               >
-                Vider le panier
+                <Trash2 size={14} />
+                <span>Vider le panier</span>
               </button>
             </div>
 
-            <div className="divide-y divide-gray-150">
+            <div className="divide-y divide-gray-100 space-y-4 pt-1">
               {cartItems.map((item) => {
-                const qty = parseInt(item?.quantity || item?.qty || 1, 10);
-                const price = Number(item?.price || item?.priceHT || 0);
-                const isBio = Boolean(item?.isBio || item?.bio || false);
-                const itemId = item?.id || item?.productId || item?._id;
+                const qty = Number(item.quantity || item.qty || 1);
+                const priceHT = Number(item.priceHT ?? item.price ?? 0);
+                const vatRate = Number(item.vatRate ?? item.vat ?? 5.5);
+                const itemTotalTTC = priceHT * (1 + vatRate / 100) * qty;
 
                 return (
                   <div
-                    key={itemId}
-                    className="py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+                    key={item.id}
+                    className="pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
                   >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-bold text-gray-900 text-sm">
-                          {item?.title || item?.name || "Légume local"}
-                        </p>
-                        {isBio && (
-                          <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-brand-gold text-brand-dark uppercase tracking-wider shadow-sm">
-                            Bio
-                          </span>
+                    <div className="flex items-center gap-3.5 flex-1">
+                      <div className="w-14 h-14 rounded-2xl bg-gray-100 border border-gray-200 overflow-hidden shrink-0 flex items-center justify-center">
+                        {item.imageUrl || item.image ? (
+                          <img
+                            src={item.imageUrl || item.image}
+                            alt={item.title || item.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-xl">🥕</span>
                         )}
                       </div>
-                      <p className="text-xs text-gray-400 font-medium">
-                        🌾{" "}
-                        {item?.producerName ||
-                          item?.producer ||
-                          "Maraîcher partenaire"}
-                      </p>
+                      <div>
+                        <p className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-wider">
+                          🏷️{" "}
+                          {item.producer ||
+                            item.producerName ||
+                            "Producteur Local"}
+                        </p>
+                        <h4 className="font-bold text-sm text-gray-900 leading-snug">
+                          {item.title || item.name}
+                        </h4>
+                        <p className="text-[11px] text-gray-400 font-semibold mt-0.5">
+                          {priceHT.toFixed(2)} € HT / {item.unit || "kg"} (TVA{" "}
+                          {vatRate}%)
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-6 w-full sm:w-auto">
-                      {/* Contrôle des quantités */}
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-4 self-end sm:self-center shrink-0">
+                      <div className="flex items-center border border-gray-300 rounded-xl bg-gray-50 overflow-hidden">
                         <button
                           type="button"
-                          onClick={() => onUpdateQuantity(itemId, qty - 1)}
-                          className="w-8 h-8 rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center font-bold text-gray-600"
+                          onClick={() => addToCart(item, -1)}
+                          className="px-2.5 py-1 text-gray-600 hover:bg-gray-200 text-xs font-bold"
                         >
-                          -
+                          <Minus size={12} />
                         </button>
-                        <span className="w-10 text-center font-bold text-sm text-gray-900">
-                          {qty} {item?.unit || "kg"}
+                        <span className="px-3 font-bold text-xs text-gray-800">
+                          {qty} {item.unit || "kg"}
                         </span>
                         <button
                           type="button"
-                          onClick={() => onUpdateQuantity(itemId, qty + 1)}
-                          className="w-8 h-8 rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center font-bold text-gray-600"
+                          onClick={() => addToCart(item, 1)}
+                          className="px-2.5 py-1 text-gray-600 hover:bg-gray-200 text-xs font-bold"
                         >
-                          +
+                          <Plus size={12} />
                         </button>
                       </div>
 
-                      {/* Prix et Suppression */}
-                      <div className="text-right min-w-[80px] font-semibold text-gray-950 text-sm">
-                        {(price * qty).toFixed(2)} €
+                      <div className="text-right min-w-[70px]">
+                        <p className="text-sm font-black text-emerald-800">
+                          {itemTotalTTC.toFixed(2)} €
+                        </p>
+                        <p className="text-[9px] text-gray-400 font-semibold uppercase">
+                          TTC
+                        </p>
                       </div>
 
                       <button
                         type="button"
-                        onClick={() => onRemoveItem(itemId)}
-                        className="text-gray-400 hover:text-red-600 p-1.5"
+                        onClick={() => removeFromCart(item.id)}
+                        className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                        title="Supprimer cet article"
                       >
                         <Trash2 size={16} />
                       </button>
@@ -370,140 +350,195 @@ export default function CartContainer({
                 );
               })}
             </div>
-          </div>
 
-          {/* SÉCURITÉ & INFORMATIONS DE FACTURATION CHORUS PRO */}
-          {isPublicSector && (
-            <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-6">
-              <h2 className="text-base font-extrabold text-gray-800 flex items-center gap-2">
-                <span className="w-1.5 h-4 bg-emerald-600 rounded-full"></span>
-                🔒 Informations de facturation obligatoires (Chorus Pro)
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">
-                    Numéro de SIRET Établissement *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={14}
-                    className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 font-mono"
-                    placeholder="14 chiffres requis"
-                    value={billingInfo.siret}
-                    onChange={(e) =>
-                      setBillingInfo({ ...billingInfo, siret: e.target.value })
-                    }
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1.5">
-                    Requis pour l'acheminement et la validation de la facture
-                    par la DGFIP.
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">
-                    Code Service Chorus Pro (Optionnel)
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500"
-                    placeholder="ex: CANTINE-CENTRALE"
-                    value={billingInfo.codeService}
-                    onChange={(e) =>
-                      setBillingInfo({
-                        ...billingInfo,
-                        codeService: e.target.value,
-                      })
-                    }
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1.5">
-                    Permet de diriger automatiquement la facture vers le bon
-                    bureau de traitement.
-                  </p>
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">
-                    Numéro d'Engagement / Bon de commande interne *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500"
-                    placeholder="ex: ENG-2026-089"
-                    value={specificEngagement}
-                    onChange={(e) => setSpecificEngagement(e.target.value)}
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1.5">
-                    Cette référence comptable est obligatoire pour permettre la
-                    télétransmission vers l'ordonnateur public.
-                  </p>
-                </div>
+            <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 text-xs flex items-start gap-3 mt-6">
+              <PackageCheck
+                size={20}
+                className="text-amber-700 shrink-0 mt-0.5"
+              />
+              <div>
+                <p className="font-extrabold text-amber-900">
+                  Conditionnement Consigné Zéro Déchet
+                </p>
+                <p className="text-amber-800 text-[11px] mt-0.5 leading-relaxed">
+                  Toutes vos livraisons sont préparées en caisses et cagettes
+                  réutilisables consignées.
+                </p>
               </div>
             </div>
-          )}
+          </div>
         </div>
 
-        {/* COLONNE DE DROITE : Caisse et Récapitulatif */}
-        <div className="space-y-6">
-          <div className="bg-gray-50 border border-gray-250 rounded-2xl p-6 shadow-sm space-y-6">
-            <h2 className="text-sm font-extrabold text-gray-900 uppercase tracking-wider flex items-center gap-2">
-              <ShoppingBag size={18} className="text-emerald-700" />
-              Récapitulatif de la caisse
-            </h2>
-
-            <div className="space-y-3.5 text-sm border-b border-gray-200 pb-4">
-              <div className="flex justify-between text-gray-500 font-semibold">
-                <span>Total HT</span>
-                <span>{totalHT.toFixed(2)} €</span>
-              </div>
-              <div className="flex justify-between text-gray-500 font-semibold">
-                <span>TVA estimée (5.5%)</span>
-                <span>{totalTVA.toFixed(2)} €</span>
-              </div>
-              <div className="flex justify-between items-center text-gray-900 font-black border-t border-dashed border-gray-200 pt-3 text-base">
-                <span>Total TTC</span>
-                <span>{totalTTC.toFixed(2)} €</span>
-              </div>
+        {/* COLONNE DROITE : CHECKOUT PRÉ-REMPLI (5/12) */}
+        <div className="lg:col-span-5 space-y-6">
+          <form
+            onSubmit={handleCheckoutSubmit}
+            className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-6"
+          >
+            <div className="border-b border-gray-150 pb-4">
+              <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                {isPublicSector ? (
+                  <Building size={20} className="text-emerald-600" />
+                ) : (
+                  <CreditCard size={20} className="text-emerald-600" />
+                )}
+                <span>
+                  {isPublicSector
+                    ? "Règlement Mandat Public (B2G)"
+                    : "Validation & Caisse B2B"}
+                </span>
+              </h3>
+              <p className="text-xs text-gray-400 font-semibold mt-1">
+                {isPublicSector
+                  ? "Facturation Chorus Pro à 30 jours (Loi LME)"
+                  : "Paiement sécurisé via Stripe Connect / Prélèvement SEPA"}
+              </p>
             </div>
 
-            <div className="space-y-3.5">
-              <div className="flex items-start gap-2 text-[10px] text-emerald-800 bg-emerald-50/50 border border-emerald-150 p-3 rounded-xl leading-relaxed">
-                <ShieldCheck
-                  size={16}
-                  className="text-emerald-700 flex-shrink-0 mt-0.5"
-                />
-                <span>
-                  <strong>Certifié sécurisé</strong> : Vos stocks maraîchers
-                  sont décrémentés et vos pièces justificatives de circuit court
-                  sont émises de manière transactionnelle côté serveur (Paris).
+            {/* Total Financier */}
+            <div className="bg-gray-50 border border-gray-150 rounded-2xl p-4 space-y-2 text-xs font-semibold">
+              <div className="flex justify-between text-gray-600">
+                <span>Total Hors Taxes (HT) :</span>
+                <span className="font-bold text-gray-800">
+                  {totalHT.toFixed(2)} €
                 </span>
               </div>
-
-              <button
-                type="button"
-                onClick={handleCheckoutSubmit}
-                disabled={isSubmitting}
-                className="w-full flex items-center justify-center gap-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white font-bold py-3.5 px-6 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md cursor-pointer"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Validation en cours...
-                  </>
-                ) : (
-                  <>
-                    {isPublicSector
-                      ? "Engager le Mandat Public"
-                      : "Régler mes achats par Stripe"}
-                    <ArrowRight size={16} />
-                  </>
-                )}
-              </button>
+              <div className="flex justify-between text-gray-600">
+                <span>TVA (5.5%) :</span>
+                <span className="font-bold text-gray-800">
+                  {totalTVA.toFixed(2)} €
+                </span>
+              </div>
+              <div className="border-t border-gray-200 pt-2 flex justify-between text-base font-black text-emerald-800">
+                <span>Total Général TTC :</span>
+                <span className="text-lg">{totalTTC.toFixed(2)} €</span>
+              </div>
             </div>
-          </div>
+
+            {/* MESSAGE D'INFORMATION PRÉ-REMPLISSAGE */}
+            <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-3.5 text-xs text-emerald-900 space-y-1">
+              <p className="font-extrabold flex items-center gap-1.5">
+                <CheckCircle2 size={16} className="text-emerald-700 shrink-0" />
+                Coordonnées de Facturation & Livraison Utilisateur
+              </p>
+              <p className="text-[11px] text-emerald-800 leading-tight">
+                Les champs ci-dessous sont pré-remplis avec vos données de
+                profil ({user?.companyName || user?.displayName || "Acheteur"}).
+              </p>
+            </div>
+
+            {/* Champs Chorus Pro pour B2G */}
+            {isPublicSector && (
+              <div className="space-y-3 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-150 text-xs">
+                <div>
+                  <label className="block font-extrabold text-emerald-900 uppercase tracking-wider mb-1">
+                    N° d'Engagement Budgétaire * (Chorus Pro)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: ENG-2026-8894"
+                    value={refEngagement}
+                    onChange={(e) => setRefEngagement(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl text-xs font-bold text-gray-800 focus:ring-2 focus:ring-emerald-600"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block font-semibold text-gray-600 mb-0.5">
+                      SIRET Acheteur
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="N° SIRET"
+                      value={siretBuyer}
+                      onChange={(e) => setSiretBuyer(e.target.value)}
+                      className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-gray-600 mb-0.5">
+                      Code Service
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Code Service"
+                      value={codeService}
+                      onChange={(e) => setCodeService(e.target.value)}
+                      className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Choix de paiement pour B2B */}
+            {!isPublicSector && (
+              <div className="space-y-2 text-xs">
+                <label className="block font-extrabold text-gray-700 uppercase tracking-wider">
+                  Mode de Règlement B2B
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentPreference("stripe")}
+                    className={`p-3 rounded-xl border text-center font-extrabold text-xs transition-all ${
+                      paymentChoice === "stripe"
+                        ? "bg-emerald-700 text-white border-emerald-800 shadow-sm"
+                        : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
+                    }`}
+                  >
+                    💳 Carte Bancaire
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentPreference("sepa")}
+                    className={`p-3 rounded-xl border text-center font-extrabold text-xs transition-all ${
+                      paymentChoice === "sepa"
+                        ? "bg-emerald-700 text-white border-emerald-800 shadow-sm"
+                        : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
+                    }`}
+                  >
+                    🏦 Prélèvement SEPA
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Adresse de Livraison */}
+            <div className="space-y-1.5 text-xs">
+              <label className="block font-bold text-gray-700 uppercase tracking-wider">
+                Adresse de Livraison & Point de Dépôt *
+              </label>
+              <textarea
+                rows="2"
+                required
+                placeholder="Saisissez l'adresse de livraison..."
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                className="w-full p-2.5 border border-gray-300 rounded-xl text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSubmitting || cartItems.length === 0}
+              className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-black py-4 px-6 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99]"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Validation de la commande...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck size={18} />
+                  <span>{validateButtonText}</span>
+                </>
+              )}
+            </button>
+          </form>
         </div>
       </div>
     </div>
