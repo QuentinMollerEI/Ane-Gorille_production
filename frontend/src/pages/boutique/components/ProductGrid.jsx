@@ -1,43 +1,46 @@
 import React from "react";
 import ProductCard from "./ProductCard";
+import { Package } from "lucide-react";
 
+/**
+ * 📦 COMPOSANT : ProductGrid.jsx
+ * Grille de cartes produits. Passe toutes les props de callback
+ * (onSelectProduct, onOpenDetails, onViewDetails) pour parer à tout décalage d'importation.
+ */
 export default function ProductGrid({
-  products,
+  products = [],
+  onSelectProduct,
   onOpenDetails,
-  onResetFilters,
+  onViewDetails,
+  onAddToCart,
 }) {
-  // Gestion de l'état vide (Empty State) avec bouton d'action
-  if (products.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-gray-500 border border-dashed border-gray-200 rounded-xl bg-gray-50 w-full col-span-full">
-        <p className="font-medium text-gray-700">
-          Aucun légume ou produit ne correspond à votre recherche.
-        </p>
-        <p className="text-xs text-gray-400 mt-1 mb-4">
-          Essayez de modifier ou de réinitialiser vos filtres.
-        </p>
+  const handleSelect = onSelectProduct || onOpenDetails || onViewDetails;
 
-        {/* Affichage conditionnel du bouton d'action si la fonction est fournie */}
-        {onResetFilters && (
-          <button
-            onClick={onResetFilters}
-            className="px-4 py-2 bg-white border border-gray-200 hover:bg-gray-100 text-green-700 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors cursor-pointer shadow-sm"
-          >
-            Réinitialiser les filtres
-          </button>
-        )}
+  if (!products || products.length === 0) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center space-y-3">
+        <Package size={40} className="mx-auto text-gray-300" />
+        <h3 className="text-base font-bold text-gray-800">
+          Aucun produit disponible
+        </h3>
+        <p className="text-xs text-gray-500 max-w-sm mx-auto">
+          Aucun produit ne correspond à vos critères ou l'ensemble des cultures
+          de cette catégorie est masqué par les producteurs.
+        </p>
       </div>
     );
   }
 
-  // Grille fluide standard
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
       {products.map((product) => (
         <ProductCard
           key={product.id}
           product={product}
-          onOpenDetails={onOpenDetails}
+          onSelectProduct={handleSelect}
+          onOpenDetails={handleSelect}
+          onViewDetails={handleSelect}
+          onAddToCart={onAddToCart}
         />
       ))}
     </div>

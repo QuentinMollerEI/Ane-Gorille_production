@@ -1,155 +1,142 @@
-import React, { useState, useEffect } from "react";
-import { Tag, MapPin, Camera } from "lucide-react";
+import React from "react";
+import { MapPin, Camera, Tag, ShoppingBag } from "lucide-react";
 
 /**
- * 🥕 COMPOSANT : ProductCard.jsx
- * Responsabilité unique : Afficher la fiche unitaire d'un produit dans la boutique
- * exactement selon la maquette visuelle (image/visuel, badges, prix HT/TTC, stock).
+ * 🌿 COMPOSANT : ProductCard.jsx
+ * Visuel exact de la capture d'écran avec support de la photo récolte.
+ * Sécurisé contre l'erreur "onOpenDetails is not a function".
  */
-export default function ProductCard({ product, onOpenDetails }) {
+export default function ProductCard({
+  product,
+  onSelectProduct,
+  onOpenDetails,
+  onViewDetails,
+  onAddToCart,
+}) {
   if (!product) return null;
 
-  const [imgError, setImgError] = useState(false);
-
-  useEffect(() => {
-    setImgError(false);
-  }, [product]);
+  // Sécurité callback : accepte n'importe quel nom de prop passé par le parent
+  const handleCardClick = () => {
+    const callback = onOpenDetails || onSelectProduct || onViewDetails;
+    if (typeof callback === "function") {
+      callback(product);
+    }
+  };
 
   const priceHT = Number(product?.priceHT ?? product?.price ?? 0);
   const vatRate = Number(product?.vatRate ?? product?.vat ?? 5.5);
-  const taxMultiplier = 1 + vatRate / 100;
-  const priceTTC = priceHT * taxMultiplier;
+  const priceTTC = priceHT * (1 + vatRate / 100);
+  const stock = Number(product?.stock ?? 0);
+  const isAvailable = stock > 0;
 
-  const stock = Number(product?.stock ?? product?.quantity ?? 0);
-  const isAvailable = Boolean(product?.isAvailable ?? stock > 0);
-  const isBio = Boolean(product?.isBio ?? product?.bio ?? false);
-  const title = product?.title ?? product?.name ?? "Produit sans nom";
-  const producer = (
-    product?.producer ??
-    product?.producerName ??
-    "Producteur Local"
+  const producerName = (
+    product?.producerCompany ||
+    product?.producerName ||
+    "EXPLOITATION LOCALE"
   ).toUpperCase();
-  const unit = product?.unit ?? "kg";
-  const origin = product?.origin || product?.department || "Dépt: Local";
 
-  let imageUrl = null;
-  const rawImg =
-    product?.imageUrl ||
-    product?.image ||
-    product?.photo ||
-    product?.imgUrl ||
-    product?.img ||
-    product?.picture ||
-    product?.url;
-
-  if (rawImg) {
-    if (typeof rawImg === "string" && rawImg.trim() !== "") {
-      imageUrl = rawImg.trim();
-    } else if (rawImg instanceof File || rawImg instanceof Blob) {
-      imageUrl = URL.createObjectURL(rawImg);
-    }
-  }
-
-  const showPlaceholder = !imageUrl || imgError;
+  const deptCode =
+    product?.producerDepartment ||
+    product?.producerZipCode?.substring(0, 2) ||
+    "31";
+  const imageSrc = product?.imageUrl || product?.image || null;
 
   return (
     <div
-      onClick={() => onOpenDetails && onOpenDetails(product)}
-      className="bg-white rounded-2xl shadow-sm border border-gray-150 overflow-hidden hover:shadow-md transition-all duration-300 cursor-pointer flex flex-col h-full transform hover:-translate-y-0.5 group"
+      onClick={handleCardClick}
+      className="group bg-white border border-gray-200 hover:border-emerald-600 rounded-2xl p-3.5 transition-all duration-200 hover:shadow-md cursor-pointer flex flex-col justify-between space-y-3 relative"
     >
-      {/* 🖼️ ZONE IMAGE / VISUEL */}
-      <div className="h-48 bg-gray-50/80 relative overflow-hidden flex items-center justify-center">
-        {!showPlaceholder ? (
+      {/* BADGE EN STOCK / ÉPUISÉ EN HAUT À DROITE */}
+      <div className="absolute top-5 right-5 z-10">
+        {isAvailable ? (
+          <span className="bg-emerald-600 text-white font-black text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
+            En Stock
+          </span>
+        ) : (
+          <span className="bg-red-600 text-white font-black text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
+            Épuisé
+          </span>
+        )}
+      </div>
+
+      {/* ZONE VISUEL / PHOTO AVEC BADGE DÉPARTEMENT FLOTTANT */}
+      <div className="relative w-full h-36 rounded-xl overflow-hidden bg-gray-100 flex items-center justify-center border border-gray-150">
+        {imageSrc ? (
           <img
-            src={imageUrl}
-            alt={title}
+            src={imageSrc}
+            alt={product.title || product.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            onError={() => setImgError(true)}
           />
         ) : (
-          <div className="flex flex-col items-center justify-center text-gray-300 space-y-1.5 p-4 text-center">
-            <Camera size={36} className="text-gray-300 stroke-[1.5]" />
-            <span className="text-xs font-semibold text-gray-400">
-              Aucun visuel fourni
-            </span>
+          <div className="flex flex-col items-center justify-center text-gray-400 space-y-1">
+            <Camera size={26} />
+            <span className="text-[10px] font-bold">Aucun visuel fourni</span>
           </div>
         )}
 
-        {/* Badge Bio (Haut Gauche) */}
-        {isBio && (
-          <div className="absolute top-3 left-3 z-10">
-            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-400 text-gray-900 shadow-sm uppercase tracking-wider">
-              Bio
-            </span>
-          </div>
-        )}
-
-        {/* Badge Disponibilité (Haut Droite) */}
-        <div className="absolute top-3 right-3 z-10">
-          <span
-            className={`text-[11px] font-extrabold px-3 py-1 rounded-full text-white shadow-sm uppercase tracking-wider ${
-              isAvailable ? "bg-emerald-600" : "bg-red-500"
-            }`}
-          >
-            {isAvailable ? "EN STOCK" : "ÉPUISÉ"}
-          </span>
-        </div>
-
-        {/* Badge Localisation / Origine (Bas Gauche) */}
-        <div className="absolute bottom-3 left-3 z-10">
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg shadow-sm">
-            <MapPin size={11} className="text-red-400" />
-            <span>{origin}</span>
-          </span>
+        {/* BADGE LOCALISATION SUR L'IMAGE (BAS-GAUCHE) */}
+        <div className="absolute bottom-2 left-2 bg-black/65 backdrop-blur-sm text-white px-2 py-0.5 rounded-lg text-[10px] font-extrabold flex items-center gap-1 shadow-sm">
+          <MapPin size={10} className="text-emerald-400" />
+          <span>Dépt: {deptCode}</span>
         </div>
       </div>
 
-      {/* 📝 CORPS DE LA FICHE */}
-      <div className="p-4 space-y-3 flex flex-col flex-grow justify-between">
-        <div>
-          <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-            <Tag size={12} className="text-gray-400" />
-            <span>{producer}</span>
-          </div>
-
-          <h3 className="font-bold text-base text-gray-900 leading-tight line-clamp-2">
-            {title}
-          </h3>
+      {/* CORPS DE CARTE : PRODUCTEUR ET NOM DE LA CULTURE */}
+      <div className="space-y-1">
+        <div className="text-[10px] text-gray-500 font-extrabold tracking-wider flex items-center gap-1">
+          <Tag size={12} className="text-emerald-700 shrink-0" />
+          <span className="truncate">{producerName}</span>
         </div>
 
+        <h3 className="font-black text-gray-900 text-sm group-hover:text-emerald-800 transition-colors line-clamp-1">
+          {product.title || product.name}
+        </h3>
+      </div>
+
+      {/* BLOC TARIFICATION HT ET TTC */}
+      <div className="pt-2 border-t border-gray-100 flex items-end justify-between gap-2">
         <div>
-          <div className="border-b border-gray-100 my-2" />
-
-          <div className="flex items-end justify-between pt-1">
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                PRIX HT
-              </p>
-              <p className="text-sm font-bold text-gray-700">
-                {priceHT.toFixed(2)} €
-              </p>
-            </div>
-
-            <div className="text-right">
-              <p className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
-                PRIX TTC ({vatRate}%)
-              </p>
-              <p className="text-lg font-black text-emerald-700 leading-none">
-                {priceTTC.toFixed(2)} €{" "}
-                <span className="text-xs font-semibold text-gray-500">
-                  / {unit}
-                </span>
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-gray-50/90 border border-gray-100 rounded-xl px-3 py-2 flex items-center justify-between text-xs font-semibold text-gray-600 mt-3">
-            <span>Stock dispo :</span>
-            <span className="font-bold text-amber-800">
-              {stock} {unit}
-            </span>
-          </div>
+          <span className="text-[9px] font-black text-gray-400 uppercase block">
+            Prix HT
+          </span>
+          <p className="text-sm font-black text-gray-900 leading-tight">
+            {priceHT.toFixed(2)} €
+          </p>
         </div>
+
+        <div className="text-right">
+          <span className="text-[9px] font-black text-emerald-800 uppercase block">
+            Prix TTC ({vatRate}%)
+          </span>
+          <p className="text-xs font-black text-emerald-800 leading-tight">
+            {priceTTC.toFixed(2)} € / {product.unit || "kg"}
+          </p>
+        </div>
+      </div>
+
+      {/* PIED DE CARTE ARRONDI : STOCK DISPO ET BOUTON D'AJOUT */}
+      <div className="bg-gray-50 border border-gray-200/80 rounded-xl p-2 flex items-center justify-between text-[11px]">
+        <div className="flex items-center gap-1 font-bold text-gray-600">
+          <span>Stock dispo :</span>
+          <span className="font-extrabold text-amber-900">
+            {stock} {product.unit || "kg"}
+          </span>
+        </div>
+
+        {isAvailable && onAddToCart && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddToCart(product, 1);
+            }}
+            className="p-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-colors flex items-center gap-1 font-bold text-[10px] cursor-pointer shadow-xs"
+            title="Ajouter 1 au panier"
+          >
+            <ShoppingBag size={12} />
+            <span>+ Panier</span>
+          </button>
+        )}
       </div>
     </div>
   );
