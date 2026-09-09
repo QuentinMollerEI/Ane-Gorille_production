@@ -7,11 +7,12 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
+import { OrderDocumentGenerator } from "../../../services/OrderDocumentGenerator";
 
 /**
  * 🧾 COMPOSANT COMPORTEMENTAL : LivreurDocumentsTable.jsx
  * Responsabilité unique : Afficher sous forme de tableau filtré la liste des Bons de Livraison finaux
- * (uniquement les courses livrées/émargées) et proposer leur téléchargement certifié.
+ * (uniquement les courses livrées/émargées) et proposer leur téléchargement certifié PDF / HACCP.
  */
 export default function LivreurDocumentsTable({ deliveries }) {
   const [isRetracted, setIsRetracted] = useState(false);
@@ -20,7 +21,9 @@ export default function LivreurDocumentsTable({ deliveries }) {
   // Normalisation et filtrage strict des Bons de Livraison finaux (émargés)
   const normalizedDocs = (deliveries || [])
     .filter((item) =>
-      ["delivered", "completed", "TERMINE", "LIVRE"].includes(item.status),
+      ["delivered", "completed", "TERMINE", "LIVRE", "DELIVERED"].includes(
+        item.status,
+      ),
     )
     .map((item) => ({
       id: item.id,
@@ -46,51 +49,9 @@ export default function LivreurDocumentsTable({ deliveries }) {
     );
   });
 
-  // Téléchargement certifié du Bon de Livraison au format officiel texte (TXT)
+  // Téléchargement certifié du Bon de Livraison au format PDF
   const handleDownloadDoc = (doc) => {
-    const docContent = `=======================================================
-               PLATEFORME ÂNE & GORILLE
-          JUSTIFICATIF DE PRESTATION LOGISTIQUE
-=======================================================
-Date de génération : ${new Date().toLocaleDateString("fr-FR")}
-Identifiant Commande : ${doc.id}
-Référence du Bon     : ${doc.blCode}
-Type de document     : ${doc.type}
-
--------------------------------------------------------
-PARTENAIRES CONCERNÉS :
--------------------------------------------------------
-Maraîcher Expéditeur : ${doc.producer}
-Acheteur Public      : ${doc.entity}
-
--------------------------------------------------------
-DÉTAILS TECHNIQUES & SÉCURITÉ ALIMENTAIRE (HACCP) :
--------------------------------------------------------
-Distance estimée     : ${(doc.amount / 1.25).toFixed(1)} km
-Température de transport : ${doc.tempHaccp ? `${doc.tempHaccp} °C` : "Non requise ou en cours"}
-Statut de conformité  : ${doc.tempHaccp && Number(doc.tempHaccp) <= 6 ? "CONFORME (Chaîne du froid respectée)" : "A CERTIFIER"}
-
--------------------------------------------------------
-RELEVÉ COMPTABLE & RÉMUNÉRATION :
--------------------------------------------------------
-Montant Logistique HT  : ${(doc.amount / 1.2).toFixed(2)} €
-Taux de TVA            : 20.00 %
-Montant TVA collectée  : ${(doc.amount - doc.amount / 1.2).toFixed(2)} €
-RÉMUNÉRATION LOGISTIQUE TTC : ${doc.amount.toFixed(2)} €
-
-=======================================================
-Généré de façon sécurisée par le protocole "Âne & Gorille"
-Document certifié conforme à la réglementation DREAL.
-=======================================================`;
-
-    const blob = new Blob([docContent], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${doc.type.replace(/\s+/g, "_")}-${doc.id.slice(0, 8).toUpperCase()}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    OrderDocumentGenerator.generatePDF(doc, "BL");
   };
 
   return (
@@ -103,6 +64,7 @@ Document certifié conforme à la réglementation DREAL.
         <button
           onClick={() => setIsRetracted(!isRetracted)}
           className="text-gray-500 hover:text-gray-800 p-1 hover:bg-gray-100 rounded transition-colors"
+          type="button"
         >
           {isRetracted ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
         </button>
@@ -126,7 +88,7 @@ Document certifié conforme à la réglementation DREAL.
               />
             </div>
             <div className="shrink-0 text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-lg shadow-sm">
-              🟢 Bons de livraison finaux uniquement
+              🟢 Bons de livraison PDF finaux uniquement
             </div>
           </div>
 
@@ -142,7 +104,7 @@ Document certifié conforme à la réglementation DREAL.
                   <th className="p-4">Acheteur Destinataire</th>
                   <th className="p-4">Rémunération</th>
                   <th className="p-4">Statut</th>
-                  <th className="p-4 text-right">Justificatif</th>
+                  <th className="p-4 text-right">Téléchargement PDF</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-150">
@@ -185,10 +147,12 @@ Document certifié conforme à la réglementation DREAL.
                       <td className="p-4 text-right">
                         <button
                           onClick={() => handleDownloadDoc(doc)}
-                          className="p-1.5 text-gray-600 hover:text-emerald-700 hover:bg-emerald-50 rounded border border-gray-200 transition-all shadow-sm"
-                          title="Télécharger le bon de livraison certifié"
+                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg transition-all text-xs font-bold inline-flex items-center gap-1 shadow-sm"
+                          title="Télécharger le bon de livraison certifié au format PDF"
+                          type="button"
                         >
                           <Download size={14} />
+                          <span>PDF</span>
                         </button>
                       </td>
                     </tr>
