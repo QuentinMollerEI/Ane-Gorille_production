@@ -9,7 +9,6 @@ import OrderPreparation from "../pages/Preparation/OrderPreparation";
 import MonProfilContainer from "../pages/MonProfil/MonProfilContainer";
 import OrderTracking from "../pages/SuiviDesCommandes/OrderTracking";
 import RoutePlanner from "../pages/FeuilleDeRoute/RoutePlanner";
-import MyDeliveries from "../pages/MesLivraisons/MyDeliveries";
 import PiecesComptables from "../pages/PiecesComptables/PiecesComptables";
 
 // 🛡️ NOUVEAUX IMPORTS : COMPTABILITÉ PRODUCTEUR ET LIVREUR
@@ -103,8 +102,6 @@ export default function Workspace({ activeTab }) {
     switch (activeTab) {
       case "planification":
         return <RoutePlanner />;
-      case "livraison":
-        return <MyDeliveries />;
       case "haccp":
         return (
           <TabPlaceholder

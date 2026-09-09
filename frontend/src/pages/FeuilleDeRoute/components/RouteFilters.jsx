@@ -1,63 +1,69 @@
 import React from "react";
-import { Search, Filter, Calendar, MapPin, Navigation } from "lucide-react";
+import { Search, MapPin, Calendar } from "lucide-react";
 
 /**
  * 🔍 COMPOSANT : RouteFilters.jsx
- * Responsabilité unique : Gérer l'affichage des filtres de date, de secteur de livraison
- * et de recherche de commande pour optimiser la feuille de route logistique.
+ * Responsabilité unique : Afficher l'interface de filtrage local (Recherche, Secteur, Date).
  */
 export default function RouteFilters({
   searchQuery,
   setSearchQuery,
   selectedSector,
   setSelectedSector,
-  sectors,
+  sectors = [],
   selectedDate,
   setSelectedDate,
 }) {
   return (
-    <div className="bg-white border border-gray-250 rounded-2xl shadow-sm p-4 space-y-4">
-      <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">
-        {/* Recherche textuelle */}
-        <div className="relative flex-1">
-          <Search className="absolute left-3.5 top-3 text-gray-400 w-4 h-4" />
+    <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* 1. Moteur de recherche textuel */}
+        <div className="relative">
+          <Search
+            size={16}
+            className="absolute left-3.5 top-3.5 text-gray-400"
+          />
           <input
             type="text"
-            placeholder="Rechercher un producteur, acheteur, commune..."
+            placeholder="Rechercher un maraîcher, acheteur, adresse..."
+            className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-green-500 focus:bg-white transition-all"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-green-500 bg-white"
           />
         </div>
 
-        {/* Sélecteur de secteur logistique (Mutualisation) */}
-        <div className="flex flex-col sm:flex-row gap-3 items-stretch">
-          <div className="relative">
-            <MapPin className="absolute left-3 top-3 text-gray-400 w-4 h-4" />
-            <select
-              value={selectedSector}
-              onChange={(e) => setSelectedSector(e.target.value)}
-              className="pl-9 pr-8 py-2.5 border border-gray-300 rounded-xl text-xs font-black bg-white focus:outline-none focus:ring-1 focus:ring-green-500 appearance-none cursor-pointer"
-            >
-              <option value="ALL">Tous les secteurs de livraison</option>
-              {sectors.map((sector, index) => (
-                <option key={index} value={sector}>
-                  Secteur : {sector}
-                </option>
-              ))}
-            </select>
-          </div>
+        {/* 2. Filtre par secteur dynamique */}
+        <div className="relative">
+          <MapPin
+            size={16}
+            className="absolute left-3.5 top-3.5 text-gray-400"
+          />
+          <select
+            className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-green-500 focus:bg-white transition-all appearance-none"
+            value={selectedSector}
+            onChange={(e) => setSelectedSector(e.target.value)}
+          >
+            <option value="ALL">Tous les secteurs logistiques</option>
+            {sectors.map((sector, idx) => (
+              <option key={idx} value={sector}>
+                Secteur {sector}
+              </option>
+            ))}
+          </select>
+        </div>
 
-          {/* Date de tournée */}
-          <div className="relative">
-            <Calendar className="absolute left-3 top-3 text-gray-400 w-4 h-4" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="pl-9 pr-4 py-2.5 border border-gray-300 rounded-xl text-xs font-black bg-white focus:outline-none focus:ring-1 focus:ring-green-500 cursor-pointer"
-            />
-          </div>
+        {/* 3. Sélecteur de date de tournée */}
+        <div className="relative">
+          <Calendar
+            size={16}
+            className="absolute left-3.5 top-3.5 text-gray-400"
+          />
+          <input
+            type="date"
+            className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-green-500 focus:bg-white transition-all"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+          />
         </div>
       </div>
     </div>

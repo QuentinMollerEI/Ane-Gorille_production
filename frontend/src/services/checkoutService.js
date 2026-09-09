@@ -1,11 +1,11 @@
 import { db } from "./firestore.service";
-// 🔌 Importation des outils Firestore depuis la config centrale pour aligner les instances sous Vite !
+// centralisation des instances pour éviter les conflits sous Vite
 import {
   collection,
   doc,
   runTransaction,
   serverTimestamp,
-} from "../config/firebase";
+} from "firebase/firestore";
 
 /**
  * UTITLITAIRE RECURSIF DE SÉCURISATION (Anti-Crash Firestore)
@@ -39,10 +39,12 @@ const sanitizeData = (obj) => {
 };
 
 /**
- * SERVICE DE COMMANDE & DE GÉNÉRATION DE DOCUMENTS (v3 - Multi-producteurs résistant au crash de transaction)
+ * SERVICE DE COMMANDE & DE GÉNÉRATION DE DOCUMENTS (PRODUCTION REELLE - AVEC DETAILS DES PRODUITS RACINE)
  *
- * Résout l'erreur : "Firestore transactions require all reads to be executed before all writes"
- * en exécutant systématiquement toutes les lectures de stocks (get) avant d'écrire la moindre donnée (update / set).
+ * Ce service est appelé au moment où l'acheteur valide son panier.
+ * Résout l'erreur de permissions et le crash de transaction en exécutant d'abord toutes les lectures.
+ * Ajoute également la liste réelle des produits de la commande directement au document parent dans /orders
+ * pour que l'acheteur puisse voir son panier réel sans fallback statique.
  */
 export const CheckoutService = {
   async validateAndCreateOrder(buyerInfo, cartItems, paymentMethod) {
@@ -56,7 +58,7 @@ export const CheckoutService = {
     // Calcul du montant total de la commande
     const totalAmount = cartItems.reduce((sum, item) => {
       const price = Number(item.priceHT ?? item.price ?? 0);
-      const qty = Number(item.quantity ?? item.qty ?? 0);
+      const qty = Number(item.quantity ?? item.qty ?? 1);
       return sum + price * qty;
     }, 0);
 
@@ -80,7 +82,6 @@ export const CheckoutService = {
 
       // =========================================================================
       // ÉTAPE 1 : TOUTES LES LECTURES (READS ONLY)
-      // On lit d'abord l'intégralité des stocks en base avant d'exécuter la moindre écriture.
       // =========================================================================
       for (const item of cartItems) {
         if (!item.id) continue;
@@ -105,7 +106,7 @@ export const CheckoutService = {
         }
 
         const currentStock = Number(productSnap.data().stock || 0);
-        const requestedQty = Number(item.quantity ?? item.qty ?? 0);
+        const requestedQty = Number(item.quantity ?? item.qty ?? 1);
 
         if (currentStock < requestedQty) {
           throw new Error(
@@ -116,20 +117,19 @@ export const CheckoutService = {
 
       // =========================================================================
       // ÉTAPE 3 : TOUTES LES ÉCRITURES (WRITES ONLY)
-      // Maintenant que toutes les lectures sont faites, on peut écrire de manière sécurisée.
       // =========================================================================
 
       // A. Décrémentation physique du stock de chaque produit
       for (const { item, productRef, productSnap } of productSnaps) {
         const currentStock = Number(productSnap.data().stock || 0);
-        const requestedQty = Number(item.quantity ?? item.qty ?? 0);
+        const requestedQty = Number(item.quantity ?? item.qty ?? 1);
 
         transaction.update(productRef, {
           stock: currentStock - requestedQty,
         });
       }
 
-      // B. Écriture de la commande globale parente (/orders)
+      // B. Écriture de la commande globale parente (/orders) avec l'array de produits réels !
       const orderPayload = sanitizeData({
         id: orderId,
         buyerId: buyerInfo.uid,
@@ -146,6 +146,16 @@ export const CheckoutService = {
         tempHaccp: null,
         carrierId: null,
         carrierName: null,
+        // On stocke les items réels directement ici pour le Suivi de Commande
+        items: cartItems.map((item) => ({
+          id: item.id || null,
+          name: item.title || item.name || "Produit de saison",
+          price: Number(item.priceHT ?? item.price ?? 0),
+          quantity: Number(item.quantity ?? item.qty ?? 1),
+          vatRate: item.vatRate || 5.5,
+          producerId: item.producerId || "PROD_INCONNU",
+          producerName: item.producerName || "Producteur local",
+        })),
       });
       transaction.set(orderRef, orderPayload);
 
@@ -169,7 +179,7 @@ export const CheckoutService = {
         items: cartItems.map((item) => ({
           name: item.title || item.name || "Produit",
           price: Number(item.priceHT ?? item.price ?? 0),
-          quantity: Number(item.quantity ?? item.qty ?? 0),
+          quantity: Number(item.quantity ?? item.qty ?? 1),
           vatRate: item.vatRate || 5.5,
         })),
       });
@@ -181,7 +191,7 @@ export const CheckoutService = {
         const producerData = itemsByProducer[producerId];
         const bpTotal = producerData.items.reduce((sum, item) => {
           const price = Number(item.priceHT ?? item.price ?? 0);
-          const qty = Number(item.quantity ?? item.qty ?? 0);
+          const qty = Number(item.quantity ?? item.qty ?? 1);
           return sum + price * qty;
         }, 0);
 
@@ -196,7 +206,7 @@ export const CheckoutService = {
             id: item.id,
             name: item.title || item.name || "Produit",
             price: Number(item.priceHT ?? item.price ?? 0),
-            quantity: Number(item.quantity ?? item.qty ?? 0),
+            quantity: Number(item.quantity ?? item.qty ?? 1),
             vatRate: item.vatRate || 5.5,
             producerId: producerId,
             producerName: producerData.producerName,

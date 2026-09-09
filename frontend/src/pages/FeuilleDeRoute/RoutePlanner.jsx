@@ -12,11 +12,11 @@ import {
   where,
   onSnapshot,
   doc,
-  updateDoc,
   writeBatch,
 } from "firebase/firestore";
 import { db } from "../../services/firestore.service.js";
 import { useAuth } from "../../context/AuthContext";
+import { DocumentWorkflowService } from "../../services/documentWorkflowService";
 
 // Importation des sous-compartiments d'onglet conformément au principe SRP
 import RouteFilters from "./components/RouteFilters";
@@ -25,7 +25,7 @@ import PickupLeg from "./components/PickupLeg";
 import DeliveryLeg from "./components/DeliveryLeg";
 
 /**
- * UTITLITAIRE DE FORMATAGE DE DATE ULTRA-RÉSILIENT
+ * UTILITAIRE DE FORMATAGE DE DATE ULTRA-RÉSILIENT
  * Convertit tout format de date (Timestamp Firestore, brut, Date JS, String) en AAAA-MM-JJ sans jamais crasher
  */
 const getFormattedDate = (createdAt) => {
@@ -63,7 +63,11 @@ const getFormattedDate = (createdAt) => {
 };
 
 /**
- * 🗺️ COMPOSANT CENTRAL : RoutePlanner.jsx (v4 - Complétude Logistique Intégrée)
+ * 🗺️ COMPOSANT CENTRAL : RoutePlanner.jsx (v4 - Complétude Logistique Synchronisée)
+ * Responsabilité unique : Orchestrer l'espace logistique de planification des tournées (Livreur).
+ * Écoute en temps réel les sous-commandes maraîchères prêtes pour organiser de façon optimisée,
+ * mutualisée et synchronisée la double tournée (ramassage maraîcher ➔ livraison acheteurs).
+ * Calcule en direct la complétude des commandes multi-producteurs pour éviter les erreurs de livraison partielle.
  */
 export default function RoutePlanner() {
   const { user } = useAuth();
@@ -120,16 +124,28 @@ export default function RoutePlanner() {
       const batch = writeBatch(db);
       associatedSubs.forEach((sub) => {
         const docRef = doc(db, "sub_orders", sub.id);
+        // Écrit à la fois carrierId et deliveryDriverId pour garantir que tout autre composant s'y retrouve
         batch.update(docRef, {
           status: "EXPEDIE",
           pickedUpAt: new Date(),
+          carrierId: user.uid,
+          carrierName: user.displayName || "Livreur Âne & Gorille",
           deliveryDriverId: user.uid,
         });
+
+        if (sub.parentOrderId) {
+          const parentRef = doc(db, "orders", sub.parentOrderId);
+          batch.update(parentRef, {
+            status: "EN_COURS_DE_LIVRAISON",
+            carrierId: user.uid,
+            carrierName: user.displayName || "Livreur Âne & Gorille",
+          });
+        }
       });
 
       await batch.commit();
       alert(
-        "🟢 Enlèvement confirmé ! Les colis maraîchers ont été chargés dans votre véhicule et sont en route.",
+        "🟢 Enlèvement confirmé ! Les colis maraîchers ont été chargés et sont en route.",
       );
     } catch (err) {
       console.error("Erreur lors de la validation de l'enlèvement :", err);
@@ -141,95 +157,22 @@ export default function RoutePlanner() {
     }
   };
 
-  // 2. CONFIRMER LA LIVRAISON : Passe les sous-commandes de l'acheteur au statut LIVRE
-  // Met également à jour la commande parente (/orders) à TERMINE et génère la facture de vente et le BL.
-  const handleConfirmDelivery = async (buyerId, associatedSubs) => {
-    setProcessingId(buyerId);
+  // 2. CONFIRMER LA LIVRAISON : Appelle le workflow transactionnel officiel pour valider la livraison HACCP et émettre les factures
+  const handleConfirmDelivery = async (parentOrderId, tempHaccp, signature) => {
+    setProcessingId(parentOrderId);
     try {
-      const batch = writeBatch(db);
-
-      // A. Mettre à jour toutes les sous-commandes à LIVRE
-      associatedSubs.forEach((sub) => {
-        const docRef = doc(db, "sub_orders", sub.id);
-        batch.update(docRef, {
-          status: "LIVRE",
-          deliveredAt: new Date(),
-        });
-      });
-
-      // B. Mettre à jour la commande parente dans `/orders` à TERMINE
-      const parentOrderIds = [
-        ...new Set(associatedSubs.map((s) => s.parentOrderId)),
-      ];
-      parentOrderIds.forEach((pId) => {
-        if (!pId) return;
-        const parentOrderRef = doc(db, "orders", pId);
-        batch.update(parentOrderRef, {
-          status: "TERMINE",
-          updatedAt: new Date(),
-          tempHaccp: 4.5,
-          signature: "SIGNATURE_OK",
-        });
-      });
-
-      // C. Générer automatiquement le Bon de Livraison (BL) et la Facture (FAC) à la racine de `/documents`
-      associatedSubs.forEach((sub) => {
-        const orderId = sub.parentOrderId;
-        if (!orderId) return;
-
-        // 📝 BON DE LIVRAISON (BL)
-        const blDocId = `BL-${orderId.slice(0, 8).toUpperCase()}`;
-        const blRef = doc(db, "documents", blDocId);
-        batch.set(blRef, {
-          id: blDocId,
-          orderId: orderId,
-          buyerId: sub.buyerId || "",
-          buyerName: sub.buyerName || "Acheteur local",
-          producerId: sub.producerId || "",
-          producerName: sub.producerName || "Producteur local",
-          carrierId: user?.uid || "LIVREUR_TEST",
-          carrierName: user?.displayName || user?.name || "Livreur Coopératif",
-          type: "Bon de livraison",
-          createdAt: new Date(),
-          entity: sub.producerName || "Producteur local",
-          amount: sub.amount || 0,
-          vatRate: 5.5,
-          status: "completed",
-          tempHaccp: 4.5,
-          items: sub.items || [],
-        });
-
-        // 🧾 FACTURE DE VENTE D'ACHAT (FAC)
-        const facDocId = `FAC-${orderId.slice(0, 8).toUpperCase()}`;
-        const facRef = doc(db, "documents", facDocId);
-        batch.set(facRef, {
-          id: facDocId,
-          orderId: orderId,
-          buyerId: sub.buyerId || "",
-          buyerName: sub.buyerName || "Acheteur local",
-          producerId: sub.producerId || "",
-          producerName: sub.producerName || "Producteur local",
-          carrierId: user?.uid || "LIVREUR_TEST",
-          carrierName: user?.displayName || user?.name || "Livreur Coopératif",
-          type: "Facture",
-          createdAt: new Date(),
-          entity: sub.producerName || "Producteur local",
-          amount: sub.amount || 0,
-          vatRate: 5.5,
-          status: "paid",
-          items: sub.items || [],
-        });
-      });
-
-      await batch.commit();
+      // Appel du service transactionnel officiel (sécurisé fiscalement et HACCP)
+      await DocumentWorkflowService.validateDelivery(
+        parentOrderId,
+        tempHaccp,
+        signature || "EMARGEMENT_NUMERIQUE_OK",
+      );
       alert(
-        "🎉 Livraison validée ! Les statuts ont été synchronisés et les documents de facturation / livraison ont été certifiés en base.",
+        "🎉 Livraison validée avec succès ! Les factures et bons de livraison correspondants ont été émis.",
       );
     } catch (err) {
-      console.error("Erreur lors de la validation de l'livraison :", err);
-      alert(
-        "Une erreur technique est survenue lors de la validation de livraison.",
-      );
+      console.error("Erreur lors de la validation de la livraison :", err);
+      alert("Erreur de validation : " + err.message);
     } finally {
       setProcessingId(null);
     }
@@ -239,6 +182,7 @@ export default function RoutePlanner() {
   // 📈 LOGIQUE MÉTIER : Filtrage, Mutualisation & Regroupements
   // =========================================================================
 
+  // 1. Détermination de la commune/département de livraison pour extraire les secteurs d'activité uniques
   const sectors = [
     ...new Set(
       subOrders
@@ -251,12 +195,16 @@ export default function RoutePlanner() {
     ),
   ];
 
+  // 2. Application des filtres combinés sur l'ensemble de la base logistique active
   const filteredSubOrders = subOrders.filter((sub) => {
+    // A. Filtrer par date (si la date de commande est sélectionnée) - Utilisation du helper sécurisé
     if (selectedDate) {
       const subDate = getFormattedDate(sub.createdAt);
-      if (!subDate || subDate !== selectedDate) return false;
+      // N'applique le filtre que si le document a une date de création pour éviter de masquer les documents en cours de sauvegarde local
+      if (subDate && subDate !== selectedDate) return false;
     }
 
+    // B. Filtrer par secteur logistique
     if (selectedSector !== "ALL") {
       const subSector = sub.deliveryAddress
         ? sub.deliveryAddress.split(",").pop()?.trim()
@@ -264,6 +212,7 @@ export default function RoutePlanner() {
       if (subSector !== selectedSector) return false;
     }
 
+    // C. Filtrer par barre de recherche textuelle (Producteur, Acheteur, etc.)
     if (searchQuery.trim() !== "") {
       const q = searchQuery.toLowerCase();
       const matchProducer = (sub.producerName || "").toLowerCase().includes(q);
@@ -279,10 +228,14 @@ export default function RoutePlanner() {
     return true;
   });
 
+  // 3. SEGREGATION DES FLUX DE TOURNÉE (Logique SRP de regroupement)
+
+  // A. Étape 1 - Tournée de ramassage : Tout ce qui est prêt en Hangar ("A_RAMASSER" ou "PRET_A_EXPEDIER")
   const readyForPickupSubs = filteredSubOrders.filter(
     (sub) => sub.status === "A_RAMASSER" || sub.status === "PRET_A_EXPEDIER",
   );
 
+  // Regroupement par producteur unique pour mutualiser le point d'enlèvement (une seule visite par maraîcher)
   const pickupGroupsMap = {};
   readyForPickupSubs.forEach((sub) => {
     const pId = sub.producerId || "ID_PRODUCTEUR_TEST";
@@ -299,18 +252,21 @@ export default function RoutePlanner() {
   });
   const pickups = Object.values(pickupGroupsMap);
 
+  // B. Étape 2 - Tournée de livraison : Tout ce qui est en transit ("EXPEDIE" / "EN_COURS_DE_LIVRAISON")
   const readyForDeliverySubs = filteredSubOrders.filter(
     (sub) => sub.status === "EXPEDIE" || sub.status === "EN_COURS_DE_LIVRAISON",
   );
 
+  // Regroupement par commande parente étanche pour éviter de mélanger les paniers de commandes différentes
   const deliveryGroupsMap = {};
   readyForDeliverySubs.forEach((sub) => {
-    const bId = sub.buyerId || "ID_ACHETEUR_TEST";
+    const pOrderId = sub.parentOrderId || "COMMANDE_SANS_PARENT";
 
-    const allSubsForThisBuyerToday = filteredSubOrders.filter(
-      (s) => s.buyerId === bId,
+    // Récupérer tous les sous-bons de cette commande pour estimer la complétude de transport
+    const allSubsForThisOrder = filteredSubOrders.filter(
+      (s) => s.parentOrderId === pOrderId,
     );
-    const missingSubs = allSubsForThisBuyerToday.filter(
+    const missingSubs = allSubsForThisOrder.filter(
       (s) =>
         s.status === "A_PREPARER" ||
         s.status === "A_RAMASSER" ||
@@ -321,31 +277,32 @@ export default function RoutePlanner() {
       (s) => s.producerName || "Producteur inconnu",
     );
 
-    if (!deliveryGroupsMap[bId]) {
-      deliveryGroupsMap[bId] = {
-        buyerId: bId,
+    if (!deliveryGroupsMap[pOrderId]) {
+      deliveryGroupsMap[pOrderId] = {
+        parentOrderId: pOrderId,
+        buyerId: sub.buyerId || "ID_ACHETEUR_TEST",
         buyerName: sub.buyerName || "Acheteur Pro/Public",
         buyerProfile: sub.buyerProfile || "B2B",
         deliveryAddress: sub.deliveryAddress || "Point de distribution central",
-        billingName: sub.billingName || sub.buyerName || "Acheteur",
-        billingEmail: sub.billingEmail || "",
-        engagementNumber: sub.engagementNumber || null,
+        buyerPhone: sub.buyerPhone || null,
         isComplete: isComplete,
         missingProducers: [...new Set(missingProducers)],
-        totalColisToday: allSubsForThisBuyerToday.length,
-        colisLoaded: allSubsForThisBuyerToday.length - missingSubs.length,
+        totalColisToday: allSubsForThisOrder.length,
+        colisLoaded: allSubsForThisOrder.length - missingSubs.length,
         subOrders: [],
       };
     }
-    deliveryGroupsMap[bId].subOrders.push(sub);
+    deliveryGroupsMap[pOrderId].subOrders.push(sub);
   });
   const deliveries = Object.values(deliveryGroupsMap);
 
+  // 4. STATISTIQUES GLOBALISÉES & CALCUL DE MUTUALISATION LOGISTIQUE
   const calculateStats = () => {
     const totalSubOrders = filteredSubOrders.length;
     const totalProducers = pickups.length;
     const totalBuyers = deliveries.length;
 
+    // Calcul de la quantité totale de colis en transit
     let totalQty = 0;
     filteredSubOrders.forEach((sub) => {
       sub.items?.forEach((item) => {
@@ -353,6 +310,7 @@ export default function RoutePlanner() {
       });
     });
 
+    // Calcul de l'indice de mutualisation
     let mutualizationRate = 0;
     const totalStops = totalProducers + totalBuyers;
     if (totalStops > 0 && totalSubOrders > 0) {
@@ -385,6 +343,7 @@ export default function RoutePlanner() {
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in">
+      {/* En-tête principal de la page */}
       <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-gray-100 pb-5 gap-4">
         <div>
           <h1 className="text-2xl font-black text-gray-900 flex items-center gap-2">
@@ -410,8 +369,10 @@ export default function RoutePlanner() {
         </div>
       )}
 
+      {/* 📊 Section 1 : Indicateurs logistiques & Taux de Mutualisation */}
       <RouteSummary stats={stats} />
 
+      {/* 🔍 Section 2 : Filtres intelligents & Moteur de Recherche */}
       <RouteFilters
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
@@ -422,7 +383,9 @@ export default function RoutePlanner() {
         setSelectedDate={setSelectedDate}
       />
 
+      {/* 🚚 Section 3 : Les deux phases de la double-tournée mutualisée */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+        {/* Colonne Gauche : Tournée de Ramassage */}
         <div className="bg-gray-50/50 border border-gray-250 rounded-3xl p-6 space-y-6">
           <div className="space-y-1">
             <h3 className="font-extrabold text-gray-900 text-sm">
@@ -440,6 +403,7 @@ export default function RoutePlanner() {
           />
         </div>
 
+        {/* Colonne Droite : Tournée de Livraison */}
         <div className="bg-gray-50/50 border border-gray-250 rounded-3xl p-6 space-y-6">
           <div className="space-y-1">
             <h3 className="font-extrabold text-gray-900 text-sm">

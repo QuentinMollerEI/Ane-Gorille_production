@@ -64,7 +64,6 @@ export default function Sidebar({ activeTab, setActiveTab }) {
     ],
     livreur: [
       { id: "planification", label: "Feuille de Route", icon: Calendar },
-      { id: "livraison", label: "Mes Livraisons", icon: Truck },
       { id: "haccp", label: "Chaîne du Froid", icon: HeartPulse },
       { id: "compta", label: "Relevés Prestations", icon: FileText },
       { id: "dreal", label: "Conformité DREAL", icon: FileCheck },
