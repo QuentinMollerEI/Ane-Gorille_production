@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
+import { db } from "../services/firestore.service";
+import { collection, onSnapshot } from "firebase/firestore";
 import {
   ShoppingBag,
   ListOrdered,
@@ -20,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Scale,
+  ShieldCheck,
 } from "lucide-react";
 
 /**
@@ -32,6 +35,7 @@ import {
 export default function Sidebar({ activeTab, setActiveTab }) {
   const { user, logout } = useAuth();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
 
   // 🛡️ NORMALISATION DES RÔLES (Robustesse RBAC identique au Workspace-v3)
   let role = user?.role || "acheteur";
@@ -44,6 +48,29 @@ export default function Sidebar({ activeTab, setActiveTab }) {
   ) {
     role = "acheteur";
   }
+
+  // 📡 Écoute en temps réel des demandes d'inscription en attente (pour l'admin)
+  useEffect(() => {
+    if (role !== "admin") return;
+    const usersRef = collection(db, "users");
+    const unsubscribe = onSnapshot(
+      usersRef,
+      (snapshot) => {
+        const pendingUsers = snapshot.docs.filter((docSnap) => {
+          const data = docSnap.data();
+          return (
+            data.accountStatus === "PENDING" ||
+            (!data.accountStatus && data.isApproved === false)
+          );
+        });
+        setPendingApprovalsCount(pendingUsers.length);
+      },
+      (err) => {
+        console.error("Erreur d'écoute des demandes d'approbation :", err);
+      },
+    );
+    return () => unsubscribe();
+  }, [role]);
 
   // 🎨 CONFIGURATION DES ONGLETS PAR RÔLE (Icônes unifiées avec Workspace)
   const menuConfig = {
@@ -72,7 +99,12 @@ export default function Sidebar({ activeTab, setActiveTab }) {
     admin: [
       { id: "fiscal", label: "Surveillance Fiscale", icon: Shield },
       { id: "haccp", label: "Alertes Sanitaires", icon: ShieldAlert },
-      { id: "moderation", label: "Modération Catalogue", icon: CheckSquare },
+      {
+        id: "moderation",
+        label: "Centre de Modération",
+        icon: ShieldCheck,
+        badge: pendingApprovalsCount,
+      },
       { id: "assistance", label: "Support & Tickets", icon: MessageSquare },
       { id: "profil", label: "Profil Administrateur", icon: User },
       { id: "legal", label: "Cadre Légal & Dev", icon: Scale },
@@ -91,78 +123,102 @@ export default function Sidebar({ activeTab, setActiveTab }) {
 
   return (
     <aside
-      className={`bg-white border-r border-gray-200 h-full flex flex-col justify-between transition-all duration-300 shadow-sm relative ${
-        isCollapsed ? "w-16" : "w-64"
+      className={`bg-white border-r border-gray-200 min-h-screen p-4 flex flex-col justify-between transition-all duration-300 ${
+        isCollapsed ? "w-20" : "w-64"
       }`}
     >
-      {/* 1. SECTION DU HAUT (Titre & Rôle) */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4 flex items-center justify-between border-b border-gray-100">
+      <div className="space-y-6">
+        {/* 1. SECTION DU HAUT (Titre, Rôle & Bouton Rétracter) */}
+        <div className="flex items-center justify-between pb-4 border-b border-gray-150">
           {!isCollapsed ? (
-            <div>
-              <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                Espace {role}
-              </span>
-              <p className="text-[9px] text-gray-400 mt-1 font-medium truncate max-w-[150px]">
-                {user?.displayName || user?.email || "Utilisateur"}
-              </p>
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-full border border-amber-400 p-0.5 bg-white shadow-sm flex items-center justify-center shrink-0">
+                <img
+                  src="/Logo.png"
+                  alt="Logo"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div className="flex flex-col truncate">
+                <span className="font-black text-[#2d5a3f] text-sm tracking-tight leading-tight truncate">
+                  {user?.displayName || user?.companyName || user?.email}
+                </span>
+                <span className="text-[10px] text-amber-600 font-extrabold uppercase tracking-wider">
+                  Espace {role}
+                </span>
+              </div>
             </div>
           ) : (
-            <span className="text-center w-full text-lg">-</span>
+            <div className="w-10 h-10 rounded-full border border-amber-400 p-0.5 bg-white shadow-sm flex items-center justify-center mx-auto">
+              <img
+                src="/Logo.png"
+                alt="Logo"
+                className="w-full h-full object-contain"
+              />
+            </div>
           )}
 
-          {/* Bouton pour rétracter la sidebar */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1.5 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-700 transition-colors border border-gray-100 cursor-pointer"
-            title={isCollapsed ? "Déployer le menu" : "Rétracter le menu"}
+            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
+            title={
+              isCollapsed ? "Déplier la navigation" : "Réduire la navigation"
+            }
           >
             {isCollapsed ? (
-              <ChevronRight size={14} />
+              <ChevronRight size={18} />
             ) : (
-              <ChevronLeft size={14} />
+              <ChevronLeft size={18} />
             )}
           </button>
         </div>
 
         {/* 2. LISTE DES LIENS DE NAVIGATION DYNAMIQUES */}
-        <nav className="p-3 space-y-1">
+        <nav className="space-y-1 text-xs font-bold">
           {activeMenuItems.map((item) => {
             const IconComponent = item.icon;
             const isActive = activeTab === item.id;
+            const hasBadge = Boolean(item.badge && item.badge > 0);
 
             return (
               <button
                 key={item.id}
+                type="button"
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl transition-all cursor-pointer ${
                   isActive
-                    ? "bg-green-700 text-white shadow-md shadow-green-700/10"
-                    : "text-gray-600 hover:text-green-700 hover:bg-green-50/50"
+                    ? "bg-[#2d5a3f] text-white shadow-md font-extrabold"
+                    : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 }`}
               >
-                <IconComponent
-                  size={18}
-                  className={
-                    isActive
-                      ? "text-white"
-                      : "text-gray-400 group-hover:text-green-700"
-                  }
-                />
-                {!isCollapsed && <span className="truncate">{item.label}</span>}
+                <div className="flex items-center gap-2.5 truncate">
+                  <IconComponent
+                    size={18}
+                    className={isActive ? "text-amber-400" : "text-gray-400"}
+                  />
+                  {!isCollapsed && (
+                    <span className="truncate">{item.label}</span>
+                  )}
+                </div>
+
+                {hasBadge && !isCollapsed && (
+                  <span className="ml-auto bg-amber-400 text-gray-900 text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm animate-pulse">
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}
         </nav>
       </div>
 
-      {/* 3. SECTION DU BAS (Profil & Déconnexion) */}
-      <div className="p-3 border-t border-gray-100 bg-gray-50/50">
+      {/* 3. SECTION DU BAS (Déconnexion) */}
+      <div className="pt-4 border-t border-gray-150">
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 p-2.5 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 hover:text-red-700 transition-all cursor-pointer"
+          className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
         >
-          <LogOut size={18} className="text-red-500" />
+          <LogOut size={18} />
           {!isCollapsed && <span>Se déconnecter</span>}
         </button>
       </div>

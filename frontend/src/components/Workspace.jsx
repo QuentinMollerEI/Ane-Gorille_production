@@ -2,20 +2,18 @@ import React from "react";
 import { useAuth } from "../context/AuthContext";
 import { Wrench } from "lucide-react";
 
-// 1. IMPORTS DES VUES ACTIVES (S'aligne exactement sur votre arborescence physique)
-import ShopContainer from "../pages/Boutique/ShopContainer";
+// 1. IMPORTS DES VUES ACTIVES
+import ShopContainer from "../pages/boutique/ShopContainer";
 import MiseEnRayon from "../pages/MiseEnRayon/MiseEnRayon";
 import OrderPreparation from "../pages/Preparation/OrderPreparation";
 import MonProfilContainer from "../pages/MonProfil/MonProfilContainer";
 import OrderTracking from "../pages/SuiviDesCommandes/OrderTracking";
 import RoutePlanner from "../pages/FeuilleDeRoute/RoutePlanner";
+import PiecesComptables from "../pages/PiecesComptables/PiecesComptables";
 
-// IMPORTS EXCLUSIFS DES ARCHIVES ET COMPTABILITÉS PAR RÔLE
-import PiecesComptablesAcheteur from "../pages/PiecesComptables/PiecesComptables-Acheteur";
-import ArchiveProducteur from "../pages/ComptabiliteProducteur/ArchiveProducteur";
-import ArchiveLivreur from "../pages/ComptabiliteLivreur/ArchiveLivreur";
-import ArchiveAdmin from "../pages/ComptabiliteAdmin/ArchiveAdmin";
-import AdminLegalLexicon from "../pages/LegalAdmin/AdminLegalLexicon";
+// 👑 IMPORTS DE L'ESPACE ADMINISTRATEUR
+import AdminContainer from "../pages/MonProfil/Admin/AdminContainer";
+import AdminLegalLexicon from "../pages/MonProfil/Admin/AdminLegalLexicon";
 
 // 2. COMPOSANT DE SÉCURITÉ (Évite le crash sur les onglets non encore intégrés)
 const TabPlaceholder = ({ title, description }) => (
@@ -31,7 +29,10 @@ const TabPlaceholder = ({ title, description }) => (
   </div>
 );
 
-// 3. ROUTEUR DYNAMIQUE DE L'ESPACE DE TRAVAIL (Workspace)
+/**
+ * 🧭 ROUTEUR DYNAMIQUE DE L'ESPACE DE TRAVAIL (Workspace.jsx)
+ * Responsabilité unique : Recevoir activeTab depuis Sidebar.jsx et charger le composant correspondant.
+ */
 export default function Workspace({ activeTab }) {
   const { user } = useAuth();
 
@@ -47,7 +48,7 @@ export default function Workspace({ activeTab }) {
     role = "acheteur";
   }
 
-  // --- RENDU 1 : ONGLET ACHETEUR (PARTICULIER, PRO B2B OU ÉTABLISSEMENT PUBLIC B2G) ---
+  // --- RENDU 1 : ONGLET ACHETEUR (PARTICULIER, B2B OU B2G) ---
   if (role === "acheteur") {
     switch (activeTab) {
       case "boutique":
@@ -55,32 +56,13 @@ export default function Workspace({ activeTab }) {
       case "suivi":
         return <OrderTracking />;
       case "compta":
-        return <PiecesComptablesAcheteur />;
+        return <PiecesComptables />;
       case "stats":
         return (
-          <div className="max-w-6xl mx-auto p-6 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 animate-fade-in my-6">
-            <h3 className="text-base font-bold text-brand-green flex items-center">
-              Statistiques d'achat annuel
-            </h3>
-            <p className="text-xs text-gray-500">
-              Consultez votre volume de légumes et fruits bio consommés à
-              l'année.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center pt-2">
-              <div className="p-4 border border-gray-100 bg-gray-50 rounded-xl">
-                <p className="text-2xl font-extrabold text-brand-green">
-                  148 kg
-                </p>
-                <p className="text-xs text-gray-500">Volume global acquis</p>
-              </div>
-              <div className="p-4 border border-gray-100 bg-gray-50 rounded-xl">
-                <p className="text-2xl font-extrabold text-brand-gold">100%</p>
-                <p className="text-xs text-gray-500">
-                  Circuits courts / EGAlim
-                </p>
-              </div>
-            </div>
-          </div>
+          <TabPlaceholder
+            title="Statistiques d'achat"
+            description="Consultez votre volume de légumes et fruits bio consommés à l'année."
+          />
         );
       case "profil":
       default:
@@ -103,7 +85,12 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "compta":
-        return <ArchiveProducteur />;
+        return (
+          <TabPlaceholder
+            title="Historique Comptable & Ventes"
+            description="Suivi de vos versements et de votre solde séquestre Stripe Connect."
+          />
+        );
       case "docs":
         return (
           <TabPlaceholder
@@ -123,7 +110,12 @@ export default function Workspace({ activeTab }) {
       case "planification":
         return <RoutePlanner />;
       case "livraison":
-        return <RoutePlanner />;
+        return (
+          <TabPlaceholder
+            title="Feuille de Route & Livraisons"
+            description="Consultez et validez vos livraisons avec emargement et releve HACCP."
+          />
+        );
       case "haccp":
         return (
           <TabPlaceholder
@@ -132,7 +124,12 @@ export default function Workspace({ activeTab }) {
           />
         );
       case "compta":
-        return <ArchiveLivreur />;
+        return (
+          <TabPlaceholder
+            title="Relevés de prestations"
+            description="Historique de vos facturations logistiques et frais de route."
+          />
+        );
       case "dreal":
         return (
           <TabPlaceholder
@@ -149,10 +146,17 @@ export default function Workspace({ activeTab }) {
   // --- RENDU 4 : ONGLET ADMINISTRATEUR ---
   if (role === "admin") {
     switch (activeTab) {
-      case "legal":
-        return <AdminLegalLexicon />;
+      case "moderation":
+        return <AdminContainer />;
+
       case "fiscal":
-        return <ArchiveAdmin />;
+        return (
+          <TabPlaceholder
+            title="Surveillance Fiscale"
+            description="Contrôle des flux financiers, Chorus Pro et conformité LME."
+          />
+        );
+
       case "haccp":
         return (
           <TabPlaceholder
@@ -160,26 +164,29 @@ export default function Workspace({ activeTab }) {
             description="Surveillance en temps réel des ruptures de la chaîne du froid."
           />
         );
-      case "moderation":
-        return (
-          <TabPlaceholder
-            title="Modération du Catalogue"
-            description="Validation des fiches produits et contrôle des prix de la marketplace."
-          />
-        );
+
       case "assistance":
-      default:
         return (
           <TabPlaceholder
             title="Support & Assistance"
             description="Gestion des tickets d'assistance et support utilisateurs."
           />
         );
+
+      case "legal":
+        // ⚖️ AFFICHE LE CATALOGUE ET LE RÉFÉRENTIEL DES OBLIGATIONS LÉGALES
+        return <AdminLegalLexicon />;
+
+      case "profil":
+        return <MonProfilContainer />;
+
+      default:
+        return <AdminContainer />;
     }
   }
 
   return (
-    <div className="text-center py-20 text-gray-400 italic animate-fade-in">
+    <div className="max-w-6xl mx-auto p-6 text-center py-20 text-gray-400 italic animate-fade-in">
       Veuillez sélectionner un onglet valide dans la barre de navigation.
     </div>
   );
