@@ -8,13 +8,13 @@ import {
 } from "@stripe/react-stripe-js";
 import { ShieldCheck, Loader2, X, AlertTriangle } from "lucide-react";
 
-// 🎯 Initialisation unique de Stripe.js via la clé publique Vite
+// Initialisation unique de Stripe.js via la clé publique Vite
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 
 /**
- * 🔒 Formulaire interne de saisie IBAN & Signature du Mandat
+ * 🔒 Formulaire interne de signature du Mandat SEPA
  */
-function SepaFormContent({ onClose, onSuccess }) {
+function SepaFormContent({ userName, userEmail, onClose, onSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -27,18 +27,27 @@ function SepaFormContent({ onClose, onSuccess }) {
     setIsProcessing(true);
     setErrorMsg(null);
 
-    // 🎯 Confirmation du SetupIntent auprès de Stripe
+    // 🎯 Confirmation du SetupIntent SEPA avec transmission obligatoire des billing_details
     const { error, setupIntent } = await stripe.confirmSetup({
       elements,
       confirmParams: {
         return_url: `${window.location.origin}/dashboard`,
+        payment_method_data: {
+          billing_details: {
+            name: userName || "Acheteur Professionnel",
+            email: userEmail || "contact@entreprise.fr",
+          },
+        },
       },
       redirect: "if_required",
     });
 
     if (error) {
-      console.error("[SEPA CONFIRM ERROR] :", error);
-      setErrorMsg(error.message || "Impossible de valider le mandat SEPA.");
+      console.error("[SEPA CONFIRM ERROR] Détails de l'erreur :", error);
+      setErrorMsg(
+        error.message ||
+          "Impossible de valider le mandat SEPA. Vérifiez les informations saisies.",
+      );
       setIsProcessing(false);
     } else if (setupIntent && setupIntent.status === "succeeded") {
       console.log("[SEPA MANDAT VALIDÉ] SetupIntent ID :", setupIntent.id);
@@ -58,7 +67,7 @@ function SepaFormContent({ onClose, onSuccess }) {
         </div>
       )}
 
-      {/* Saisie sécurisée IBAN gérée directement par Stripe Elements */}
+      {/* Saisie de l'IBAN gérée par l'iFrame sécurisée Stripe */}
       <div className="p-4 border border-gray-200 rounded-2xl bg-gray-50/50">
         <PaymentElement />
       </div>
@@ -80,7 +89,7 @@ function SepaFormContent({ onClose, onSuccess }) {
           {isProcessing ? (
             <>
               <Loader2 size={16} className="animate-spin" />
-              <span>Enregistrement du Mandat...</span>
+              <span>Signature en cours...</span>
             </>
           ) : (
             <>
@@ -95,9 +104,15 @@ function SepaFormContent({ onClose, onSuccess }) {
 }
 
 /**
- * 💳 Modal Principale enveloppée dans le composant Elements de Stripe
+ * 💳 Modal Principale avec injection du contexte Stripe Elements
  */
-export default function SepaMandateModal({ clientSecret, onClose, onSuccess }) {
+export default function SepaMandateModal({
+  clientSecret,
+  userName,
+  userEmail,
+  onClose,
+  onSuccess,
+}) {
   if (!clientSecret) return null;
 
   return (
@@ -124,9 +139,13 @@ export default function SepaMandateModal({ clientSecret, onClose, onSuccess }) {
           </div>
         </div>
 
-        {/* Injection du contexte Stripe Elements avec le clientSecret */}
         <Elements stripe={stripePromise} options={{ clientSecret }}>
-          <SepaFormContent onClose={onClose} onSuccess={onSuccess} />
+          <SepaFormContent
+            userName={userName}
+            userEmail={userEmail}
+            onClose={onClose}
+            onSuccess={onSuccess}
+          />
         </Elements>
       </div>
     </div>

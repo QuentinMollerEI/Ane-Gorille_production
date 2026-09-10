@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { auth, db } from "../../config/firebase";
-// 🎯 Importation du service logistique
 import { checkGeoFence } from "../../services/logisticsService";
 import {
   User,
@@ -25,7 +24,8 @@ import {
 /**
  * 🔒 COMPOSANT : Register.jsx
  * Emplacement : src/components/auth/Register.jsx
- * Responsabilité : Inscription B2B/B2G & Affichage du formulaire.
+ * Responsabilité : Inscription des professionnels avec vérification GeoFence (50km)
+ *                  et synchronisation immédiate du rôle Firestore.
  */
 export default function Register() {
   const [role, setRole] = useState("acheteur_prive");
@@ -39,7 +39,6 @@ export default function Register() {
     phone: "",
     postalCode: "",
     city: "",
-    codeServiceChorus: "",
   });
 
   const [isCheckingGeo, setIsCheckingGeo] = useState(false);
@@ -72,26 +71,25 @@ export default function Register() {
     }
 
     try {
-      // 🎯 ÉTAPE 1 : Appel au Service Logistique (Saint-Rémy-sur-Avre - 50 km)
+      // 🎯 ÉTAPE 1 : Contrôle Geo-Fence (50 km autour du Hub Saint-Rémy-sur-Avre)
       setIsCheckingGeo(true);
-
       const geoResult = await checkGeoFence(
-        formData.postalCode,
-        formData.city,
+        formData.postalCode.trim(),
+        formData.city.trim(),
         50,
       );
 
       if (geoResult && geoResult.isEligible === false) {
         setErrorMessage(
           geoResult.message ||
-            "Désolé, votre secteur se situe au-delà du périmètre de livraison de proximité (50 km).",
+            "Désolé, votre commune se situe au-delà du périmètre de livraison de proximité (50 km).",
         );
         setIsCheckingGeo(false);
         return;
       }
       setIsCheckingGeo(false);
 
-      // 🎯 ÉTAPE 2 : Inscription Firebase Authentication
+      // 🎯 ÉTAPE 2 : Création de compte Firebase Authentication
       setIsLoading(true);
       const userCredential = await createUserWithEmailAndPassword(
         auth,
@@ -104,7 +102,7 @@ export default function Register() {
         await updateProfile(user, { displayName: formData.displayName.trim() });
       }
 
-      // 🎯 ÉTAPE 3 : Provisioning du Profil Firestore (`users/{uid}`)
+      // 🎯 ÉTAPE 3 : Écriture synchrone du profil Firestore (`users/{uid}`)
       const userProfile = {
         uid: user.uid,
         email: user.email,
@@ -115,6 +113,7 @@ export default function Register() {
         phone: formData.phone.trim(),
         postalCode: formData.postalCode.trim(),
         city: formData.city.trim(),
+        address: "",
         isProfileCompleted: false,
         deferredPaymentEnabled:
           role === "acheteur_public" || role === "acheteur_prive",
@@ -122,15 +121,15 @@ export default function Register() {
         updatedAt: new Date().toISOString(),
       };
 
-      if (role === "acheteur_public" && formData.codeServiceChorus) {
-        userProfile.codeServiceChorus = formData.codeServiceChorus.trim();
-      }
-
       await setDoc(doc(db, "users", user.uid), userProfile);
-      console.log(`[REGISTER SUCCESS] Compte créé : ${user.uid} (${role})`);
+      console.log(
+        `[REGISTER SUCCESS] Compte ${role} créé pour UID: ${user.uid}`,
+      );
 
-      // 🎯 ÉTAPE 4 : Transition gérée automatiquement par PublicOnlyRoute dans App.jsx
       setIsLoading(false);
+
+      // 🎯 FORCE LA SYNCHRONISATION DU CONTEXTE AUTH ET REDIRIGE AVEC LE BON RÔLE
+      window.location.href = "/dashboard";
     } catch (err) {
       console.error("[REGISTER ERROR] :", err);
       setIsCheckingGeo(false);
@@ -288,7 +287,7 @@ export default function Register() {
                     required
                     value={formData.companyName}
                     onChange={handleChange}
-                    placeholder="Sarl Bio Resto / Ferme des Lilas"
+                    placeholder="Mairie de St-Rémy / Resto Bio"
                     className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
@@ -339,44 +338,26 @@ export default function Register() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">
-                  Numéro SIRET (14 chiffres) *
-                </label>
-                <input
-                  type="text"
-                  name="siret"
-                  required
-                  maxLength={14}
-                  value={formData.siret}
-                  onChange={handleChange}
-                  placeholder="12345678900012"
-                  className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-
-              {role === "acheteur_public" && (
-                <div>
-                  <label className="block font-bold text-gray-700 mb-1">
-                    Code Service Chorus Pro (B2G)
-                  </label>
-                  <input
-                    type="text"
-                    name="codeServiceChorus"
-                    value={formData.codeServiceChorus}
-                    onChange={handleChange}
-                    placeholder="EX: SERVICE_CANTINE"
-                    className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-              )}
+            <div>
+              <label className="block font-bold text-gray-700 mb-1">
+                Numéro SIRET (14 chiffres) *
+              </label>
+              <input
+                type="text"
+                name="siret"
+                required
+                maxLength={14}
+                value={formData.siret}
+                onChange={handleChange}
+                placeholder="12345678900012"
+                className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-emerald-50/40 p-3 rounded-2xl border border-emerald-100">
               <div>
                 <label className="block font-bold text-emerald-950 mb-1">
-                  Code Postal de Livraison *
+                  Code Postal *
                 </label>
                 <div className="relative">
                   <MapPin
@@ -470,12 +451,12 @@ export default function Register() {
               {isCheckingGeo ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  <span>Calcul de la distance (Hub Saint-Rémy)...</span>
+                  <span>Vérification GeoFence (50 km)...</span>
                 </>
               ) : isLoading ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  <span>Création de votre espace en cours...</span>
+                  <span>Création du compte...</span>
                 </>
               ) : (
                 <>

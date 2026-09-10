@@ -1,245 +1,376 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../../../context/AuthContext";
-import { profileService } from "../../../services/profile.service";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { db } from "../../../config/firebase";
+import { checkGeoFence } from "../../../services/logisticsService";
 import {
-  Building,
-  MapPin,
   User,
+  Building2,
+  Phone,
   Mail,
-  ShieldCheck,
+  MapPin,
+  Save,
   Loader2,
   CheckCircle2,
   AlertTriangle,
 } from "lucide-react";
 
+/**
+ * 🔒 SOUS-COMPOSANT : GeneralInfoForm.jsx
+ * Emplacement : src/pages/MonProfil/components/GeneralInfoForm.jsx
+ * Responsabilité : Coordonnées générales, validation GeoFence (50 km)
+ *                  et mise à jour dynamique de isProfileCompleted dans Firestore.
+ */
 export default function GeneralInfoForm({ onProfileUpdated }) {
   const { user } = useAuth();
+
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
 
   const [formData, setFormData] = useState({
     displayName: "",
     companyName: "",
     siret: "",
+    phone: "",
     email: "",
     address: "",
-    zipCode: "",
+    postalCode: "",
     city: "",
   });
 
+  // Chargement des données Firestore au montage
   useEffect(() => {
-    if (!user?.uid) return;
-    async function loadData() {
+    if (!user?.uid) {
+      setLoading(false);
+      return;
+    }
+
+    async function fetchUserData() {
       try {
-        const data = await profileService.getUserProfile(user.uid);
-        if (data) {
+        const userRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userRef);
+
+        if (userSnap.exists()) {
+          const data = userSnap.data();
           setFormData({
             displayName: data.displayName || user.displayName || "",
             companyName: data.companyName || "",
             siret: data.siret || "",
+            phone: data.phone || "",
             email: data.email || user.email || "",
             address: data.address || "",
-            zipCode: data.zipCode || "",
+            postalCode: data.postalCode || "",
             city: data.city || "",
           });
         }
-      } catch (err) {
-        console.error("Erreur chargement profil :", err);
+      } catch (error) {
+        console.error("Erreur chargement profil :", error);
       } finally {
         setLoading(false);
       }
     }
-    loadData();
+
+    fetchUserData();
   }, [user?.uid]);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!user?.uid) return;
+    if (!user?.uid || isSubmitting) return;
 
-    setSaving(true);
-    setMessage(null);
+    setIsSubmitting(true);
+    setIsSaved(false);
+    setErrorMessage(null);
 
     try {
-      const result = await profileService.updateUserProfile(
-        user.uid,
-        formData,
-        user.role,
+      // 🎯 1. Contrôle Géo-Fence (50 km autour du Hub)
+      const geoResult = await checkGeoFence(
+        formData.postalCode.trim(),
+        formData.city.trim(),
+        50,
       );
-      setMessage({
-        type: "success",
-        text: "Informations enregistrées avec succès !",
+
+      if (geoResult && geoResult.isEligible === false) {
+        setErrorMessage(
+          geoResult.message ||
+            `Commune non éligible : ${formData.city} se situe à ${geoResult.distanceKm} km du Hub (limite autorisée de 50 km).`,
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      // 🎯 2. Lecture de l'état global du document pour évaluer la complétude
+      const userRef = doc(db, "users", user.uid);
+      const userSnap = await getDoc(userRef);
+      const currentData = userSnap.exists() ? userSnap.data() : {};
+
+      // 🎯 3. Calcul dynamique de isProfileCompleted
+      const hasBaseInfo = Boolean(
+        formData.displayName.trim() &&
+        formData.companyName.trim() &&
+        formData.siret.trim() &&
+        formData.phone.trim() &&
+        formData.address.trim() &&
+        formData.postalCode.trim() &&
+        formData.city.trim(),
+      );
+
+      let isComplete = hasBaseInfo;
+      const userRole = currentData.role || "acheteur_prive";
+
+      if (userRole === "acheteur_public") {
+        const hasChorus = Boolean(
+          (currentData.codeServiceChorus &&
+            currentData.codeServiceChorus.trim()) ||
+          (currentData.codeService && currentData.codeService.trim()) ||
+          (currentData.refEngagement && currentData.refEngagement.trim()),
+        );
+        isComplete = hasBaseInfo && hasChorus;
+      } else if (userRole === "producteur") {
+        isComplete =
+          hasBaseInfo &&
+          Boolean(currentData.stripeAccountId || currentData.sepaMandateActive);
+      }
+
+      // 🎯 4. Sauvegarde dans Firestore AVEC le champ isProfileCompleted
+      await updateDoc(userRef, {
+        displayName: formData.displayName.trim(),
+        companyName: formData.companyName.trim(),
+        siret: formData.siret.trim(),
+        phone: formData.phone.trim(),
+        address: formData.address.trim(),
+        postalCode: formData.postalCode.trim(),
+        city: formData.city.trim(),
+        isProfileCompleted: isComplete, // 🎯 ÉCRITURE DU STATUT DANS FIRESTORE
+        updatedAt: new Date().toISOString(),
       });
-      if (onProfileUpdated) onProfileUpdated(result);
-    } catch (err) {
-      console.error("Erreur sauvegarde :", err);
-      setMessage({
-        type: "error",
-        text: "Impossible de sauvegarder les modifications.",
-      });
+
+      setIsSaved(true);
+      if (onProfileUpdated) onProfileUpdated();
+      setTimeout(() => setIsSaved(false), 3500);
+    } catch (error) {
+      console.error("Erreur mise à jour profil :", error);
+      setErrorMessage("Une erreur est survenue lors de la sauvegarde.");
     } finally {
-      setSaving(false);
+      setIsSubmitting(false);
     }
   };
 
   if (loading) {
     return (
-      <div className="p-8 text-center text-xs font-bold text-gray-400 flex items-center justify-center gap-2">
-        <Loader2 size={16} className="animate-spin text-emerald-700" />
-        <span>Chargement des données établissement...</span>
+      <div className="bg-white border border-gray-200 rounded-3xl p-6 flex items-center justify-center">
+        <Loader2 className="animate-spin text-emerald-700" size={20} />
+        <span className="ml-2 text-xs font-bold text-gray-600">
+          Chargement...
+        </span>
       </div>
     );
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-6 text-xs"
-    >
-      <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2 border-b pb-3">
-        <Building className="text-emerald-700" size={18} />
-        <span>Identité de l'Établissement & Référent</span>
-      </h3>
+    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4 text-xs">
+      <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+        <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+          <User size={16} className="text-emerald-700" />
+          Informations Générales & Coordonnées de Livraison
+        </h3>
+        {isSaved && (
+          <span className="flex items-center gap-1 text-emerald-700 font-bold">
+            <CheckCircle2 size={14} /> Profil mis à jour !
+          </span>
+        )}
+      </div>
 
-      {message && (
-        <div
-          className={`p-3 rounded-xl font-bold flex items-center gap-2 border ${
-            message.type === "success"
-              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-              : "bg-red-50 border-red-200 text-red-700"
-          }`}
-        >
-          {message.type === "success" ? (
-            <CheckCircle2 size={16} />
-          ) : (
-            <AlertTriangle size={16} />
-          )}
-          <span>{message.text}</span>
+      {errorMessage && (
+        <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-2xl font-bold flex items-center gap-2">
+          <AlertTriangle size={16} className="shrink-0 text-red-600" />
+          <span>{errorMessage}</span>
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="space-y-1">
-          <label className="font-bold text-gray-700">
-            Nom & Prénom du Référent :
-          </label>
-          <input
-            type="text"
-            required
-            value={formData.displayName}
-            onChange={(e) =>
-              setFormData({ ...formData, displayName: e.target.value })
-            }
-            className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-          />
-        </div>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">
+              Responsable du compte *
+            </label>
+            <div className="relative">
+              <User
+                className="absolute left-3 top-2.5 text-gray-400"
+                size={16}
+              />
+              <input
+                type="text"
+                name="displayName"
+                required
+                value={formData.displayName}
+                onChange={handleChange}
+                placeholder="Jean Dupont"
+                className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+          </div>
 
-        <div className="space-y-1">
-          <label className="font-bold text-gray-700">
-            Adresse E-mail Identifiante :
-          </label>
-          <div className="relative">
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">
+              Raison Sociale / Enseigne *
+            </label>
+            <div className="relative">
+              <Building2
+                className="absolute left-3 top-2.5 text-gray-400"
+                size={16}
+              />
+              <input
+                type="text"
+                name="companyName"
+                required
+                value={formData.companyName}
+                onChange={handleChange}
+                placeholder="Raison sociale"
+                className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">
+              Numéro SIRET (14 chiffres) *
+            </label>
             <input
-              type="email"
-              disabled
-              value={formData.email}
-              className="w-full p-2.5 border border-gray-200 rounded-xl bg-gray-100 font-medium text-gray-500 cursor-not-allowed"
+              type="text"
+              name="siret"
+              required
+              maxLength={14}
+              value={formData.siret}
+              onChange={handleChange}
+              placeholder="12345678900012"
+              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
-            <Mail size={16} className="absolute right-3 top-3 text-gray-400" />
+          </div>
+
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">
+              Téléphone Direct *
+            </label>
+            <div className="relative">
+              <Phone
+                className="absolute left-3 top-2.5 text-gray-400"
+                size={16}
+              />
+              <input
+                type="tel"
+                name="phone"
+                required
+                value={formData.phone}
+                onChange={handleChange}
+                placeholder="06 12 34 56 78"
+                className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="block font-bold text-gray-700 mb-1">
+              Adresse E-mail de Connexion (Non modifiable)
+            </label>
+            <div className="relative">
+              <Mail
+                className="absolute left-3 top-2.5 text-gray-400"
+                size={16}
+              />
+              <input
+                type="email"
+                name="email"
+                disabled
+                value={formData.email}
+                className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-500 font-medium outline-none cursor-not-allowed"
+              />
+            </div>
           </div>
         </div>
 
-        <div className="space-y-1">
-          <label className="font-bold text-gray-700">
-            Raison Sociale / Établissement :
-          </label>
-          <input
-            type="text"
-            required
-            value={formData.companyName}
-            onChange={(e) =>
-              setFormData({ ...formData, companyName: e.target.value })
-            }
-            className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-          />
-        </div>
-
-        <div className="space-y-1">
-          <label className="font-bold text-gray-700">
-            Numéro SIRET (14 chiffres) :
-          </label>
-          <input
-            type="text"
-            required
-            value={formData.siret}
-            onChange={(e) =>
-              setFormData({ ...formData, siret: e.target.value })
-            }
-            className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
-          />
-        </div>
-      </div>
-
-      <div className="pt-2 border-t space-y-4">
-        <h4 className="font-extrabold text-gray-800 text-xs flex items-center gap-1.5">
-          <MapPin size={16} className="text-emerald-700" />
-          <span>Adresse de Livraison & Facturation</span>
-        </h4>
-
-        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-          <div className="sm:col-span-6 space-y-1">
-            <label className="font-bold text-gray-700">Rue / Lieu-dit :</label>
+        {/* SECTION ADRESSE SOUMISE AU GÉOREPÉRAGE 50 KM */}
+        <div className="space-y-3 pt-2 border-t border-gray-100">
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">
+              Adresse Civique de Livraison *
+            </label>
             <input
               type="text"
+              name="address"
               required
               value={formData.address}
-              onChange={(e) =>
-                setFormData({ ...formData, address: e.target.value })
-              }
+              onChange={handleChange}
+              placeholder="15 Rue de la République"
               className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
 
-          <div className="sm:col-span-3 space-y-1">
-            <label className="font-bold text-gray-700">Code Postal :</label>
-            <input
-              type="text"
-              required
-              value={formData.zipCode}
-              onChange={(e) =>
-                setFormData({ ...formData, zipCode: e.target.value })
-              }
-              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-emerald-50/40 p-3 rounded-2xl border border-emerald-100">
+            <div>
+              <label className="block font-bold text-emerald-950 mb-1">
+                Code Postal *
+              </label>
+              <div className="relative">
+                <MapPin
+                  className="absolute left-3 top-2.5 text-emerald-600"
+                  size={16}
+                />
+                <input
+                  type="text"
+                  name="postalCode"
+                  required
+                  value={formData.postalCode}
+                  onChange={handleChange}
+                  placeholder="28380"
+                  className="w-full pl-9 pr-3 py-2.5 border border-emerald-200 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+            </div>
 
-          <div className="sm:col-span-3 space-y-1">
-            <label className="font-bold text-gray-700">Commune :</label>
-            <input
-              type="text"
-              required
-              value={formData.city}
-              onChange={(e) =>
-                setFormData({ ...formData, city: e.target.value })
-              }
-              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
+            <div>
+              <label className="block font-bold text-emerald-950 mb-1">
+                Ville / Commune (GeoFence 50 km) *
+              </label>
+              <input
+                type="text"
+                name="city"
+                required
+                value={formData.city}
+                onChange={handleChange}
+                placeholder="Saint-Rémy-sur-Avre"
+                className="w-full p-2.5 border border-emerald-200 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
           </div>
         </div>
-      </div>
 
-      <button
-        type="submit"
-        disabled={saving}
-        className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:bg-gray-300 text-white font-black py-3 px-6 rounded-2xl uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
-      >
-        {saving ? (
-          <Loader2 size={16} className="animate-spin" />
-        ) : (
-          <ShieldCheck size={16} />
-        )}
-        <span>Enregistrer les données de l'établissement</span>
-      </button>
-    </form>
+        <div className="flex justify-end pt-2">
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold rounded-xl transition-colors flex items-center gap-2 cursor-pointer disabled:bg-gray-300 shadow-sm"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                <span>Vérification GeoFence...</span>
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                <span>Enregistrer mon profil</span>
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }

@@ -4,7 +4,7 @@ const { db } = require("../config/firebaseAdmin");
 /**
  * 🔒 CLOUD FUNCTION v2 : createSepaSetupIntentServer
  * Région : europe-west9 (Paris)
- * Secret : STRIPE_SECRET_KEY
+ * Secret : STRIPE_SECRET_KEY (Google Cloud Secret Manager)
  */
 exports.createSepaSetupIntentServer = onCall(
   {
@@ -24,7 +24,7 @@ exports.createSepaSetupIntentServer = onCall(
     const userEmail = request.auth.token.email || "";
 
     try {
-      // 2. Vérification de la clé Stripe
+      // 2. Récupération sécurisée du secret Stripe depuis process.env
       const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
       if (!stripeSecretKey) {
         throw new HttpsError(
@@ -46,18 +46,16 @@ exports.createSepaSetupIntentServer = onCall(
         }
       } catch (dbError) {
         console.error(
-          "[SEPA DB ERROR] Impossible de lire le document user :",
+          "[SEPA DB ERROR] Lecture document utilisateur :",
           dbError,
         );
       }
 
       let customerId = userData.stripeCustomerId;
 
-      // 4. Création du Customer Stripe si inexistant
+      // 4. Création du Customer Stripe si non existant
       if (!customerId) {
-        console.log(
-          `[STRIPE] Création d'un Customer Stripe pour l'utilisateur ${userId}`,
-        );
+        console.log(`[STRIPE] Création Customer pour UID: ${userId}`);
         const customer = await stripe.customers.create({
           email: userData.email || userEmail,
           name:
@@ -68,23 +66,21 @@ exports.createSepaSetupIntentServer = onCall(
         });
         customerId = customer.id;
 
-        // Mise à jour de l'ID Customer dans Firestore
+        // Sauvegarde de l'ID Customer dans Firestore
         await userRef.set(
           { stripeCustomerId: customerId, updatedAt: new Date().toISOString() },
           { merge: true },
         );
       }
 
-      // 5. Création du SetupIntent SEPA
+      // 5. Création du SetupIntent SEPA Direct Debit
       const setupIntent = await stripe.setupIntents.create({
         customer: customerId,
         payment_method_types: ["sepa_debit"],
         metadata: { firebaseUID: userId },
       });
 
-      console.log(
-        `[SEPA SUCCESS] SetupIntent généré avec succès : ${setupIntent.id}`,
-      );
+      console.log(`[SEPA SUCCESS] SetupIntent généré : ${setupIntent.id}`);
 
       return {
         success: true,
@@ -100,7 +96,7 @@ exports.createSepaSetupIntentServer = onCall(
 
       throw new HttpsError(
         "internal",
-        error.message || "Erreur lors de la création du mandat SEPA.",
+        error.message || "Erreur lors de l'initialisation du mandat SEPA.",
       );
     }
   },
