@@ -1,423 +1,504 @@
 import React, { useState } from "react";
-import { useNavigate, Navigate } from "react-router-dom";
-// 🎯 Depuis src/components/auth/Register.jsx, on remonte de 2 niveaux ( ../../ )
-import { useAuth } from "../../context/AuthContext";
+import { Link } from "react-router-dom";
+import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
 import { auth, db } from "../../config/firebase";
-import { getFunctions, httpsCallable } from "firebase/functions";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+// 🎯 Importation du service logistique
+import { checkGeoFence } from "../../services/logisticsService";
 import {
-  MapPin,
+  User,
+  Mail,
+  Lock,
+  Building2,
+  Phone,
   ShieldCheck,
+  MapPin,
+  Loader2,
   AlertTriangle,
-  CheckCircle2,
   ArrowRight,
+  Sprout,
+  Landmark,
+  Store,
+  CheckCircle2,
 } from "lucide-react";
 
 /**
- * 📝 COMPOSANT : Register.jsx
- * Inscription B2B / B2G / Producteur avec Validation Geo-Fencing V2 (europe-west9).
+ * 🔒 COMPOSANT : Register.jsx
+ * Emplacement : src/components/auth/Register.jsx
+ * Responsabilité : Inscription B2B/B2G & Affichage du formulaire.
  */
-export default function Register({ onNavigateToLogin, onRegisterSuccess }) {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const functions = getFunctions(auth?.app, "europe-west9");
-
-  // 🛡️ Redirection si déjà connecté
-  if (user) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  // Étape 1 : Formulaire d'identité
+export default function Register() {
   const [role, setRole] = useState("acheteur_prive");
-  const [displayName, setDisplayName] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [siret, setSiret] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [formData, setFormData] = useState({
+    email: "",
+    password: "",
+    confirmPassword: "",
+    displayName: "",
+    companyName: "",
+    siret: "",
+    phone: "",
+    postalCode: "",
+    city: "",
+    codeServiceChorus: "",
+  });
 
-  // Étape 2 : Adresse & Geo-Fencing
-  const [address, setAddress] = useState("");
-  const [zipCode, setZipCode] = useState("");
-  const [city, setCity] = useState("");
+  const [isCheckingGeo, setIsCheckingGeo] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
 
-  // États du contrôle géographique
-  const [geoStatus, setGeoStatus] = useState(null);
-  const [checkingGeo, setCheckingGeo] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState(null);
-
-  // Validation Géographique en Direct via Cloud Function V2 (europe-west9)
-  const handleVerifyGeoFence = async () => {
-    if (!address.trim() || !city.trim()) {
-      setError(
-        "Veuillez renseigner au moins votre rue et votre commune pour tester l'éligibilité.",
-      );
-      return;
-    }
-
-    setCheckingGeo(true);
-    setError(null);
-    setGeoStatus(null);
-
-    try {
-      const validateGeoFn = httpsCallable(
-        functions,
-        "validateAddressAndGeoFence",
-      );
-      const res = await validateGeoFn({
-        address,
-        zipCode,
-        city,
-        role,
-      });
-
-      setGeoStatus(res.data);
-    } catch (err) {
-      console.error("Erreur test Geo-Fence :", err);
-      setError(
-        err.message ||
-          "Erreur lors de la vérification géographique de l'adresse.",
-      );
-    } finally {
-      setCheckingGeo(false);
-    }
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Enregistrement Auth + Firestore + Redirection vers Dashboard
+  const isPasswordMatch =
+    formData.password.length >= 6 &&
+    formData.password === formData.confirmPassword;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!geoStatus || !geoStatus.eligible) {
-      setError(
-        "Votre adresse doit être testée et certifiée dans le périmètre du Hub (Saint-Rémy-sur-Avre) avant de valider l'inscription.",
-      );
+    if (isLoading || isCheckingGeo) return;
+
+    setErrorMessage(null);
+
+    if (formData.password !== formData.confirmPassword) {
+      setErrorMessage("Les mots de passe ne correspondent pas.");
       return;
     }
 
-    setSubmitting(true);
-    setError(null);
+    if (formData.password.length < 6) {
+      setErrorMessage("Le mot de passe doit contenir au moins 6 caractères.");
+      return;
+    }
 
     try {
-      // 1. Création du compte Firebase Auth
-      const userCred = await createUserWithEmailAndPassword(
-        auth,
-        email,
-        password,
+      // 🎯 ÉTAPE 1 : Appel au Service Logistique (Saint-Rémy-sur-Avre - 50 km)
+      setIsCheckingGeo(true);
+
+      const geoResult = await checkGeoFence(
+        formData.postalCode,
+        formData.city,
+        50,
       );
-      const uid = userCred.user.uid;
 
-      // 2. Écriture du document utilisateur dans Firestore
-      await setDoc(doc(db, "users", uid), {
-        uid,
-        displayName,
-        companyName,
-        siret,
-        email,
-        role,
-        address,
-        zipCode,
-        city,
-        isGeoEligible: geoStatus.eligible,
-        hubDistanceKm: geoStatus.distanceKm,
-        maxAllowedKm: role === "producteur" ? 30 : 50,
-        createdAt: serverTimestamp(),
-      });
-
-      // 3. Navigation vers le Dashboard
-      if (onRegisterSuccess) {
-        onRegisterSuccess(userCred.user);
+      if (geoResult && geoResult.isEligible === false) {
+        setErrorMessage(
+          geoResult.message ||
+            "Désolé, votre secteur se situe au-delà du périmètre de livraison de proximité (50 km).",
+        );
+        setIsCheckingGeo(false);
+        return;
       }
-      navigate("/dashboard", { replace: true });
+      setIsCheckingGeo(false);
+
+      // 🎯 ÉTAPE 2 : Inscription Firebase Authentication
+      setIsLoading(true);
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        formData.email.trim(),
+        formData.password,
+      );
+      const user = userCredential.user;
+
+      if (formData.displayName) {
+        await updateProfile(user, { displayName: formData.displayName.trim() });
+      }
+
+      // 🎯 ÉTAPE 3 : Provisioning du Profil Firestore (`users/{uid}`)
+      const userProfile = {
+        uid: user.uid,
+        email: user.email,
+        role: role,
+        displayName: formData.displayName.trim(),
+        companyName: formData.companyName.trim(),
+        siret: formData.siret.trim(),
+        phone: formData.phone.trim(),
+        postalCode: formData.postalCode.trim(),
+        city: formData.city.trim(),
+        isProfileCompleted: false,
+        deferredPaymentEnabled:
+          role === "acheteur_public" || role === "acheteur_prive",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (role === "acheteur_public" && formData.codeServiceChorus) {
+        userProfile.codeServiceChorus = formData.codeServiceChorus.trim();
+      }
+
+      await setDoc(doc(db, "users", user.uid), userProfile);
+      console.log(`[REGISTER SUCCESS] Compte créé : ${user.uid} (${role})`);
+
+      // 🎯 ÉTAPE 4 : Transition gérée automatiquement par PublicOnlyRoute dans App.jsx
+      setIsLoading(false);
     } catch (err) {
-      console.error("Erreur Inscription :", err);
-      setError(err.message || "Impossible de finaliser l'inscription.");
-    } finally {
-      setSubmitting(false);
+      console.error("[REGISTER ERROR] :", err);
+      setIsCheckingGeo(false);
+      setIsLoading(false);
+
+      switch (err.code) {
+        case "auth/email-already-in-use":
+          setErrorMessage("Cet e-mail est déjà associé à un compte existant.");
+          break;
+        case "auth/invalid-email":
+          setErrorMessage("L'adresse e-mail saisie est invalide.");
+          break;
+        default:
+          setErrorMessage(
+            err.message || "Une erreur est survenue lors de l'inscription.",
+          );
+      }
     }
   };
 
   return (
-    <div className="max-w-2xl mx-auto p-6 bg-white border border-gray-200 rounded-3xl shadow-sm space-y-6 text-xs">
-      <div className="border-b border-gray-150 pb-4 text-center space-y-1">
-        <h2 className="text-xl font-black text-gray-900">
-          Création de Compte Professionnel
-        </h2>
-        <p className="text-gray-500 font-semibold">
-          Circuit court agricole sécurisé autour du Hub de Saint-Rémy-sur-Avre
-        </p>
-      </div>
-
-      {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 font-bold flex items-center gap-2">
-          <AlertTriangle size={18} className="shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* CHOIX DU RÔLE */}
-        <div className="space-y-2">
-          <label className="block font-black uppercase text-gray-700 tracking-wider">
-            Sélectionnez votre Rôle :
-          </label>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                setRole("acheteur_prive");
-                setGeoStatus(null);
-              }}
-              className={`p-3 rounded-2xl border text-left font-bold transition-all cursor-pointer ${
-                role === "acheteur_prive"
-                  ? "bg-emerald-50 border-emerald-700 text-emerald-900 shadow-sm"
-                  : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
-              }`}
-            >
-              <div className="font-extrabold text-sm mb-0.5">
-                🏢 Acheteur Privé
-              </div>
-              <div className="text-[10px] text-gray-500 font-normal">
-                Cantine privée, Restaurant, Épicerie (Rayon 50 km)
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setRole("acheteur_public");
-                setGeoStatus(null);
-              }}
-              className={`p-3 rounded-2xl border text-left font-bold transition-all cursor-pointer ${
-                role === "acheteur_public"
-                  ? "bg-blue-50 border-blue-700 text-blue-900 shadow-sm"
-                  : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
-              }`}
-            >
-              <div className="font-extrabold text-sm mb-0.5">
-                🏛️ Acheteur Public
-              </div>
-              <div className="text-[10px] text-gray-500 font-normal">
-                Collectivité, Restauration scolaire (Chorus Pro, Rayon 50 km)
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setRole("producteur");
-                setGeoStatus(null);
-              }}
-              className={`p-3 rounded-2xl border text-left font-bold transition-all cursor-pointer ${
-                role === "producteur"
-                  ? "bg-amber-50 border-amber-700 text-amber-900 shadow-sm"
-                  : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
-              }`}
-            >
-              <div className="font-extrabold text-sm mb-0.5">🧑‍🌾 Producteur</div>
-              <div className="text-[10px] text-gray-500 font-normal">
-                Maraîcher local, Exploitation agricole (Rayon 30 km)
-              </div>
-            </button>
+    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-10 sm:px-6 lg:px-8 text-xs">
+      <div className="sm:mx-auto sm:w-full sm:max-w-xl">
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center p-3 bg-emerald-100 text-emerald-800 rounded-3xl mb-2">
+            <Sprout size={28} />
           </div>
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">
+            Créer votre compte professionnel
+          </h2>
+          <p className="text-gray-500 font-medium">
+            Plateforme d'alimentation locale et circuit court pour les
+            professionnels.
+          </p>
         </div>
 
-        {/* INFORMATIONS COMPTE & ENTITÉ */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700">
-              Nom & Prénom du Référent :
+        <div className="mt-6 bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6">
+          {/* SÉLECTION DU RÔLE */}
+          <div className="space-y-2">
+            <label className="block font-extrabold text-gray-900 uppercase tracking-wider">
+              1. Choisissez votre profil professionnel *
             </label>
-            <input
-              type="text"
-              required
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="ex: Jean Dupont"
-              className="w-full p-3 border border-gray-300 rounded-xl font-medium"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700">
-              Nom de la Ferme / Établissement :
-            </label>
-            <input
-              type="text"
-              required
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="ex: Ferme des 3 Chênes"
-              className="w-full p-3 border border-gray-300 rounded-xl font-medium"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700">Numéro SIRET :</label>
-            <input
-              type="text"
-              required
-              value={siret}
-              onChange={(e) => setSiret(e.target.value)}
-              placeholder="14 chiffres sans espace"
-              className="w-full p-3 border border-gray-300 rounded-xl font-mono"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700">
-              Adresse E-mail Identifiant :
-            </label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="contact@exemple.fr"
-              className="w-full p-3 border border-gray-300 rounded-xl font-medium"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-1">
-          <label className="font-bold text-gray-700">Mot de Passe :</label>
-          <input
-            type="password"
-            required
-            minLength={6}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            className="w-full p-3 border border-gray-300 rounded-xl font-medium"
-          />
-        </div>
-
-        {/* SECTION LOCALISATION & VERIFICATION GEO-FENCE */}
-        <div className="p-4 bg-emerald-50/50 border border-emerald-200 rounded-2xl space-y-3">
-          <div className="flex items-center justify-between border-b border-emerald-100 pb-2">
-            <h3 className="font-extrabold text-emerald-900 flex items-center gap-1.5 text-xs uppercase tracking-wider">
-              <MapPin size={16} className="text-emerald-700" />
-              <span>Géolocalisation & Rayon de Livraison</span>
-            </h3>
-            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
-              Hub : Saint-Rémy-sur-Avre (Max :{" "}
-              {role === "producteur" ? "30 km" : "50 km"})
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-            <div className="sm:col-span-6 space-y-1">
-              <label className="font-bold text-gray-700">
-                Rue / Lieu-dit :
-              </label>
-              <input
-                type="text"
-                required
-                value={address}
-                onChange={(e) => {
-                  setAddress(e.target.value);
-                  setGeoStatus(null);
-                }}
-                placeholder="12 rue de la Mairie"
-                className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium"
-              />
-            </div>
-
-            <div className="sm:col-span-3 space-y-1">
-              <label className="font-bold text-gray-700">Code Postal :</label>
-              <input
-                type="text"
-                required
-                value={zipCode}
-                onChange={(e) => {
-                  setZipCode(e.target.value);
-                  setGeoStatus(null);
-                }}
-                placeholder="28380"
-                className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-mono"
-              />
-            </div>
-
-            <div className="sm:col-span-3 space-y-1">
-              <label className="font-bold text-gray-700">Commune :</label>
-              <input
-                type="text"
-                required
-                value={city}
-                onChange={(e) => {
-                  setCity(e.target.value);
-                  setGeoStatus(null);
-                }}
-                placeholder="Saint-Rémy"
-                className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium"
-              />
-            </div>
-          </div>
-
-          <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={handleVerifyGeoFence}
-              disabled={checkingGeo || !address.trim() || !city.trim()}
-              className="w-full sm:w-auto px-4 py-2.5 bg-emerald-800 hover:bg-emerald-900 disabled:bg-gray-300 text-white font-black rounded-xl uppercase tracking-wider text-[11px] transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-            >
-              <ShieldCheck size={16} />
-              <span>
-                {checkingGeo
-                  ? "Calcul de la distance..."
-                  : "Tester l'Éligibilité Géographique"}
-              </span>
-            </button>
-
-            {geoStatus && (
-              <div
-                className={`p-3 rounded-xl border flex items-center gap-2 font-bold ${
-                  geoStatus.eligible
-                    ? "bg-emerald-100 border-emerald-300 text-emerald-950"
-                    : "bg-amber-100 border-amber-300 text-amber-950"
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <button
+                type="button"
+                onClick={() => setRole("acheteur_public")}
+                className={`p-3.5 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer ${
+                  role === "acheteur_public"
+                    ? "border-emerald-600 bg-emerald-50/80 text-emerald-950 font-extrabold ring-2 ring-emerald-500/20"
+                    : "border-gray-200 bg-white text-gray-600 font-bold hover:bg-gray-50"
                 }`}
               >
-                {geoStatus.eligible ? (
-                  <CheckCircle2
-                    size={18}
-                    className="text-emerald-700 shrink-0"
+                <Landmark
+                  size={22}
+                  className={
+                    role === "acheteur_public"
+                      ? "text-emerald-700"
+                      : "text-gray-400"
+                  }
+                />
+                <span className="leading-tight">Acheteur Public</span>
+                <span className="text-[10px] text-gray-400 font-normal">
+                  Chorus Pro / Cantines
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRole("acheteur_prive")}
+                className={`p-3.5 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer ${
+                  role === "acheteur_prive"
+                    ? "border-emerald-600 bg-emerald-50/80 text-emerald-950 font-extrabold ring-2 ring-emerald-500/20"
+                    : "border-gray-200 bg-white text-gray-600 font-bold hover:bg-gray-50"
+                }`}
+              >
+                <Store
+                  size={22}
+                  className={
+                    role === "acheteur_prive"
+                      ? "text-emerald-700"
+                      : "text-gray-400"
+                  }
+                />
+                <span className="leading-tight">Acheteur Pro B2B</span>
+                <span className="text-[10px] text-gray-400 font-normal">
+                  Restaurateurs / Commerces
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRole("producteur")}
+                className={`p-3.5 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer ${
+                  role === "producteur"
+                    ? "border-emerald-600 bg-emerald-50/80 text-emerald-950 font-extrabold ring-2 ring-emerald-500/20"
+                    : "border-gray-200 bg-white text-gray-600 font-bold hover:bg-gray-50"
+                }`}
+              >
+                <Sprout
+                  size={22}
+                  className={
+                    role === "producteur" ? "text-emerald-700" : "text-gray-400"
+                  }
+                />
+                <span className="leading-tight">Fournisseur</span>
+                <span className="text-[10px] text-gray-400 font-normal">
+                  Exploitations Agricoles
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {errorMessage && (
+            <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-2xl font-bold flex items-center gap-2">
+              <AlertTriangle size={16} className="shrink-0 text-red-600" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">
+                  Nom & Prénom du Responsable *
+                </label>
+                <div className="relative">
+                  <User
+                    className="absolute left-3 top-2.5 text-gray-400"
+                    size={16}
                   />
-                ) : (
-                  <AlertTriangle
-                    size={18}
-                    className="text-amber-700 shrink-0"
+                  <input
+                    type="text"
+                    name="displayName"
+                    required
+                    value={formData.displayName}
+                    onChange={handleChange}
+                    placeholder="Jean Dupont"
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
-                )}
-                <div>
-                  <p>{geoStatus.message}</p>
                 </div>
               </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">
+                  Raison Sociale / Enseigne *
+                </label>
+                <div className="relative">
+                  <Building2
+                    className="absolute left-3 top-2.5 text-gray-400"
+                    size={16}
+                  />
+                  <input
+                    type="text"
+                    name="companyName"
+                    required
+                    value={formData.companyName}
+                    onChange={handleChange}
+                    placeholder="Sarl Bio Resto / Ferme des Lilas"
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">
+                  Adresse E-mail Professionnelle *
+                </label>
+                <div className="relative">
+                  <Mail
+                    className="absolute left-3 top-2.5 text-gray-400"
+                    size={16}
+                  />
+                  <input
+                    type="email"
+                    name="email"
+                    required
+                    value={formData.email}
+                    onChange={handleChange}
+                    placeholder="contact@etablissement.fr"
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">
+                  Téléphone Direct *
+                </label>
+                <div className="relative">
+                  <Phone
+                    className="absolute left-3 top-2.5 text-gray-400"
+                    size={16}
+                  />
+                  <input
+                    type="tel"
+                    name="phone"
+                    required
+                    value={formData.phone}
+                    onChange={handleChange}
+                    placeholder="06 12 34 56 78"
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">
+                  Numéro SIRET (14 chiffres) *
+                </label>
+                <input
+                  type="text"
+                  name="siret"
+                  required
+                  maxLength={14}
+                  value={formData.siret}
+                  onChange={handleChange}
+                  placeholder="12345678900012"
+                  className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+
+              {role === "acheteur_public" && (
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">
+                    Code Service Chorus Pro (B2G)
+                  </label>
+                  <input
+                    type="text"
+                    name="codeServiceChorus"
+                    value={formData.codeServiceChorus}
+                    onChange={handleChange}
+                    placeholder="EX: SERVICE_CANTINE"
+                    className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-emerald-50/40 p-3 rounded-2xl border border-emerald-100">
+              <div>
+                <label className="block font-bold text-emerald-950 mb-1">
+                  Code Postal de Livraison *
+                </label>
+                <div className="relative">
+                  <MapPin
+                    className="absolute left-3 top-2.5 text-emerald-600"
+                    size={16}
+                  />
+                  <input
+                    type="text"
+                    name="postalCode"
+                    required
+                    value={formData.postalCode}
+                    onChange={handleChange}
+                    placeholder="28380"
+                    className="w-full pl-9 pr-3 py-2.5 border border-emerald-200 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-emerald-950 mb-1">
+                  Ville / Commune *
+                </label>
+                <input
+                  type="text"
+                  name="city"
+                  required
+                  value={formData.city}
+                  onChange={handleChange}
+                  placeholder="Saint-Rémy-sur-Avre"
+                  className="w-full p-2.5 border border-emerald-200 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-gray-100 pt-3">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">
+                  Mot de Passe Sécurisé *
+                </label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-2.5 text-gray-400"
+                    size={16}
+                  />
+                  <input
+                    type="password"
+                    name="password"
+                    required
+                    value={formData.password}
+                    onChange={handleChange}
+                    placeholder="••••••••"
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">
+                  Confirmer le Mot de Passe *
+                </label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-2.5 text-gray-400"
+                    size={16}
+                  />
+                  <input
+                    type="password"
+                    name="confirmPassword"
+                    required
+                    value={formData.confirmPassword}
+                    onChange={handleChange}
+                    placeholder="••••••••"
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {isPasswordMatch && (
+              <div className="flex items-center gap-1.5 text-emerald-700 font-extrabold text-[11px] pt-1">
+                <CheckCircle2 size={14} />
+                <span>Les mots de passe correspondent parfaitement.</span>
+              </div>
             )}
+
+            <button
+              type="submit"
+              disabled={isCheckingGeo || isLoading}
+              className="w-full py-3.5 bg-emerald-800 hover:bg-emerald-900 disabled:bg-gray-300 text-white font-black rounded-2xl uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm mt-4"
+            >
+              {isCheckingGeo ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Calcul de la distance (Hub Saint-Rémy)...</span>
+                </>
+              ) : isLoading ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Création de votre espace en cours...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck size={16} />
+                  <span>Valider mon Inscription</span>
+                  <ArrowRight size={16} />
+                </>
+              )}
+            </button>
+          </form>
+
+          <div className="flex items-center justify-between border-t border-gray-100 pt-4 text-gray-500 font-medium">
+            <p>
+              Déjà inscrit ?{" "}
+              <Link
+                to="/login"
+                className="text-emerald-700 font-extrabold hover:underline"
+              >
+                Se connecter
+              </Link>
+            </p>
           </div>
         </div>
-
-        {/* VALIDATION FINALE & CRÉATION DE COMPTE */}
-        <button
-          type="submit"
-          disabled={submitting || !geoStatus || !geoStatus.eligible}
-          className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-black py-4 px-6 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-        >
-          <span>
-            {submitting
-              ? "Création du compte..."
-              : "Valider et Créer mon Compte"}
-          </span>
-          <ArrowRight size={16} />
-        </button>
-      </form>
-
-      <div className="text-center pt-2 border-t border-gray-100">
-        <button
-          type="button"
-          onClick={onNavigateToLogin || (() => navigate("/login"))}
-          className="text-gray-500 hover:text-emerald-800 font-bold underline"
-        >
-          Déjà un compte ? Connectez-vous ici
-        </button>
       </div>
     </div>
   );

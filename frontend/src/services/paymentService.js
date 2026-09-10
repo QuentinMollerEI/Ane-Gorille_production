@@ -2,115 +2,52 @@ import { auth } from "../config/firebase";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
 /**
- * 📦 DRIVER 1 : Stripe SEPA Direct Debit (Natif & Tokenisé)
+ * 💳 SERVICE PAIEMENT (Production-Ready)
+ * Encapsule les appels HTTPS Callable v2 vers Google Cloud Functions (europe-west9).
  */
-const StripeSepaDriver = {
-  async initMandateSession(userId) {
+
+/**
+ * Initialise la session du Mandat de Prélèvement SEPA Stripe Connect
+ */
+export const initSepaSetupIntent = async () => {
+  try {
     const functions = getFunctions(auth?.app, "europe-west9");
-    const createSetupFn = httpsCallable(
+    const createSepaFn = httpsCallable(
       functions,
       "createSepaSetupIntentServer",
     );
 
-    const response = await createSetupFn({ userId });
-    if (!response.data?.success) {
-      throw new Error(
-        response.data?.error || "Échec de création du SetupIntent SEPA.",
-      );
-    }
-
-    return {
-      provider: "stripe_sepa",
-      clientSecret: response.data.clientSecret,
-      customerId: response.data.customerId,
-    };
-  },
-
-  async processPayment(orderData) {
-    const functions = getFunctions(auth?.app, "europe-west9");
-    const processSepaFn = httpsCallable(
-      functions,
-      "processSepaOrderPaymentServer",
+    const response = await createSepaFn();
+    return response.data;
+  } catch (error) {
+    console.error(
+      "[paymentService] Erreur initialisation Mandat SEPA :",
+      error,
     );
-
-    const response = await processSepaFn({
-      orderId: orderData.orderId,
-      amountTTC: orderData.totalTTC,
-      userId: orderData.userId,
-    });
-
-    return {
-      provider: "stripe_sepa",
-      status: response.data?.status || "succeeded",
-      transactionId: response.data?.paymentIntentId,
-    };
-  },
+    throw new Error(
+      error.message || "Échec de l'initialisation du paiement sécurisé SEPA.",
+    );
+  }
 };
 
 /**
- * 📦 DRIVER 2 : Virement Bancaire Manuel (B2B / B2G)
+ * Confirme une commande par Virement Bancaire (Compte Séquestre B2B / B2G)
+ * @param {Object} orderData - Données scellées de la commande
  */
-const BankTransferDriver = {
-  async initMandateSession() {
-    return { provider: "bank_transfer", requiresSetup: false };
-  },
-
-  async processPayment(orderData) {
+export const confirmBankTransferOrder = async (orderData) => {
+  try {
     const functions = getFunctions(auth?.app, "europe-west9");
-    const confirmTransferFn = httpsCallable(
+    const confirmVirementFn = httpsCallable(
       functions,
       "confirmBankTransferOrderServer",
     );
 
-    const response = await confirmTransferFn({ orderData });
-
-    return {
-      provider: "bank_transfer",
-      status: "pending_bank_transfer",
-      orderId: response.data?.orderId,
-      paymentInstructions: response.data?.paymentInstructions,
-    };
-  },
-};
-
-/**
- * 🛡️ SERVICE ABSTRAIT : paymentService (Pattern Strategy)
- */
-export const paymentService = {
-  /**
-   * Initialise le mandat SEPA B2B (Méthode appelée par BillieForm.jsx)
-   */
-  async setupB2BMandate(userId, method = "stripe_sepa") {
-    return this.initMandateSession(userId, method);
-  },
-
-  /**
-   * Initialise la session de mandat ou d'enregistrement du mode de paiement
-   */
-  async initMandateSession(userId, method = "stripe_sepa") {
-    console.log(`[PaymentService] Initialisation du mandat via : ${method}`);
-    switch (method) {
-      case "stripe_sepa":
-        return await StripeSepaDriver.initMandateSession(userId);
-      case "bank_transfer":
-        return await BankTransferDriver.initMandateSession(userId);
-      default:
-        throw new Error(`Mode de paiement non pris en charge : ${method}`);
-    }
-  },
-
-  /**
-   * Exécute le règlement d'une commande selon le mode choisi
-   */
-  async processPayment(orderData, method = "stripe_sepa") {
-    console.log(`[PaymentService] Règlement de la commande via : ${method}`);
-    switch (method) {
-      case "stripe_sepa":
-        return await StripeSepaDriver.processPayment(orderData);
-      case "bank_transfer":
-        return await BankTransferDriver.processPayment(orderData);
-      default:
-        throw new Error(`Driver de paiement indisponible : ${method}`);
-    }
-  },
+    const response = await confirmVirementFn({ orderData });
+    return response.data;
+  } catch (error) {
+    console.error("[paymentService] Erreur confirmation virement :", error);
+    throw new Error(
+      error.message || "Impossible d'enregistrer la commande par virement.",
+    );
+  }
 };
