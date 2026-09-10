@@ -1,15 +1,16 @@
 const { setGlobalOptions } = require("firebase-functions/v2");
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const admin = require("firebase-admin");
+const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const Stripe = require("stripe");
 const axios = require("axios");
 
-// Initialisation sécurisée de Firebase Admin
-if (!admin.apps || !admin.apps.length) {
-  admin.initializeApp();
-}
+// 1. Initialisation SYNCHRONE à la racine (Aucun await ici !)
+initializeApp();
+const db = getFirestore("ane-et-gorille-v2");
 
-// 🎯 Configuration globale : Force la région europe-west9 (Paris) pour toutes les fonctions V2
+// 2. Configuration globale : Force la région europe-west9 (Paris) pour toutes les fonctions V2
 setGlobalOptions({ region: "europe-west9" });
 
 // 📍 Coordonnées du Hub Central : Saint-Rémy-sur-Avre (28380)
@@ -32,12 +33,71 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-/**
- * ------------------------------------------------------------------
- * 1. 🧪 TEST D'ÉLIGIBILITÉ EN DIRECT (CALLABLE V2)
- * Appelé par Register.jsx et MonProfil.jsx lors du clic "Tester l'éligibilité"
- * ------------------------------------------------------------------
- */
+// ------------------------------------------------------------------
+// A. STRIPE CONNECT SERVER
+// ------------------------------------------------------------------
+exports.createStripeConnectAccountServer = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "Vous devez être connecté pour lier un compte Stripe.",
+    );
+  }
+
+  const producerId = request.data?.producerId || request.auth.uid;
+  if (!producerId) {
+    throw new HttpsError(
+      "invalid-argument",
+      "L'identifiant du producteur est requis.",
+    );
+  }
+
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+  try {
+    console.log(
+      `[SERVEUR] Création du compte Stripe Connect pour le producteur ${producerId}...`,
+    );
+
+    const account = await stripe.accounts.create({
+      type: "express",
+      country: "FR",
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+    });
+
+    await db
+      .collection("users")
+      .doc(producerId)
+      .set({ stripeAccountId: account.id }, { merge: true });
+
+    const accountLink = await stripe.accountLinks.create({
+      account: account.id,
+      refresh_url: "http://localhost:5173/mon-profil?stripe=refresh",
+      return_url: "http://localhost:5173/mon-profil?stripe=success",
+      type: "account_onboarding",
+    });
+
+    console.log(
+      `[SERVEUR] Compte Stripe ${account.id} lié avec succès au producteur ${producerId}`,
+    );
+
+    return {
+      success: true,
+      stripeAccountId: account.id,
+      onboardingUrl: accountLink.url,
+    };
+  } catch (err) {
+    console.error("[SERVEUR ERREUR] Échec de l'onboarding Stripe :", err);
+    throw new HttpsError("internal", err.message || "Erreur serveur Stripe.");
+  }
+});
+
+// ------------------------------------------------------------------
+// B. TEST D'ÉLIGIBILITÉ EN DIRECT (CALLABLE V2)
+// ------------------------------------------------------------------
 exports.validateAddressAndGeoFence = onCall(async (request) => {
   const { address, zipCode, city, role } = request.data || {};
 
@@ -89,13 +149,9 @@ exports.validateAddressAndGeoFence = onCall(async (request) => {
   }
 });
 
-/**
- * ------------------------------------------------------------------
- * 2. 🛡️ DÉCLENCHEUR AUTOMATIQUE V2 (FIRESTORE)
- * Exécuté automatiquement en arrière-plan à la création/modification d'un utilisateur
- * Base ciblée : 'ane-et-gorille-v2'
- * ------------------------------------------------------------------
- */
+// ------------------------------------------------------------------
+// C. DÉCLENCHEUR AUTOMATIQUE V2 (FIRESTORE)
+// ------------------------------------------------------------------
 exports.onUserWriteGeoFence = onDocumentWritten(
   {
     database: "ane-et-gorille-v2",
@@ -140,7 +196,7 @@ exports.onUserWriteGeoFence = onDocumentWritten(
         return snapshot.after.ref.update({
           isGeoEligible: false,
           geoError: "Adresse introuvable lors du géocodage.",
-          geoValidatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          geoValidatedAt: FieldValue.serverTimestamp(),
         });
       }
 
@@ -158,7 +214,7 @@ exports.onUserWriteGeoFence = onDocumentWritten(
         hubDistanceKm: Number(distanceKm.toFixed(2)),
         isGeoEligible: isEligible,
         maxAllowedKm,
-        geoValidatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        geoValidatedAt: FieldValue.serverTimestamp(),
         coordinates: { lat: userLat, lng: userLng },
       });
     } catch (error) {
@@ -166,17 +222,15 @@ exports.onUserWriteGeoFence = onDocumentWritten(
       return snapshot.after.ref.update({
         isGeoEligible: false,
         geoError: "Erreur serveur lors du calcul de distance.",
-        geoValidatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        geoValidatedAt: FieldValue.serverTimestamp(),
       });
     }
   },
 );
 
-/**
- * ------------------------------------------------------------------
- * 3. 🛒 CHECKOUT SÉCURISÉ V2 & SCELLÉ DES COMMANDES
- * ------------------------------------------------------------------
- */
+// ------------------------------------------------------------------
+// D. CHECKOUT SÉCURISÉ V2 & SCELLÉ DES COMMANDES
+// ------------------------------------------------------------------
 exports.processCheckout = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -193,7 +247,6 @@ exports.processCheckout = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Le panier est vide.");
   }
 
-  const db = admin.firestore();
   const userDoc = await db.collection("users").doc(uid).get();
   const userData = userDoc.data();
 
@@ -231,7 +284,7 @@ exports.processCheckout = onCall(async (request) => {
     totalTTC,
     paymentMethod: paymentMethod || "mandat",
     status: "A_PREPARER",
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
 
   const producerItemsMap = {};
@@ -248,10 +301,10 @@ exports.processCheckout = onCall(async (request) => {
       parentOrderId: orderRef.id,
       buyerId: uid,
       producerId,
-      producerName: items?.producerCompany || "Exploitation Locale",
+      producerName: items[0]?.producerCompany || "Exploitation Locale",
       items,
       status: "A_PREPARER",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
   });
 
