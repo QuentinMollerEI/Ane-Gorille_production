@@ -1,156 +1,112 @@
-import React from "react";
-import { Landmark } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { useAuth } from "../../../../context/AuthContext";
+import { profileService } from "../../../../services/profile.service";
+import { FileText, ShieldCheck, Loader2, CheckCircle2 } from "lucide-react";
 
-export default function ChorusProForm({ profileData, onChange, errors }) {
+export default function ChorusProForm() {
+  const { user } = useAuth();
+  const [codeService, setCodeService] = useState("");
+  const [engagementRef, setEngagementRef] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    async function loadData() {
+      const data = await profileService.getUserProfile(user.uid);
+      if (data) {
+        setCodeService(data.codeService || "");
+        setEngagementRef(data.engagementRef || "");
+      }
+    }
+    loadData();
+  }, [user?.uid]);
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!user?.uid) return;
+    setSaving(true);
+    setSaved(false);
+
+    try {
+      await profileService.updateUserProfile(
+        user.uid,
+        { codeService, engagementRef },
+        user.role,
+      );
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      console.error("Erreur Chorus Pro :", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="bg-white border border-gray-200 rounded-3xl p-6 space-y-4 shadow-xs">
-      <h3 className="text-sm font-black uppercase text-gray-800 tracking-wider flex items-center gap-1.5 border-b border-gray-100 pb-3">
-        <Landmark size={16} className="text-blue-700" /> Données
-        d'Identification et Facturation Chorus Pro
-      </h3>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-semibold">
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-            Raison Sociale Officielle de l'Établissement *
-          </label>
-          <input
-            type="text"
-            value={profileData?.companyName || ""}
-            onChange={(e) => onChange("companyName", e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl focus:ring-1 focus:ring-blue-600 focus:outline-none focus:border-blue-600"
-            placeholder="Ex : Collège Jean Moulin (Cuisine Centrale)"
-          />
-          {errors?.companyName && (
-            <p className="text-red-600 text-[10px] font-bold">
-              {errors.companyName}
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-            Numéro de SIRET Établissement (14 chiffres) *
-          </label>
-          <input
-            type="text"
-            maxLength="14"
-            value={profileData?.siret || ""}
-            onChange={(e) => onChange("siret", e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl font-mono focus:ring-1 focus:ring-blue-600 focus:outline-none focus:border-blue-600"
-            placeholder="Ex : 12345678900012"
-          />
-          {errors?.siret && (
-            <p className="text-red-600 text-[10px] font-bold">{errors.siret}</p>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-            Numéro de TVA Intracommunautaire (Optionnel)
-          </label>
-          <input
-            type="text"
-            value={profileData?.vatNumber || ""}
-            onChange={(e) => onChange("vatNumber", e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl font-mono focus:ring-1 focus:ring-blue-600 focus:outline-none focus:border-blue-600"
-            placeholder="Ex : FR12345678901"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-            Code APE / NAF Établissement
-          </label>
-          <input
-            type="text"
-            maxLength="5"
-            value={profileData?.apeCode || ""}
-            onChange={(e) => onChange("apeCode", e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl font-mono focus:ring-1 focus:ring-blue-600 focus:outline-none focus:border-blue-600"
-            placeholder="Ex : 5629B"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-            E-mail de Facturation (Comptabilité / Service Factur-X) *
-          </label>
-          <input
-            type="email"
-            value={profileData?.billingEmail || ""}
-            onChange={(e) => onChange("billingEmail", e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl focus:ring-1 focus:ring-blue-600 focus:outline-none focus:border-blue-600"
-            placeholder="compta-cantine@mairie-ville.fr"
-          />
-          {errors?.billingEmail && (
-            <p className="text-red-600 text-[10px] font-bold">
-              {errors.billingEmail}
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-            Nom de l'Ordonnateur / Intendant Responsable *
-          </label>
-          <input
-            type="text"
-            value={profileData?.billingDirectorName || ""}
-            onChange={(e) => onChange("billingDirectorName", e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl focus:ring-1 focus:ring-blue-600 focus:outline-none focus:border-blue-600"
-            placeholder="Ex : Mme. Christine Lagarde (Gestionnaire)"
-          />
-          {errors?.billingDirectorName && (
-            <p className="text-red-600 text-[10px] font-bold">
-              {errors.billingDirectorName}
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-            Code Service Destinataire Chorus Pro (Si exigé)
-          </label>
-          <input
-            type="text"
-            value={profileData?.chorusServiceCode || ""}
-            onChange={(e) => onChange("chorusServiceCode", e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl font-mono focus:ring-1 focus:ring-blue-600 focus:outline-none focus:border-blue-600"
-            placeholder="Ex : CUISINE-01"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-            Numéro d'Engagement Juridique (EJ) Global *
-          </label>
-          <input
-            type="text"
-            value={profileData?.globalEngagementNumber || ""}
-            onChange={(e) => onChange("globalEngagementNumber", e.target.value)}
-            className="w-full p-3 border border-gray-200 rounded-xl font-mono focus:ring-1 focus:ring-blue-600 focus:outline-none focus:border-blue-600"
-            placeholder="Ex : EJ-2026-98124"
-          />
-          {errors?.globalEngagementNumber && (
-            <p className="text-red-600 text-[10px] font-bold">
-              {errors.globalEngagementNumber}
-            </p>
-          )}
+    <form
+      onSubmit={handleSave}
+      className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4 text-xs"
+    >
+      <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
+        <FileText className="text-blue-700 shrink-0" size={20} />
+        <div>
+          <h3 className="font-extrabold text-gray-900 text-sm">
+            Paramètres Chorus Pro & Facturation Publique (B2G)
+          </h3>
+          <p className="text-gray-500 font-medium">
+            Champs nécessaires à la télétransmission automatique des factures
+            dématérialisées.
+          </p>
         </div>
       </div>
 
-      <p className="text-[10px] text-blue-800 bg-blue-50 p-3.5 rounded-2xl border border-blue-150 font-medium leading-relaxed">
-        ℹ️{" "}
-        <strong>
-          Réglementation de Facturation Publique (Chorus Pro B2G) :
-        </strong>{" "}
-        Conformément aux obligations administratives françaises, toute facture
-        publique doit être émise sous le standard <strong>Factur-X</strong> et
-        transmise de façon automatisée. Le numéro de SIRET et le numéro
-        d'Engagement Juridique (EJ) sont des variables obligatoires de rejet par
-        le trésor public.
-      </p>
-    </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="space-y-1">
+          <label className="font-bold text-gray-700">
+            Code Service Chorus Pro (Optionnel) :
+          </label>
+          <input
+            type="text"
+            placeholder="ex: SERV-CANTINE"
+            value={codeService}
+            onChange={(e) => setCodeService(e.target.value)}
+            className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="font-bold text-gray-700">
+            Référence d'Engagement Par Défaut (N° Bon de Commande) :
+          </label>
+          <input
+            type="text"
+            placeholder="ex: BC-2026-COLLECTIVITE"
+            value={engagementRef}
+            onChange={(e) => setEngagementRef(e.target.value)}
+            className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+          />
+        </div>
+      </div>
+
+      <button
+        type="submit"
+        disabled={saving}
+        className="w-full py-2.5 bg-blue-800 hover:bg-blue-900 disabled:bg-gray-300 text-white font-black rounded-xl uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-colors"
+      >
+        {saving ? (
+          <Loader2 size={16} className="animate-spin" />
+        ) : saved ? (
+          <CheckCircle2 size={16} />
+        ) : (
+          <ShieldCheck size={16} />
+        )}
+        <span>
+          {saved
+            ? "Paramètres Chorus Pro Enregistrés"
+            : "Sauvegarder les identifiants Chorus Pro"}
+        </span>
+      </button>
+    </form>
   );
 }

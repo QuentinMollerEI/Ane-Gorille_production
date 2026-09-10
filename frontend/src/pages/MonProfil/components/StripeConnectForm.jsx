@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../../../context/AuthContext";
-import { StripeConnectService } from "../../../services/stripeConnectService";
+import { auth } from "../../../config/firebase";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import {
   CreditCard,
   ExternalLink,
@@ -9,38 +10,42 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-export default function StripeConnectForm() {
+export default function StripeConnectForm({ stripeAccountId }) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const handleStripeConnect = async () => {
-    if (!user?.uid) {
-      setError("Vous devez être connecté pour lier votre compte Stripe.");
-      return;
-    }
+    if (!user?.uid) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      // Appel du service et récupération directe de l'URL d'onboarding
-      const onboardingUrl = await StripeConnectService.startStripeOnboarding(
-        user.uid,
+      const functions = getFunctions(auth?.app, "europe-west9");
+      const createAccountFn = httpsCallable(
+        functions,
+        "createStripeConnectAccountServer",
       );
-      if (onboardingUrl) {
-        window.location.href = onboardingUrl;
+      const res = await createAccountFn({ producerId: user.uid });
+
+      if (res.data?.success && res.data?.onboardingUrl) {
+        window.location.href = res.data.onboardingUrl;
+      } else {
+        throw new Error(
+          res.data?.error || "Impossible d'obtenir l'URL Stripe.",
+        );
       }
     } catch (err) {
-      console.error("Échec de l'onboarding Stripe :", err);
-      setError(err.message || "Erreur lors de la connexion au serveur Stripe.");
+      console.error("Échec Stripe Connect :", err);
+      setError(err.message || "Erreur lors de la connexion à Stripe.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-4 text-xs">
+    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4 text-xs">
       <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
         <CreditCard className="text-emerald-700 shrink-0" size={22} />
         <div>
@@ -48,8 +53,8 @@ export default function StripeConnectForm() {
             Compte de Reversement Stripe Connect
           </h3>
           <p className="text-gray-500">
-            Recevez vos ventes en direct sur votre compte bancaire (Séquestre
-            PSP conforme ACPR).
+            Recevez vos ventes en direct sur votre compte bancaire
+            d'exploitation.
           </p>
         </div>
       </div>
@@ -61,14 +66,14 @@ export default function StripeConnectForm() {
         </div>
       )}
 
-      {user?.stripeAccountId ? (
-        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+      {stripeAccountId ? (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between">
           <div className="flex items-center gap-2 text-emerald-950 font-bold">
             <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
             <span>
               Compte Stripe actif :{" "}
               <span className="font-mono text-emerald-800">
-                {user.stripeAccountId}
+                {stripeAccountId}
               </span>
             </span>
           </div>

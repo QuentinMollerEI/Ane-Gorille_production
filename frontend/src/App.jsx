@@ -7,10 +7,8 @@ import Register from "./components/auth/Register";
 import Login from "./components/auth/Login";
 import Workspace from "./components/Workspace";
 import DashboardLayout from "./layouts/DashboardLayout";
+import RequireProfileCompleted from "./components/auth/RequireProfileCompleted";
 
-/**
- * 🔒 Route Privée : Accès réservé aux utilisateurs connectés.
- */
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
 
@@ -30,9 +28,6 @@ function PrivateRoute({ children }) {
   return user ? children : <Navigate to="/login" replace />;
 }
 
-/**
- * 🔓 Route Publique Uniquement : Redirige vers /dashboard si déjà connecté.
- */
 function PublicOnlyRoute({ children }) {
   const { user, loading } = useAuth();
 
@@ -82,14 +77,16 @@ export default function App() {
                 }
               />
 
-              {/* 🎯 Dashboard enveloppé dans DashboardLayout pour restituer la Sidebar */}
+              {/* 🔒 Route Protégée + Validation de Conformité Profil */}
               <Route
                 path="/dashboard"
                 element={
                   <PrivateRoute>
-                    <DashboardLayout>
-                      <Workspace />
-                    </DashboardLayout>
+                    <RequireProfileCompleted>
+                      <DashboardLayout>
+                        <Workspace />
+                      </DashboardLayout>
+                    </RequireProfileCompleted>
                   </PrivateRoute>
                 }
               />
