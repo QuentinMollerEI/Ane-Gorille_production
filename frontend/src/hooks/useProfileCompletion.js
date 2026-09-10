@@ -1,38 +1,60 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
-import { profileService } from "../services/profile.service";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../config/firebase";
 
 /**
- * 🪝 HOOK : useProfileCompletion.js
- * Responsabilité unique : Évaluation de l'état de complétude du profil utilisateur.
+ * 🔒 HOOK : useProfileCompletion.js
+ * Emplacement : src/hooks/useProfileCompletion.js
+ * Lit la valeur Firestore isProfileCompleted en priorité absolue.
  */
 export function useProfileCompletion() {
-  const { user, loading: authLoading } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
   const [isProfileCompleted, setIsProfileCompleted] = useState(false);
-  const [missingFields, setMissingFields] = useState([]);
-  const [profileData, setProfileData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const checkStatus = useCallback(async () => {
+  const checkCompletion = useCallback(async () => {
     if (!user?.uid) {
-      setLoading(false);
       setIsProfileCompleted(false);
-      setMissingFields([]);
-      setProfileData(null);
+      setLoading(false);
       return;
     }
 
     try {
-      setLoading(true);
-      const profile = await profileService.getUserProfile(user.uid);
+      const userRef = doc(db, "users", user.uid);
+      const snap = await getDoc(userRef);
 
-      if (profile) {
-        setProfileData(profile);
-        setIsProfileCompleted(!!profile.isProfileCompleted);
-        setMissingFields(profile.missingFields || []);
+      if (snap.exists()) {
+        const data = snap.data();
+
+        // 🎯 PRIORITÉ ABSOLUE : Si Firestore contient true, on valide à 100%
+        if (data.isProfileCompleted === true) {
+          setIsProfileCompleted(true);
+        } else {
+          // Fallback de sécurité
+          const hasBase = Boolean(
+            data.displayName?.trim() &&
+            data.companyName?.trim() &&
+            data.siret?.trim() &&
+            data.phone?.trim() &&
+            data.address?.trim() &&
+            data.postalCode?.trim() &&
+            data.city?.trim(),
+          );
+
+          if (data.role === "acheteur_public") {
+            const hasChorus = Boolean(
+              data.codeServiceChorus?.trim() ||
+              data.codeService?.trim() ||
+              data.refEngagement?.trim(),
+            );
+            setIsProfileCompleted(hasBase && hasChorus);
+          } else {
+            setIsProfileCompleted(hasBase);
+          }
+        }
       } else {
         setIsProfileCompleted(false);
-        setMissingFields(["profile_not_found"]);
       }
     } catch (error) {
       console.error("Erreur lors de la vérification du profil :", error);
@@ -43,16 +65,12 @@ export function useProfileCompletion() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!authLoading) {
-      checkStatus();
-    }
-  }, [authLoading, checkStatus]);
+    checkCompletion();
+  }, [checkCompletion]);
 
   return {
-    loading: authLoading || loading,
     isProfileCompleted,
-    missingFields,
-    profileData,
-    refetchProfile: checkStatus,
+    loading,
+    refetchProfile: checkCompletion,
   };
 }
