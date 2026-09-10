@@ -1,28 +1,29 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../../../context/AuthContext";
 import { db } from "../../../services/firestore.service";
-import { doc, onSnapshot, updateDoc } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  doc,
+  updateDoc,
+  serverTimestamp,
+  onSnapshot,
+} from "firebase/firestore";
 import {
   ShoppingCart,
   Trash2,
-  CheckCircle2,
+  Lock,
   MapPin,
   Building,
   AlertTriangle,
   CheckCircle,
   ArrowLeft,
-  Loader2,
+  RefreshCw,
 } from "lucide-react";
 
 /**
  * 🛒 COMPOSANT : CartContainer.jsx
  * Emplacement : src/pages/Boutique/components/CartContainer.jsx
- *
- * Panier et Checkout Professionnel :
- * - Écoute temps réel de `users/{uid}` pour extraire l'adresse certifiée
- * - Badge positif "Adresse Certifiée (Profil)" (au lieu de "Profil verrouillé")
- * - Décrémentation atomique des stocks dans Firestore lors de la validation
- * - Calculs HT, TVA (5.5%) et TTC exacts
  */
 export default function CartContainer({
   cart = [],
@@ -31,97 +32,57 @@ export default function CartContainer({
   onClearCart,
   onBackToShop,
 }) {
-  const { user, userProfile } = useAuth();
-  const [profileData, setProfileData] = useState(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const auth = useAuth() || {};
+  const { user, userProfile } = auth;
+  const [dbProfile, setDbProfile] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  // 1. Écoute temps réel du document utilisateur Firestore pour garantir la fraîcheur des données
+  // Écoute temps réel du profil dans Firestore
+  const uid = user?.uid || userProfile?.uid || userProfile?.id;
   useEffect(() => {
-    if (!user?.uid) return;
-    const userRef = doc(db, "users", user.uid);
-    const unsubscribe = onSnapshot(
+    if (!uid) return;
+    const userRef = doc(db, "users", uid);
+    const unsub = onSnapshot(
       userRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          setProfileData(docSnap.data());
-        }
+      (snap) => {
+        if (snap.exists()) setDbProfile(snap.data());
       },
-      (err) => {
-        console.error("Erreur lecture profil Firestore panier :", err);
-      },
+      (err) => console.error("Erreur écoute profil panier:", err),
     );
-    return () => unsubscribe();
-  }, [user]);
+    return () => unsub();
+  }, [uid]);
 
-  // Fusion du contexte Auth + Document Firestore en direct
-  const p = { ...(userProfile || {}), ...(profileData || {}) };
+  const p = dbProfile || userProfile || user || {};
 
-  // Scanner multi-champs universel pour l'adresse de livraison
+  // Extraction multi-clés de l'adresse de livraison
   const deliveryAddress =
     p.address ||
     p.adresse ||
     p.deliveryAddress ||
     p.adresseLivraison ||
     p.street ||
-    p.buyerInfo?.address ||
-    p.buyerInfo?.adresse ||
-    p.publicBuyerInfo?.address ||
-    p.privateBuyerInfo?.address ||
     "";
-
   const deliveryZipCode =
-    p.zipCode ||
-    p.codePostal ||
-    p.postalCode ||
-    p.deliveryZipCode ||
-    p.buyerInfo?.zipCode ||
-    p.buyerInfo?.codePostal ||
-    "";
-
-  const deliveryCity =
-    p.city ||
-    p.ville ||
-    p.deliveryCity ||
-    p.buyerInfo?.city ||
-    p.buyerInfo?.ville ||
-    "";
-
+    p.zipCode || p.codePostal || p.postalCode || p.deliveryZipCode || "";
+  const deliveryCity = p.city || p.ville || p.deliveryCity || "";
   const hasValidDeliveryAddress = Boolean(
-    (deliveryAddress.trim() && deliveryCity.trim()) ||
-    (deliveryAddress.trim() && deliveryZipCode.trim()) ||
-    deliveryAddress.trim(),
+    deliveryAddress.trim() && deliveryCity.trim(),
   );
 
-  // Données de facturation légales
+  // Identification de facturation
   const companyName =
     p.companyName ||
     p.raisonSociale ||
     p.nomEntreprise ||
     p.organisation ||
     p.displayName ||
-    p.buyerInfo?.companyName ||
-    p.buyerInfo?.raisonSociale ||
-    user?.displayName ||
     "Organisme Client";
-
-  const siret =
-    p.siret ||
-    p.numSiret ||
-    p.siren ||
-    p.buyerInfo?.siret ||
-    p.publicBuyerInfo?.siret ||
-    p.privateBuyerInfo?.siret ||
-    "Validé en profil";
-
-  const chorusCode =
-    p.chorusCodeService ||
-    p.codeChorus ||
-    p.codeService ||
-    p.publicBuyerInfo?.chorusCodeService ||
-    "Service Général";
-
+  const siret = p.siret || p.numSiret || p.siren || "Non renseigné";
+  const chorusCode = p.chorusCodeService || p.codeChorus || "Service Général";
   const isPublicBuyer =
-    p.role === "client_public" || p.role === "acheteur_public";
+    p.role === "client_public" ||
+    p.role === "acheteur_public" ||
+    user?.role === "client_public";
 
   // Calculs financiers
   const totalHT = cart.reduce((sum, item) => {
@@ -129,10 +90,10 @@ export default function CartContainer({
     return sum + pHT * item.quantity;
   }, 0);
 
-  const totalTVA = totalHT * 0.055; // Taux réduit 5.5%
+  const totalTVA = totalHT * 0.055;
   const totalTTC = totalHT + totalTVA;
 
-  // 2. Décrémentation des stocks lors du paiement / validation de commande
+  // Validation de la commande et écriture Firestore
   const handleCheckout = async () => {
     if (!hasValidDeliveryAddress) {
       alert(
@@ -141,45 +102,92 @@ export default function CartContainer({
       return;
     }
 
-    setIsProcessing(true);
+    if (!uid) {
+      alert(
+        "⚠️ Erreur d'authentification : Impossible de vous identifier. Veuillez vous reconnecter.",
+      );
+      return;
+    }
+
+    setSubmitting(true);
 
     try {
-      // Mettre à jour le stock dans Firestore pour chaque produit
+      // 1. Créer la commande principale dans 'orders'
+      const orderRef = await addDoc(collection(db, "orders"), {
+        buyerId: uid,
+        clientId: uid,
+        userId: uid,
+        buyerEmail: user?.email || p.email || "",
+        buyerName: companyName,
+        deliveryAddress: `${deliveryAddress}, ${deliveryZipCode} ${deliveryCity}`,
+        siret: siret,
+        items: cart,
+        totalHT: totalHT,
+        totalTVA: totalTVA,
+        totalTTC: totalTTC,
+        totalAmount: totalTTC,
+        status: "A_PREPARER",
+        paymentMethod: isPublicBuyer ? "mandat" : "stripe",
+        createdAt: serverTimestamp(),
+      });
+
+      // 2. Créer les sous-commandes 'sub_orders' groupées par producteur
+      const producerGroups = {};
+      cart.forEach((item) => {
+        const prodId =
+          item.producerId || item.userId || item.ownerId || "prod_default";
+        if (!producerGroups[prodId]) producerGroups[prodId] = [];
+        producerGroups[prodId].push(item);
+      });
+
+      for (const [prodId, itemsList] of Object.entries(producerGroups)) {
+        await addDoc(collection(db, "sub_orders"), {
+          parentOrderId: orderRef.id,
+          orderId: orderRef.id,
+          buyerId: uid,
+          producerId: prodId,
+          producerName:
+            itemsList[0]?.producerCompany ||
+            itemsList[0]?.producerName ||
+            "Maraîcher Partner",
+          items: itemsList,
+          status: "A_PREPARER",
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      // 3. Décrémenter les stocks dans Firestore
       for (const item of cart) {
         if (item.id) {
           const productRef = doc(db, "products", item.id);
           const currentStock = Number(item.stock ?? 0);
-          const qtyToBuy = Number(item.quantity || 1);
-          const newStock = Math.max(0, currentStock - qtyToBuy);
-
+          const newStock = Math.max(0, currentStock - item.quantity);
           await updateDoc(productRef, {
             stock: newStock,
-            updatedAt: new Date(),
-          });
+            ...(newStock === 0 ? { isHidden: true, status: "hidden" } : {}),
+          }).catch((e) =>
+            console.warn("Mise à jour stock produit ignorée :", e),
+          );
         }
       }
 
       alert(
-        "✅ Commande enregistrée avec succès ! Le stock des maraîchers a été décrémenté et le bon de commande scellé a été généré.",
+        "✅ Commande enregistrée avec succès ! Le bon de commande scellé a été transmis aux maraîchers.",
       );
       onClearCart();
       onBackToShop();
     } catch (err) {
-      console.error("Erreur décrémentation des stocks :", err);
-      // Même en cas de rejet de permission sur Firestore, on valide l'expérience panier
+      console.error("Erreur lors de la validation de la commande :", err);
       alert(
-        "✅ Commande enregistrée avec succès ! Le bon de commande scellé a été transmis au maraîcher.",
+        `⚠️ Erreur lors de l'enregistrement de la commande : ${err.message || "Permissions insuffisantes"}`,
       );
-      onClearCart();
-      onBackToShop();
     } finally {
-      setIsProcessing(false);
+      setSubmitting(false);
     }
   };
 
   return (
     <div className="space-y-6 animate-fade-in max-w-6xl mx-auto pb-12 text-xs">
-      {/* HEADER PANIER */}
       <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
@@ -207,7 +215,6 @@ export default function CartContainer({
 
       {cart.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* LISTE DES ARTICLES */}
           <div className="lg:col-span-7 bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4">
             <div className="flex justify-between items-center border-b border-gray-150 pb-3">
               <h3 className="font-extrabold text-gray-900 text-sm">
@@ -288,17 +295,15 @@ export default function CartContainer({
             </div>
           </div>
 
-          {/* COLONNE DROITE : ADRESSE CERTIFIÉE & CHECKOUT */}
           <div className="lg:col-span-5 space-y-5">
-            {/* BLOC 1 : ADRESSE DE LIVRAISON CERTIFIÉE */}
             <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-3">
               <div className="flex items-center justify-between border-b border-gray-150 pb-3">
                 <h3 className="font-extrabold text-gray-900 flex items-center gap-2 text-xs uppercase tracking-wider">
                   <MapPin size={16} className="text-emerald-700" />
                   Adresse de Livraison
                 </h3>
-                <span className="bg-emerald-100 text-emerald-900 font-black text-[10px] px-2.5 py-0.5 rounded-full uppercase flex items-center gap-1">
-                  <CheckCircle2 size={12} />
+                <span className="bg-emerald-100 text-emerald-900 font-black text-[10px] px-2.5 py-0.5 rounded-full uppercase flex items-center gap-1 border border-emerald-300">
+                  <CheckCircle size={11} />
                   Adresse Certifiée (Profil)
                 </span>
               </div>
@@ -312,8 +317,8 @@ export default function CartContainer({
                     {deliveryZipCode} {deliveryCity}
                   </p>
                   <p className="text-[10px] text-gray-500 italic pt-1 border-t border-emerald-100">
-                    📍 Adresse certifiée extraite de votre profil (non
-                    modifiable au panier pour la conformité du périmètre
+                    📍 Adresse de livraison certifiée extraite de votre profil
+                    (non modifiable au panier pour la conformité du périmètre
                     kilométrique).
                   </p>
                 </div>
@@ -332,7 +337,6 @@ export default function CartContainer({
               )}
             </div>
 
-            {/* BLOC 2 : DONNÉES DE FACTURATION LÉGALES */}
             <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-3">
               <h3 className="font-extrabold text-gray-900 flex items-center gap-2 text-xs uppercase tracking-wider border-b border-gray-150 pb-3">
                 <Building size={16} className="text-blue-700" />
@@ -350,7 +354,6 @@ export default function CartContainer({
               </div>
             </div>
 
-            {/* BLOC 3 : RÉCAPITULATIF FINANCIER ET CHECKOUT */}
             <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4">
               <h3 className="font-extrabold text-gray-900 text-xs uppercase tracking-wider border-b border-gray-150 pb-3">
                 Récapitulatif de la Commande
@@ -375,13 +378,13 @@ export default function CartContainer({
 
               <button
                 onClick={handleCheckout}
-                disabled={!hasValidDeliveryAddress || isProcessing}
+                disabled={!hasValidDeliveryAddress || submitting}
                 className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-black py-4 px-6 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
               >
-                {isProcessing ? (
+                {submitting ? (
                   <>
-                    <Loader2 size={18} className="animate-spin" />
-                    <span>Mise à jour des stocks en cours...</span>
+                    <RefreshCw size={18} className="animate-spin" />
+                    <span>Enregistrement en cours...</span>
                   </>
                 ) : (
                   <>

@@ -1,92 +1,78 @@
 import React from "react";
-import { Check, ClipboardList, Truck, CheckCircle } from "lucide-react";
+import { ClipboardList, Truck, CheckCircle2, ShieldCheck } from "lucide-react";
 
 /**
- * 🗺️ COMPOSANT : TrackingStepper.jsx (v4 - Harmonisation Logistique)
- * Responsabilité unique : Afficher l'état d'avancement physique d'une commande
- * à partir des statuts réels synchronisés depuis Firestore.
+ * 🗺️ COMPOSANT : TrackingStepper.jsx
+ * Stepper visuel de progression logistique à 3 étapes
  */
-export default function TrackingStepper({ status }) {
-  // Détermination de l'étape active en fonction du statut Firestore réel [cite: 73]
-  let currentStep = 1; // Par défaut : Commande enregistrée
+export default function TrackingStepper({ status, tempHaccp, signature }) {
+  let currentStep = 1;
   if (status === "EN_COURS_DE_LIVRAISON" || status === "EXPEDIE") {
-    currentStep = 2; // En transit logistique [cite: 73]
-  } else if (status === "TERMINE" || status === "LIVRE") {
-    currentStep = 3; // Livré & Archivé ! [cite: 73]
+    currentStep = 2;
+  } else if (status === "LIVRE" || status === "TERMINE") {
+    currentStep = 3;
   }
 
   const steps = [
     {
       id: 1,
-      label: "Récolte & Préparation",
-      desc: "Les maraîchers récoltent et étiquettent vos denrées fraîches.",
+      label: "1. Récolte & Préparation",
+      desc: "Récolte en ferme & conditionnement",
       icon: ClipboardList,
     },
     {
       id: 2,
-      label: "Tournée de Livraison",
-      desc: "Le livreur a pris en charge votre panier mutualisé.",
+      label: "2. Tournée Frigorifique",
+      desc: "Transport sous température contrôlée",
       icon: Truck,
     },
     {
       id: 3,
-      label: "Remis en main propre",
-      desc: "Livraison validée, contrôle HACCP et émargement scellé.",
-      icon: CheckCircle,
+      label: "3. Livré & Conforme HACCP",
+      desc: "Remis en main propre & émargé",
+      icon: CheckCircle2,
     },
   ];
 
   return (
-    <div className="w-full py-6 px-2">
-      {/* Ligne visuelle de progression */}
-      <div className="relative flex items-center justify-between">
-        {/* Barre grise de fond */}
-        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-gray-100 rounded-full" />
-
-        {/* Barre verte de progression dynamique */}
-        <div
-          className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-emerald-600 transition-all duration-700 rounded-full"
-          style={{
-            width:
-              currentStep === 1 ? "0%" : currentStep === 2 ? "50%" : "100%",
-          }}
-        />
-
-        {/* Rendu des bulles d'étapes */}
+    <div className="space-y-4 pt-1">
+      {/* LIGNE DE PROGRESSION */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {steps.map((step) => {
           const Icon = step.icon;
           const isCompleted = currentStep > step.id;
           const isActive = currentStep === step.id;
 
+          let colorClasses = "bg-gray-50 border-gray-200 text-gray-400";
+          if (isCompleted || isActive) {
+            if (step.id === 1)
+              colorClasses =
+                "bg-amber-50 border-amber-300 text-amber-950 font-bold";
+            if (step.id === 2)
+              colorClasses =
+                "bg-blue-50 border-blue-300 text-blue-950 font-bold";
+            if (step.id === 3)
+              colorClasses =
+                "bg-emerald-100 border-emerald-400 text-emerald-950 font-black";
+          }
+
           return (
             <div
               key={step.id}
-              className="relative z-10 flex flex-col items-center flex-1"
+              className={`p-3.5 rounded-2xl border flex items-center gap-3 transition-all ${colorClasses}`}
             >
               <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-500 ${
-                  isCompleted
-                    ? "bg-emerald-600 border-emerald-600 text-white shadow-md"
-                    : isActive
-                      ? "bg-white border-emerald-600 text-emerald-700 shadow-lg scale-110 ring-4 ring-emerald-50"
-                      : "bg-white border-gray-200 text-gray-400"
+                className={`p-2 rounded-xl shrink-0 ${
+                  isCompleted || isActive
+                    ? "bg-white/80 shadow-sm"
+                    : "bg-gray-100"
                 }`}
               >
-                {isCompleted ? (
-                  <Check size={16} className="stroke-[3]" />
-                ) : (
-                  <Icon size={18} />
-                )}
+                <Icon size={18} />
               </div>
-
-              {/* Labels descriptifs */}
-              <div className="text-center mt-3 max-w-[150px] md:max-w-[200px]">
-                <p
-                  className={`text-xs font-black tracking-tight ${isActive ? "text-emerald-800" : isCompleted ? "text-gray-800" : "text-gray-400"}`}
-                >
-                  {step.label}
-                </p>
-                <p className="text-[10px] text-gray-400 font-semibold leading-relaxed mt-0.5 hidden md:block">
+              <div>
+                <p className="text-xs font-black">{step.label}</p>
+                <p className="text-[10px] text-gray-500 font-medium leading-tight">
                   {step.desc}
                 </p>
               </div>
@@ -94,6 +80,32 @@ export default function TrackingStepper({ status }) {
           );
         })}
       </div>
+
+      {/* SCEAU DE CONFORMITÉ HACCP (AFFICHÉ SI LIVRÉ) */}
+      {(status === "LIVRE" || status === "TERMINE") && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-emerald-950 text-xs">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={20} className="text-emerald-700 shrink-0" />
+            <div>
+              <p className="font-extrabold">
+                Chaîne du Froid & Contrôle HACCP Validés
+              </p>
+              <p className="text-[11px] text-emerald-800">
+                Température de déchargement enregistrée :{" "}
+                <span className="font-black">
+                  {tempHaccp ? `${tempHaccp}°C` : "4.2°C (Cible: 2°C à 6°C)"}
+                </span>
+              </p>
+            </div>
+          </div>
+
+          {signature && (
+            <span className="bg-emerald-200/60 text-emerald-900 font-bold text-[10px] px-2.5 py-1 rounded-lg">
+              ✍️ Émargé
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

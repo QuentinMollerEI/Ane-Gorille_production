@@ -1,387 +1,423 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState } from "react";
+import { useNavigate, Navigate } from "react-router-dom";
+// 🎯 Depuis src/components/auth/Register.jsx, on remonte de 2 niveaux ( ../../ )
 import { useAuth } from "../../context/AuthContext";
-import { db } from "../../services/firestore.service";
-import { doc, setDoc } from "firebase/firestore";
+import { auth, db } from "../../config/firebase";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../../config/firebase";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import {
-  Building,
-  User,
-  Store,
+  MapPin,
   ShieldCheck,
-  Lock,
-  Mail,
+  AlertTriangle,
   CheckCircle2,
-  AlertCircle,
-  Loader2,
-  Crown,
+  ArrowRight,
 } from "lucide-react";
 
 /**
- * 📝 COMPOSANT : Register.jsx (Étape 1 - Authentification & Inscription)
- *
- * Design identique à la mire de Connexion (Login.jsx) :
- * - Logo officiel "/Logo.png" en haut avec badge circulaire
- * - Titre & Typographies aux nuances Vert Forêt (#2d5a3f) & Jaune Doré (#d4af37)
- * - Formulaire épuré : Rôle professionnel, E-mail, Mot de passe & Confirmation
- * - Redirection automatique & instantanée vers /dashboard dès la validation
+ * 📝 COMPOSANT : Register.jsx
+ * Inscription B2B / B2G / Producteur avec Validation Geo-Fencing V2 (europe-west9).
  */
-export default function Register({ onNavigateToLogin, onRegistrationSuccess }) {
+export default function Register({ onNavigateToLogin, onRegisterSuccess }) {
   const { user } = useAuth();
-  const navigate = useNavigate ? useNavigate() : null;
+  const navigate = useNavigate();
+  const functions = getFunctions(auth?.app, "europe-west9");
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  // 🛡️ Redirection si déjà connecté
+  if (user) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
-  // 1️⃣ RÔLE PROFESSIONNEL (Défaut : Acheteur Public)
-  const [role, setRole] = useState("client_public");
-
-  // Clé secrète admin facultative
-  const [showAdminKey, setShowAdminKey] = useState(false);
-  const [adminKeyInput, setAdminKeyInput] = useState("");
-
-  // Champs d'authentification Phase 1
+  // Étape 1 : Formulaire d'identité
+  const [role, setRole] = useState("acheteur_prive");
+  const [displayName, setDisplayName] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [siret, setSiret] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
 
-  // 🚀 SÉCURITÉ ROUTEUR : Si l'utilisateur est déjà connecté, rediriger IMMÉDIATEMENT vers /dashboard
-  useEffect(() => {
-    if (user) {
-      if (navigate) {
-        navigate("/dashboard", { replace: true });
-      } else {
-        window.location.href = "/dashboard";
-      }
+  // Étape 2 : Adresse & Geo-Fencing
+  const [address, setAddress] = useState("");
+  const [zipCode, setZipCode] = useState("");
+  const [city, setCity] = useState("");
+
+  // États du contrôle géographique
+  const [geoStatus, setGeoStatus] = useState(null);
+  const [checkingGeo, setCheckingGeo] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Validation Géographique en Direct via Cloud Function V2 (europe-west9)
+  const handleVerifyGeoFence = async () => {
+    if (!address.trim() || !city.trim()) {
+      setError(
+        "Veuillez renseigner au moins votre rue et votre commune pour tester l'éligibilité.",
+      );
+      return;
     }
-  }, [user, navigate]);
 
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+    setCheckingGeo(true);
     setError(null);
-
-    // Validation des mots de passe
-    if (password !== confirmPassword) {
-      setError("❌ Les mots de passe ne correspondent pas.");
-      setLoading(false);
-      return;
-    }
-
-    if (password.length < 6) {
-      setError("❌ Le mot de passe doit contenir au moins 6 caractères.");
-      setLoading(false);
-      return;
-    }
-
-    // Vérification de la clé admin si demandée
-    let finalRole = role;
-    if (showAdminKey) {
-      if (adminKeyInput.trim() === "ADMIN2026") {
-        finalRole = "admin";
-      } else {
-        setError("❌ Clé Administrateur incorrecte.");
-        setLoading(false);
-        return;
-      }
-    }
+    setGeoStatus(null);
 
     try {
-      // Étape A : Création du compte Firebase Authentication
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        email.trim(),
-        password,
+      const validateGeoFn = httpsCallable(
+        functions,
+        "validateAddressAndGeoFence",
       );
-      const authUser = userCredential.user;
+      const res = await validateGeoFn({
+        address,
+        zipCode,
+        city,
+        role,
+      });
 
-      // Étape B : Création du document initial Firestore (users/{uid})
-      const userPayload = {
-        uid: authUser.uid,
-        email: email.trim().toLowerCase(),
-        role: finalRole, // "client_public" | "client_pro" | "producteur" | "admin"
-        companyName: "",
-        displayName: email.split("@")[0] || "Référent",
-        phone: "",
-        siret: "",
-        address: "",
-        city: "",
-        zipCode: "",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        isProfileCompleted: false,
-        stripeOnboardingStatus:
-          finalRole === "producteur" ? "NOT_STARTED" : "N/A",
-        isBioCertified: false,
-      };
-
-      await setDoc(doc(db, "users", authUser.uid), userPayload);
-
-      // Étape C : Callbacks parent
-      if (onRegistrationSuccess) {
-        onRegistrationSuccess(userPayload);
-      }
-
-      // Étape D : REDIRECTION FORCEE IMMÉDIATE VERS LE DASHBOARD / ROUTER
-      if (navigate) {
-        navigate("/dashboard", { replace: true });
-      } else {
-        window.location.href = "/dashboard";
-      }
+      setGeoStatus(res.data);
     } catch (err) {
-      console.error("Erreur d'inscription :", err);
-      if (err.code === "auth/email-already-in-use") {
-        setError("Cette adresse e-mail est déjà utilisée par un autre compte.");
-      } else if (err.code === "auth/weak-password") {
-        setError("Le mot de passe doit contenir au moins 6 caractères.");
-      } else {
-        setError(
-          err.message || "Une erreur est survenue lors de l'inscription.",
-        );
-      }
+      console.error("Erreur test Geo-Fence :", err);
+      setError(
+        err.message ||
+          "Erreur lors de la vérification géographique de l'adresse.",
+      );
     } finally {
-      setLoading(false);
+      setCheckingGeo(false);
     }
   };
 
-  const handleGoToLogin = () => {
-    if (onNavigateToLogin) {
-      onNavigateToLogin();
-    } else if (navigate) {
-      navigate("/login");
-    } else {
-      window.location.href = "/login";
+  // Enregistrement Auth + Firestore + Redirection vers Dashboard
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!geoStatus || !geoStatus.eligible) {
+      setError(
+        "Votre adresse doit être testée et certifiée dans le périmètre du Hub (Saint-Rémy-sur-Avre) avant de valider l'inscription.",
+      );
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      // 1. Création du compte Firebase Auth
+      const userCred = await createUserWithEmailAndPassword(
+        auth,
+        email,
+        password,
+      );
+      const uid = userCred.user.uid;
+
+      // 2. Écriture du document utilisateur dans Firestore
+      await setDoc(doc(db, "users", uid), {
+        uid,
+        displayName,
+        companyName,
+        siret,
+        email,
+        role,
+        address,
+        zipCode,
+        city,
+        isGeoEligible: geoStatus.eligible,
+        hubDistanceKm: geoStatus.distanceKm,
+        maxAllowedKm: role === "producteur" ? 30 : 50,
+        createdAt: serverTimestamp(),
+      });
+
+      // 3. Navigation vers le Dashboard
+      if (onRegisterSuccess) {
+        onRegisterSuccess(userCred.user);
+      }
+      navigate("/dashboard", { replace: true });
+    } catch (err) {
+      console.error("Erreur Inscription :", err);
+      setError(err.message || "Impossible de finaliser l'inscription.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center p-4 sm:p-6 animate-fade-in">
-      <div className="w-full max-w-md bg-white border border-gray-150 rounded-3xl shadow-xl p-8 space-y-6 relative overflow-hidden">
-        {/* EN-TÊTE HARMONISÉ : LOGO OFFICIELÂNE & GORILLE */}
-        <div className="text-center space-y-3">
-          <div className="mx-auto w-20 h-20 rounded-full border-2 border-amber-400 bg-white p-2 shadow-md flex items-center justify-center transform hover:scale-105 transition-transform">
-            <img
-              src="/Logo.png"
-              alt="Logo Âne & Gorille"
-              className="w-16 h-16 object-contain"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = "https://via.placeholder.com/64?text=AG";
+    <div className="max-w-2xl mx-auto p-6 bg-white border border-gray-200 rounded-3xl shadow-sm space-y-6 text-xs">
+      <div className="border-b border-gray-150 pb-4 text-center space-y-1">
+        <h2 className="text-xl font-black text-gray-900">
+          Création de Compte Professionnel
+        </h2>
+        <p className="text-gray-500 font-semibold">
+          Circuit court agricole sécurisé autour du Hub de Saint-Rémy-sur-Avre
+        </p>
+      </div>
+
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 font-bold flex items-center gap-2">
+          <AlertTriangle size={18} className="shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {/* CHOIX DU RÔLE */}
+        <div className="space-y-2">
+          <label className="block font-black uppercase text-gray-700 tracking-wider">
+            Sélectionnez votre Rôle :
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setRole("acheteur_prive");
+                setGeoStatus(null);
               }}
+              className={`p-3 rounded-2xl border text-left font-bold transition-all cursor-pointer ${
+                role === "acheteur_prive"
+                  ? "bg-emerald-50 border-emerald-700 text-emerald-900 shadow-sm"
+                  : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              <div className="font-extrabold text-sm mb-0.5">
+                🏢 Acheteur Privé
+              </div>
+              <div className="text-[10px] text-gray-500 font-normal">
+                Cantine privée, Restaurant, Épicerie (Rayon 50 km)
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setRole("acheteur_public");
+                setGeoStatus(null);
+              }}
+              className={`p-3 rounded-2xl border text-left font-bold transition-all cursor-pointer ${
+                role === "acheteur_public"
+                  ? "bg-blue-50 border-blue-700 text-blue-900 shadow-sm"
+                  : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              <div className="font-extrabold text-sm mb-0.5">
+                🏛️ Acheteur Public
+              </div>
+              <div className="text-[10px] text-gray-500 font-normal">
+                Collectivité, Restauration scolaire (Chorus Pro, Rayon 50 km)
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setRole("producteur");
+                setGeoStatus(null);
+              }}
+              className={`p-3 rounded-2xl border text-left font-bold transition-all cursor-pointer ${
+                role === "producteur"
+                  ? "bg-amber-50 border-amber-700 text-amber-900 shadow-sm"
+                  : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              <div className="font-extrabold text-sm mb-0.5">🧑‍🌾 Producteur</div>
+              <div className="text-[10px] text-gray-500 font-normal">
+                Maraîcher local, Exploitation agricole (Rayon 30 km)
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* INFORMATIONS COMPTE & ENTITÉ */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700">
+              Nom & Prénom du Référent :
+            </label>
+            <input
+              type="text"
+              required
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="ex: Jean Dupont"
+              className="w-full p-3 border border-gray-300 rounded-xl font-medium"
             />
           </div>
 
-          <div>
-            <h2 className="text-2xl font-black text-[#2d5a3f] tracking-tight">
-              Inscription
-            </h2>
-            <p className="text-xs text-gray-500 font-semibold mt-1">
-              Rejoignez le Marché de la Rosée (Étape 1/2)
-            </p>
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700">
+              Nom de la Ferme / Établissement :
+            </label>
+            <input
+              type="text"
+              required
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="ex: Ferme des 3 Chênes"
+              className="w-full p-3 border border-gray-300 rounded-xl font-medium"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700">Numéro SIRET :</label>
+            <input
+              type="text"
+              required
+              value={siret}
+              onChange={(e) => setSiret(e.target.value)}
+              placeholder="14 chiffres sans espace"
+              className="w-full p-3 border border-gray-300 rounded-xl font-mono"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700">
+              Adresse E-mail Identifiant :
+            </label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="contact@exemple.fr"
+              className="w-full p-3 border border-gray-300 rounded-xl font-medium"
+            />
           </div>
         </div>
 
-        {/* ALERTE ERREUR */}
-        {error && (
-          <div className="p-3.5 bg-red-50 border border-red-200 text-red-800 rounded-2xl text-xs font-bold flex items-center gap-2 animate-fade-in">
-            <AlertCircle size={16} className="text-red-600 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+        <div className="space-y-1">
+          <label className="font-bold text-gray-700">Mot de Passe :</label>
+          <input
+            type="password"
+            required
+            minLength={6}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            className="w-full p-3 border border-gray-300 rounded-xl font-medium"
+          />
+        </div>
 
-        <form onSubmit={handleRegister} className="space-y-4">
-          {/* 1️⃣ SÉLECTEUR DE RÔLE PROFESSIONNEL */}
-          <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-[#2d5a3f] uppercase tracking-wider">
-              SÉLECTIONNEZ VOTRE RÔLE *
-            </label>
-
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  setRole("client_public");
-                  setShowAdminKey(false);
-                }}
-                className={`p-2.5 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1 ${
-                  role === "client_public" && !showAdminKey
-                    ? "bg-[#2d5a3f] text-white border-[#2d5a3f] font-bold shadow-sm"
-                    : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100 font-medium"
-                }`}
-              >
-                <Building size={16} />
-                <span className="text-[10px] leading-tight">Public (B2G)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setRole("client_pro");
-                  setShowAdminKey(false);
-                }}
-                className={`p-2.5 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1 ${
-                  role === "client_pro" && !showAdminKey
-                    ? "bg-[#2d5a3f] text-white border-[#2d5a3f] font-bold shadow-sm"
-                    : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100 font-medium"
-                }`}
-              >
-                <User size={16} />
-                <span className="text-[10px] leading-tight">Pro (B2B)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setRole("producteur");
-                  setShowAdminKey(false);
-                }}
-                className={`p-2.5 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1 ${
-                  role === "producteur" && !showAdminKey
-                    ? "bg-[#2d5a3f] text-white border-[#2d5a3f] font-bold shadow-sm"
-                    : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100 font-medium"
-                }`}
-              >
-                <Store size={16} />
-                <span className="text-[10px] leading-tight">Fournisseur</span>
-              </button>
-            </div>
+        {/* SECTION LOCALISATION & VERIFICATION GEO-FENCE */}
+        <div className="p-4 bg-emerald-50/50 border border-emerald-200 rounded-2xl space-y-3">
+          <div className="flex items-center justify-between border-b border-emerald-100 pb-2">
+            <h3 className="font-extrabold text-emerald-900 flex items-center gap-1.5 text-xs uppercase tracking-wider">
+              <MapPin size={16} className="text-emerald-700" />
+              <span>Géolocalisation & Rayon de Livraison</span>
+            </h3>
+            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
+              Hub : Saint-Rémy-sur-Avre (Max :{" "}
+              {role === "producteur" ? "30 km" : "50 km"})
+            </span>
           </div>
 
-          {/* 2️⃣ E-MAIL */}
-          <div className="space-y-1">
-            <label className="block text-[10px] font-black text-gray-600 uppercase tracking-wider">
-              EMAIL *
-            </label>
-            <div className="relative">
-              <Mail
-                size={16}
-                className="absolute left-3.5 top-3 text-gray-400"
-              />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-xs font-bold text-gray-800 focus:bg-white focus:ring-2 focus:ring-[#2d5a3f] focus:border-transparent outline-none transition-all"
-                placeholder="votre.email@domaine.fr"
-              />
-            </div>
-          </div>
-
-          {/* 3️⃣ MOT DE PASSE */}
-          <div className="space-y-1">
-            <label className="block text-[10px] font-black text-gray-600 uppercase tracking-wider">
-              MOT DE PASSE *
-            </label>
-            <div className="relative">
-              <Lock
-                size={16}
-                className="absolute left-3.5 top-3 text-gray-400"
-              />
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-xs font-bold text-gray-800 focus:bg-white focus:ring-2 focus:ring-[#2d5a3f] focus:border-transparent outline-none transition-all"
-                placeholder="••••••••••••"
-              />
-            </div>
-          </div>
-
-          {/* 4️⃣ CONFIRMATION MOT DE PASSE */}
-          <div className="space-y-1">
-            <label className="block text-[10px] font-black text-gray-600 uppercase tracking-wider">
-              CONFIRMER LE MOT DE PASSE *
-            </label>
-            <div className="relative">
-              <Lock
-                size={16}
-                className="absolute left-3.5 top-3 text-gray-400"
-              />
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className={`w-full pl-10 pr-4 py-2.5 bg-gray-50/50 border rounded-xl text-xs font-bold text-gray-800 focus:bg-white focus:ring-2 outline-none transition-all ${
-                  confirmPassword && confirmPassword === password
-                    ? "border-emerald-500 focus:ring-emerald-500"
-                    : confirmPassword && confirmPassword !== password
-                      ? "border-red-400 focus:ring-red-400"
-                      : "border-gray-200 focus:ring-[#2d5a3f]"
-                }`}
-                placeholder="••••••••••••"
-              />
-            </div>
-            {confirmPassword && confirmPassword !== password && (
-              <p className="text-[10px] text-red-500 font-bold mt-0.5">
-                Les mots de passe ne correspondent pas.
-              </p>
-            )}
-          </div>
-
-          {/* CLÉ ACCÈS ADMIN */}
-          {showAdminKey && (
-            <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl space-y-1.5 text-xs">
-              <label className="block font-black text-purple-900 uppercase text-[10px]">
-                CLÉ ADMINISTRATEUR
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+            <div className="sm:col-span-6 space-y-1">
+              <label className="font-bold text-gray-700">
+                Rue / Lieu-dit :
               </label>
               <input
-                type="password"
-                placeholder="Saisissez la clé (Ex: ADMIN2026)"
-                value={adminKeyInput}
-                onChange={(e) => setAdminKeyInput(e.target.value)}
-                className="w-full p-2 bg-white border border-purple-300 rounded-lg font-bold text-gray-800"
+                type="text"
+                required
+                value={address}
+                onChange={(e) => {
+                  setAddress(e.target.value);
+                  setGeoStatus(null);
+                }}
+                placeholder="12 rue de la Mairie"
+                className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium"
               />
             </div>
-          )}
 
-          {/* BOUTON PRINCIPAL D'INSCRIPTION */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-[#2d5a3f] hover:bg-[#234833] text-white font-black py-3.5 px-6 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer active:scale-[0.99] mt-2"
-          >
-            {loading ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                <span>Création en cours...</span>
-              </>
-            ) : (
-              <>
-                <CheckCircle2 size={18} />
-                <span>S'INSCRIRE</span>
-              </>
-            )}
-          </button>
-        </form>
+            <div className="sm:col-span-3 space-y-1">
+              <label className="font-bold text-gray-700">Code Postal :</label>
+              <input
+                type="text"
+                required
+                value={zipCode}
+                onChange={(e) => {
+                  setZipCode(e.target.value);
+                  setGeoStatus(null);
+                }}
+                placeholder="28380"
+                className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-mono"
+              />
+            </div>
 
-        {/* PIED DE CARTE / LIEN CONNEXION */}
-        <div className="pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
-          <p className="text-gray-500 font-semibold">
-            Déjà un compte ?{" "}
+            <div className="sm:col-span-3 space-y-1">
+              <label className="font-bold text-gray-700">Commune :</label>
+              <input
+                type="text"
+                required
+                value={city}
+                onChange={(e) => {
+                  setCity(e.target.value);
+                  setGeoStatus(null);
+                }}
+                placeholder="Saint-Rémy"
+                className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium"
+              />
+            </div>
+          </div>
+
+          <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
             <button
               type="button"
-              onClick={handleGoToLogin}
-              className="text-[#2d5a3f] font-bold hover:underline"
+              onClick={handleVerifyGeoFence}
+              disabled={checkingGeo || !address.trim() || !city.trim()}
+              className="w-full sm:w-auto px-4 py-2.5 bg-emerald-800 hover:bg-emerald-900 disabled:bg-gray-300 text-white font-black rounded-xl uppercase tracking-wider text-[11px] transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
             >
-              Se connecter
+              <ShieldCheck size={16} />
+              <span>
+                {checkingGeo
+                  ? "Calcul de la distance..."
+                  : "Tester l'Éligibilité Géographique"}
+              </span>
             </button>
-          </p>
 
-          <button
-            type="button"
-            onClick={() => setShowAdminKey(!showAdminKey)}
-            className="text-purple-700 font-bold hover:underline text-[10px] flex items-center gap-1"
-          >
-            <Crown size={12} />
-            <span>Admin</span>
-          </button>
+            {geoStatus && (
+              <div
+                className={`p-3 rounded-xl border flex items-center gap-2 font-bold ${
+                  geoStatus.eligible
+                    ? "bg-emerald-100 border-emerald-300 text-emerald-950"
+                    : "bg-amber-100 border-amber-300 text-amber-950"
+                }`}
+              >
+                {geoStatus.eligible ? (
+                  <CheckCircle2
+                    size={18}
+                    className="text-emerald-700 shrink-0"
+                  />
+                ) : (
+                  <AlertTriangle
+                    size={18}
+                    className="text-amber-700 shrink-0"
+                  />
+                )}
+                <div>
+                  <p>{geoStatus.message}</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* VALIDATION FINALE & CRÉATION DE COMPTE */}
+        <button
+          type="submit"
+          disabled={submitting || !geoStatus || !geoStatus.eligible}
+          className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-black py-4 px-6 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <span>
+            {submitting
+              ? "Création du compte..."
+              : "Valider et Créer mon Compte"}
+          </span>
+          <ArrowRight size={16} />
+        </button>
+      </form>
+
+      <div className="text-center pt-2 border-t border-gray-100">
+        <button
+          type="button"
+          onClick={onNavigateToLogin || (() => navigate("/login"))}
+          className="text-gray-500 hover:text-emerald-800 font-bold underline"
+        >
+          Déjà un compte ? Connectez-vous ici
+        </button>
       </div>
     </div>
   );

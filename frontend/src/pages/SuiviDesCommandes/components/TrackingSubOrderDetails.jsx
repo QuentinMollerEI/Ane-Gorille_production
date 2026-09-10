@@ -1,66 +1,85 @@
 import React from "react";
+import { Building, Tag } from "lucide-react";
 
 /**
  * 🧑‍🌾 COMPOSANT : TrackingSubOrderDetails.jsx
- * CHEMIN DE DESTINATION : src/pages/SuiviDesCommandes/components/TrackingSubOrderDetails.jsx
- * Responsabilité unique : Affichage logistique des paniers par producteur,
- * avec indicateur de récolte indépendant et exposition des numéros de lots (HACCP) [cite: 10, 11].
+ * Affichage des sous-commandes maraîchères avec statuts et numéros de lots
  */
-export default function TrackingSubOrderDetails({ associatedSubs }) {
+export default function TrackingSubOrderDetails({ associatedSubs = [] }) {
   return (
     <div className="space-y-3">
-      <h4 className="text-xs font-black uppercase text-gray-400 tracking-wider">
-        État de préparation de vos colis par producteur :
-      </h4>
+      {associatedSubs.map((sub) => {
+        const items = sub.items || [];
+        const isReady =
+          sub.status === "PRET_A_EXPEDIER" ||
+          sub.status === "EXPEDIE" ||
+          sub.status === "LIVRE";
 
-      <div className="space-y-3.5">
-        {associatedSubs.map((sub) => (
+        return (
           <div
             key={sub.id}
-            className="bg-white border border-gray-200 rounded-2xl p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
+            className="p-4 bg-gray-50/80 border border-gray-200 rounded-2xl space-y-2.5"
           >
-            <div className="space-y-1.5">
-              <p className="text-xs font-black text-gray-800 flex items-center gap-1.5">
-                <span>🧑‍🌾</span> {sub.producerName || "Producteur local"}
-              </p>
-
-              {/* Liste horizontale des légumes rattachés à cette récolte */}
-              <div className="flex flex-wrap gap-2 pt-1">
-                {sub.items?.map((item, index) => (
-                  <span
-                    key={index}
-                    className="text-[10px] bg-gray-50 border border-gray-150 text-gray-600 px-2.5 py-0.5 rounded-lg font-bold"
-                  >
-                    {item.quantity || item.qty} {item.unit || "kg"} •{" "}
-                    {item.title || item.name}
-                  </span>
-                ))}
+            <div className="flex justify-between items-center border-b border-gray-200/60 pb-2">
+              <div className="flex items-center gap-1.5">
+                <Building size={15} className="text-emerald-800" />
+                <span className="font-black text-gray-900 text-xs">
+                  {sub.producerName || "Exploitation Maraîchère"}
+                </span>
               </div>
-            </div>
 
-            {/* État logistique local du maraîcher */}
-            <div className="text-left md:text-right space-y-1 self-stretch md:self-auto flex flex-row md:flex-col justify-between md:justify-center items-center md:items-end border-t md:border-t-0 border-dashed border-gray-200 pt-3 md:pt-0">
               <span
-                className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded border ${
-                  sub.status === "A_PREPARER"
-                    ? "bg-amber-50 border-amber-200 text-amber-700"
-                    : "bg-green-50 border-green-200 text-green-700"
+                className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
+                  isReady
+                    ? "bg-emerald-100 text-emerald-900 border-emerald-300"
+                    : "bg-amber-100 text-amber-900 border-amber-300"
                 }`}
               >
                 {sub.status === "A_PREPARER"
                   ? "En récolte..."
-                  : "Prêt en Hangar"}
+                  : sub.status === "PRET_A_EXPEDIER"
+                    ? "Prêt en hangar"
+                    : "Chargé / En route"}
               </span>
-
-              {sub.batchNumbers && sub.batchNumbers.length > 0 && (
-                <p className="text-[9px] text-gray-400 font-mono mt-0.5">
-                  HACCP Lot : {sub.batchNumbers.join(", ")}
-                </p>
-              )}
             </div>
+
+            {/* LISTE DES ARTICLES DE CE MARAÎCHER */}
+            <div className="space-y-1.5">
+              {items.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="flex justify-between items-center text-xs"
+                >
+                  <span className="font-extrabold text-gray-800">
+                    • {item.title || item.name} (
+                    {item.quantity || item.qty || 1} {item.unit || "kg"})
+                  </span>
+                  <span className="font-black text-emerald-800">
+                    {Number(
+                      (item.priceHT || item.price || 0) *
+                        (item.quantity || item.qty || 1),
+                    ).toFixed(2)}{" "}
+                    € HT
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* NUMÉROS DE LOTS HACCP */}
+            {sub.batchNumbers && sub.batchNumbers.length > 0 && (
+              <div className="pt-1.5 border-t border-gray-200/50 flex items-center gap-1 text-[10px] text-gray-500 font-medium">
+                <Tag size={12} className="text-emerald-700" />
+                <span>
+                  Lots HACCP :{" "}
+                  <strong className="text-gray-700">
+                    {sub.batchNumbers.join(", ")}
+                  </strong>
+                </span>
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }

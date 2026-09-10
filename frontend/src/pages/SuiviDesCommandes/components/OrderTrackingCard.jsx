@@ -1,31 +1,28 @@
 import React, { useState } from "react";
 import {
   Package,
-  Calendar,
-  MapPin,
-  Receipt,
-  ShieldAlert,
+  Clock,
+  Truck,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
-  FileText,
-  CheckCircle,
-  Flame,
+  Building,
 } from "lucide-react";
 
-// Imports locaux conformes à votre structure
 import TrackingStepper from "./TrackingStepper";
-import TrackingFinancialSummary from "./TrackingFinancialSummary";
 import TrackingSubOrderDetails from "./TrackingSubOrderDetails";
+import TrackingFinancialSummary from "./TrackingFinancialSummary";
 
 /**
- * 📦 COMPOSANT : OrderTrackingCard.jsx (v4 - Harmonisé et Modulaire)
- * Responsabilité unique : Afficher la fiche d'une commande spécifique,
- * intégrer le Stepper de progression et déléguer les détails financiers et logistiques.
+ * 📦 COMPOSANT : OrderTrackingCard.jsx
+ * Fiche individuelle d'une commande avec Stepper, Sous-commandes et Synthèse Fiscale
  */
-export default function OrderTrackingCard({ order }) {
+export default function OrderTrackingCard({ order, associatedSubs = [] }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Formater la date Firestore ou brute [cite: 73]
+  if (!order) return null;
+
+  // Formatage de date
   const formattedDate = order.createdAt?.toDate
     ? order.createdAt.toDate().toLocaleDateString("fr-FR", {
         day: "numeric",
@@ -36,32 +33,46 @@ export default function OrderTrackingCard({ order }) {
       })
     : new Date().toLocaleDateString("fr-FR");
 
-  // Traduction visuelle du statut global
+  const totalAmount = Number(
+    order.totalAmount || order.totalTTC || order.price || 0,
+  );
+
+  // Badge du statut global
   const getStatusBadge = (status) => {
     switch (status) {
       case "A_PREPARER":
         return (
-          <span className="px-3 py-1 bg-amber-50 border border-amber-150 text-amber-700 text-xs font-bold rounded-full">
-            📋 En préparation
+          <span className="bg-amber-100 text-amber-900 border border-amber-300 px-3 py-1 rounded-full font-black text-[10px] uppercase flex items-center gap-1">
+            <Clock size={12} />
+            Récolte en cours
+          </span>
+        );
+      case "PRET_A_EXPEDIER":
+        return (
+          <span className="bg-purple-100 text-purple-900 border border-purple-300 px-3 py-1 rounded-full font-black text-[10px] uppercase flex items-center gap-1">
+            <Package size={12} />
+            Prêt en Hangar
           </span>
         );
       case "EN_COURS_DE_LIVRAISON":
       case "EXPEDIE":
         return (
-          <span className="px-3 py-1 bg-blue-50 border border-blue-150 text-blue-700 text-xs font-bold rounded-full">
-            🚚 En cours de route
+          <span className="bg-blue-100 text-blue-900 border border-blue-300 px-3 py-1 rounded-full font-black text-[10px] uppercase flex items-center gap-1">
+            <Truck size={12} />
+            En transit frigorifique
           </span>
         );
-      case "TERMINE":
       case "LIVRE":
+      case "TERMINE":
         return (
-          <span className="px-3 py-1 bg-green-50 border border-green-150 text-green-700 text-xs font-bold rounded-full">
-            ✅ Livraison effectuée
+          <span className="bg-emerald-100 text-emerald-950 border border-emerald-300 px-3 py-1 rounded-full font-black text-[10px] uppercase flex items-center gap-1">
+            <CheckCircle2 size={12} />
+            Livré & Conforme
           </span>
         );
       default:
         return (
-          <span className="px-3 py-1 bg-gray-50 border border-gray-150 text-gray-500 text-xs font-bold rounded-full">
+          <span className="bg-gray-100 text-gray-700 border border-gray-200 px-3 py-1 rounded-full font-bold text-[10px] uppercase">
             Enregistrée
           </span>
         );
@@ -69,108 +80,111 @@ export default function OrderTrackingCard({ order }) {
   };
 
   return (
-    <div className="bg-white border border-gray-250 rounded-2xl shadow-sm hover:shadow-md transition-all overflow-hidden animate-fade-in">
-      {/* 1. EN-TÊTE DE CARTE COMPACT */}
-      <div className="p-5 border-b border-gray-100 bg-gray-50/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-400 font-extrabold uppercase tracking-wider">
-              Commande
+    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-6 transition-all hover:border-gray-300">
+      {/* 1. EN-TÊTE COMPACT */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-150 pb-4 gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono font-black bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded-lg uppercase">
+              #{order.orderId || order.id.slice(0, 8).toUpperCase()}
             </span>
-            <p className="font-black text-gray-900 text-base uppercase">
-              #{order.id.slice(0, 8)}
-            </p>
             {getStatusBadge(order.status)}
           </div>
-          <p className="text-xs text-gray-500 font-bold flex items-center gap-1">
-            <Calendar size={13} className="text-gray-400" /> Passée le{" "}
-            {formattedDate}
+          <p className="text-gray-500 font-semibold text-[11px] mt-1.5">
+            Commandé le{" "}
+            <span className="font-bold text-gray-800">{formattedDate}</span>
           </p>
         </div>
 
-        <div className="flex items-center gap-4 self-start md:self-auto">
-          <div className="text-right">
-            <span className="text-[10px] text-gray-400 font-extrabold uppercase tracking-wider block">
-              Montant global
-            </span>
-            <p className="font-black text-gray-950 text-lg">
-              {(order.totalAmount || 0).toFixed(2)} €
-            </p>
-          </div>
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="p-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-gray-500"
-          >
-            {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
+        <div className="text-right">
+          <span className="text-gray-400 uppercase font-black text-[10px]">
+            Montant Global TTC
+          </span>
+          <p className="text-lg font-black text-emerald-800">
+            {totalAmount.toFixed(2)} €
+          </p>
         </div>
       </div>
 
       {/* 2. STEPPER DE LOGISTIQUE PHYSIQUE */}
-      <div className="p-6 border-b border-gray-50">
-        <TrackingStepper status={order.status} />
+      <TrackingStepper
+        status={order.status}
+        tempHaccp={order.tempHaccp}
+        signature={order.signature}
+      />
+
+      {/* 3. BOUTON ACCORDÉON / DÉTAILS */}
+      <div className="pt-2 border-t border-gray-100 flex justify-between items-center">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="text-emerald-800 hover:text-emerald-950 font-black text-xs flex items-center gap-1.5 cursor-pointer bg-emerald-50 hover:bg-emerald-100 px-4 py-2 rounded-2xl transition-colors"
+        >
+          <span>
+            {isExpanded
+              ? "Masquer le détail complet"
+              : "Voir le détail complet (HACCP, Produits & Factures)"}
+          </span>
+          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+
+        <span className="text-[11px] font-bold text-gray-400">
+          {(order.items || []).length} référence(s)
+        </span>
       </div>
 
-      {/* 3. VUE ÉTENDUE : DETAIL DES PRODUITS, COMPTA & TRAÇABILITÉ */}
+      {/* 4. VUE ÉTENDUE : DÉTAIL DES PRODUITS & FINANCES */}
       {isExpanded && (
-        <div className="p-6 bg-gray-50/30 border-t border-gray-100 space-y-6 animate-slide-down">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Colonne gauche : Synthèse des produits par maraîcher & Traçabilité */}
-            <div className="space-y-5">
-              <h3 className="font-black text-gray-900 text-xs uppercase tracking-wider flex items-center gap-2">
-                <Package size={14} className="text-emerald-700" /> Détail de vos
-                récoltes
-              </h3>
+        <div className="pt-4 border-t border-gray-200 grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
+          {/* COLONNE GAUCHE : SUB-ORDERS MARAÎCHÈRES */}
+          <div className="lg:col-span-7 space-y-4">
+            <h4 className="font-black text-gray-900 text-xs uppercase tracking-wider flex items-center gap-2">
+              <Building size={16} className="text-emerald-700" />
+              Traçabilité & Avancement par Exploitation
+            </h4>
 
-              {/* Délégation de l'affichage des sous-commandes maraîchères (Traçabilité HACCP et numéros de lots) */}
-              <TrackingSubOrderDetails parentOrderId={order.id} />
-            </div>
-
-            {/* Colonne droite : Informations de livraison, Température HACCP & Facturation */}
-            <div className="space-y-6">
-              <div className="bg-white border border-gray-250 rounded-xl p-5 space-y-4 shadow-sm">
-                <h3 className="font-black text-gray-900 text-xs uppercase tracking-wider flex items-center gap-2">
-                  <MapPin size={14} className="text-emerald-700" /> Informations
-                  d'acheminement
-                </h3>
-                <div className="space-y-2 text-xs font-semibold text-gray-600">
-                  <p className="flex justify-between">
-                    <span>Adresse de distribution :</span>
-                    <span className="font-bold text-gray-900 text-right">
-                      {order.deliveryAddress || "Point de distribution central"}
-                    </span>
-                  </p>
-                  <p className="flex justify-between">
-                    <span>Livreur assigné :</span>
-                    <span className="font-bold text-gray-900">
-                      {order.carrierName || "Tournée mutualisée"}
-                    </span>
-                  </p>
-                </div>
-
-                {/* Sceau de conformité thermique HACCP */}
-                {order.tempHaccp && (
-                  <div className="p-3 bg-green-50 border border-green-200 text-green-800 rounded-lg text-xs font-semibold flex items-center gap-2">
-                    <CheckCircle
-                      size={16}
-                      className="text-green-600 shrink-0"
-                    />
-                    <div>
-                      <p className="font-bold">
-                        Contrôle de la chaîne du froid validé !
-                      </p>
-                      <p className="text-[10px] text-green-700">
-                        Température de transport contrôlée à {order.tempHaccp}°C
-                        (Cible réglementaire &lt; 6°C).
-                      </p>
+            {associatedSubs.length > 0 ? (
+              <TrackingSubOrderDetails associatedSubs={associatedSubs} />
+            ) : (
+              <div className="p-4 bg-gray-50 border border-gray-200 rounded-2xl space-y-2">
+                <p className="font-extrabold text-gray-800">
+                  Articles commandés :
+                </p>
+                <div className="divide-y divide-gray-100">
+                  {(order.items || []).map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="py-2 flex justify-between items-center text-xs"
+                    >
+                      <div>
+                        <p className="font-black text-gray-900">
+                          {item.title || item.name}
+                        </p>
+                        <p className="text-[10px] text-gray-500">
+                          Ferme :{" "}
+                          {item.producerCompany ||
+                            item.producerName ||
+                            "Maraîcher local"}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-extrabold text-gray-800">
+                          {item.quantity || item.qty || 1} {item.unit || "kg"}
+                        </p>
+                        <p className="text-[10px] text-emerald-800 font-bold">
+                          {Number(item.priceHT || item.price || 0).toFixed(2)} €
+                          HT
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
+            )}
+          </div>
 
-              {/* Bilan comptable et TVA par taux de la commande */}
-              <TrackingFinancialSummary order={order} />
-            </div>
+          {/* COLONNE DROITE : SYNTHÈSE FINANCIÈRE & HACCP */}
+          <div className="lg:col-span-5 space-y-4">
+            <TrackingFinancialSummary order={order} />
           </div>
         </div>
       )}

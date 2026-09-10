@@ -1,67 +1,72 @@
 import React from "react";
-import { Search } from "lucide-react";
+import { Search, ListOrdered, Clock, CheckCircle2 } from "lucide-react";
 
 /**
  * 🔍 COMPOSANT : TrackingFilters.jsx
- * CHEMIN DE DESTINATION : src/pages/SuiviDesCommandes/components/TrackingFilters.jsx
- * Responsabilité unique : Affichage des boutons d'onglets de filtrage logistique
- * et de la barre de recherche textuelle réactive de l'acheteur.
+ * Filtres d'onglets logistiques et barre de recherche
  */
 export default function TrackingFilters({
   activeFilter,
   setActiveFilter,
   searchQuery,
   setSearchQuery,
-  totalCount,
-  inProgressCount,
-  completedCount,
+  totalCount = 0,
+  inProgressCount = 0,
+  completedCount = 0,
 }) {
   return (
-    <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between bg-white border border-gray-200 p-4 rounded-2xl shadow-xs">
-      {/* Sélecteur d'onglets logistiques */}
-      <div className="flex bg-gray-50 p-1 rounded-xl border border-gray-150 self-start">
-        <button
-          onClick={() => setActiveFilter("ALL")}
-          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-            activeFilter === "ALL"
-              ? "bg-white text-gray-800 shadow-xs"
-              : "text-gray-500 hover:text-gray-800"
-          }`}
-        >
-          Toutes ({totalCount})
-        </button>
-        <button
-          onClick={() => setActiveFilter("IN_PROGRESS")}
-          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-            activeFilter === "IN_PROGRESS"
-              ? "bg-white text-amber-700 shadow-xs"
-              : "text-gray-500 hover:text-gray-800"
-          }`}
-        >
-          En cours ({inProgressCount})
-        </button>
-        <button
-          onClick={() => setActiveFilter("COMPLETED")}
-          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-            activeFilter === "COMPLETED"
-              ? "bg-white text-green-700 shadow-xs"
-              : "text-gray-500 hover:text-gray-800"
-          }`}
-        >
-          Terminées ({completedCount})
-        </button>
-      </div>
+    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm space-y-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        {/* BOUTONS D'ONGLETS */}
+        <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-2xl border border-gray-200">
+          <button
+            onClick={() => setActiveFilter("all")}
+            className={`px-3.5 py-1.5 rounded-xl font-extrabold text-xs transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeFilter === "all"
+                ? "bg-white text-gray-900 shadow-sm border border-gray-200"
+                : "text-gray-500 hover:text-gray-800"
+            }`}
+          >
+            <ListOrdered size={14} />
+            <span>Toutes ({totalCount})</span>
+          </button>
 
-      {/* Barre de recherche textuelle globale */}
-      <div className="relative flex-1 max-w-md">
-        <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4" />
-        <input
-          type="text"
-          placeholder="Rechercher par n° de commande, établissement..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-green-500 bg-white"
-        />
+          <button
+            onClick={() => setActiveFilter("in_progress")}
+            className={`px-3.5 py-1.5 rounded-xl font-extrabold text-xs transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeFilter === "in_progress"
+                ? "bg-amber-100 text-amber-900 shadow-sm border border-amber-200"
+                : "text-gray-500 hover:text-amber-800"
+            }`}
+          >
+            <Clock size={14} />
+            <span>En cours ({inProgressCount})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveFilter("completed")}
+            className={`px-3.5 py-1.5 rounded-xl font-extrabold text-xs transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeFilter === "completed"
+                ? "bg-emerald-100 text-emerald-900 shadow-sm border border-emerald-200"
+                : "text-gray-500 hover:text-emerald-800"
+            }`}
+          >
+            <CheckCircle2 size={14} />
+            <span>Livrées ({completedCount})</span>
+          </button>
+        </div>
+
+        {/* BARRE DE RECHERCHE */}
+        <div className="relative w-full md:w-80">
+          <Search size={15} className="absolute left-3.5 top-3 text-gray-400" />
+          <input
+            type="text"
+            placeholder="N° commande, maraîcher, légume..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-2xl text-xs font-medium focus:ring-2 focus:ring-emerald-500 bg-gray-50/50"
+          />
+        </div>
       </div>
     </div>
   );

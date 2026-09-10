@@ -1,365 +1,44 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { db } from "../../services/firestore.service";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "../../services/firestore.service";
 import {
-  Package,
-  Truck,
-  CheckCircle,
-  Clock,
-  MapPin,
-  ChevronDown,
-  ChevronUp,
-  Calendar,
+  ListOrdered,
   AlertCircle,
-  ShieldCheck,
-  ArrowRight,
-  Hash,
-  Receipt,
+  RefreshCw,
+  Info,
+  Terminal,
 } from "lucide-react";
 
-// =========================================================================
-// COMPOSANT COMPORTEMENTAL : ÉTAPE PAR ÉTAPE (TrackingStepper)
-// =========================================================================
-function TrackingStepper({ status, tempHaccp, signature }) {
-  // Détermination des étapes actives selon le statut de la base de données
-  const steps = [
-    {
-      id: "A_PREPARER",
-      label: "Préparation à la ferme",
-      desc: "Le maraîcher récolte et conditionne vos produits bio.",
-      isCompleted: [
-        "A_PREPARER",
-        "EN_COURS_DE_LIVRAISON",
-        "LIVRE",
-        "TERMINE",
-      ].includes(status),
-      isActive: status === "A_PREPARER",
-    },
-    {
-      id: "EN_COURS_DE_LIVRAISON",
-      label: "En transit logistique",
-      desc: "Le livreur a pris en charge votre panier de proximité.",
-      isCompleted: ["EN_COURS_DE_LIVRAISON", "LIVRE", "TERMINE"].includes(
-        status,
-      ),
-      isActive: status === "EN_COURS_DE_LIVRAISON",
-    },
-    {
-      id: "TERMINE",
-      label: "Livré & Émargé",
-      desc: "La commande vous a été remise en main propre.",
-      isCompleted: ["LIVRE", "TERMINE"].includes(status),
-      isActive: ["LIVRE", "TERMINE"].includes(status),
-    },
-  ];
+import TrackingFilters from "./components/TrackingFilters";
+import OrderTrackingCard from "./components/OrderTrackingCard";
 
-  return (
-    <div className="py-6">
-      <div className="relative flex flex-col md:flex-row justify-between items-start md:items-center gap-6 md:gap-4">
-        {/* Ligne de connexion physique (Desktop) */}
-        <div className="hidden md:block absolute left-8 right-8 top-1/2 h-0.5 bg-gray-150 -translate-y-6 z-0" />
-
-        {steps.map((step, idx) => {
-          const isDone = step.isCompleted;
-          const isCurrent = step.isActive;
-
-          return (
-            <div
-              key={step.id}
-              className="flex md:flex-col items-center text-left md:text-center flex-1 relative z-10 gap-4 md:gap-2"
-            >
-              {/* Bulle d'étape */}
-              <div
-                className={`flex items-center justify-center w-12 h-12 rounded-full border-2 transition-all duration-500 shadow-sm ${
-                  isDone
-                    ? "bg-emerald-500 border-emerald-500 text-white"
-                    : isCurrent
-                      ? "bg-amber-500 border-amber-500 text-white animate-pulse"
-                      : "bg-white border-gray-200 text-gray-400"
-                }`}
-              >
-                {isDone ? (
-                  <CheckCircle size={20} />
-                ) : (
-                  <span className="font-extrabold text-sm">{idx + 1}</span>
-                )}
-              </div>
-
-              {/* Textes explicatifs */}
-              <div className="space-y-0.5">
-                <p
-                  className={`text-xs font-black uppercase tracking-wider ${
-                    isDone || isCurrent ? "text-gray-900" : "text-gray-400"
-                  }`}
-                >
-                  {step.label}
-                </p>
-                <p className="text-[11px] text-gray-500 max-w-xs leading-relaxed hidden md:block">
-                  {step.desc}
-                </p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Sceau Sanitaire HACCP & Traçabilité (Affiché uniquement si livré) */}
-      {["LIVRE", "TERMINE"].includes(status) && (
-        <div className="mt-8 p-4 bg-emerald-50/50 border border-emerald-150 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <span className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
-              <ShieldCheck size={22} />
-            </span>
-            <div>
-              <p className="text-xs font-bold text-emerald-950 uppercase tracking-wide">
-                Contrôle Sanitaire & Température HACCP Validés
-              </p>
-              <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-                La chaîne du froid a été rigoureusement respectée pendant le
-                transport. Température de déchargement :
-                <span className="font-black text-xs bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded ml-1">
-                  {tempHaccp ? `${tempHaccp}°C` : "4.5°C"}
-                </span>
-              </p>
-            </div>
-          </div>
-          {signature && (
-            <div className="bg-white border border-gray-150 p-2 rounded-xl text-center self-stretch sm:self-auto flex items-center justify-center gap-1.5">
-              <span className="text-[10px] font-black uppercase tracking-wider text-gray-500">
-                ✍️ Signature Validée
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// =========================================================================
-// COMPOSANT COMPORTEMENTAL : CARTE DE COMMANDE INDIVIDUELLE (OrderTrackingCard)
-// =========================================================================
-function OrderTrackingCard({ order }) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  // Formatage de la date de création
-  const formattedDate = order.createdAt?.toDate
-    ? order.createdAt
-        .toDate()
-        .toLocaleDateString("fr-FR", {
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-        })
-    : new Date().toLocaleDateString("fr-FR", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      });
-
-  const getStatusBadge = (status) => {
-    switch (status) {
-      case "A_PREPARER":
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-150 text-amber-800 rounded-full text-xs font-bold shadow-sm">
-            <Clock size={12} className="animate-pulse" /> Préparation Maraîchère
-          </span>
-        );
-      case "EN_COURS_DE_LIVRAISON":
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-150 text-blue-800 rounded-full text-xs font-bold shadow-sm">
-            <Truck size={12} className="animate-bounce" /> En cours de livraison
-          </span>
-        );
-      case "LIVRE":
-      case "TERMINE":
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 border border-green-150 text-green-800 rounded-full text-xs font-bold shadow-sm">
-            <CheckCircle size={12} /> Livraison Validée
-          </span>
-        );
-      default:
-        return (
-          <span className="px-3 py-1 bg-gray-100 border border-gray-200 text-gray-700 rounded-full text-xs font-bold">
-            Enregistrée
-          </span>
-        );
-    }
-  };
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden">
-      {/* En-tête de la carte */}
-      <div className="p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gray-50/50 border-b border-gray-100">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-xs font-black uppercase text-gray-400 tracking-wider">
-              Commande
-            </span>
-            <span className="font-extrabold text-sm text-gray-900 font-mono bg-gray-200/50 px-2 py-0.5 rounded">
-              #{order.id.slice(0, 8).toUpperCase()}
-            </span>
-            {getStatusBadge(order.status)}
-          </div>
-          <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
-            <Calendar size={13} /> Passée le {formattedDate}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-4 self-end md:self-auto">
-          <div className="text-right">
-            <p className="text-[10px] text-gray-400 font-black uppercase tracking-wider">
-              Montant Total
-            </p>
-            <p className="text-lg font-black text-brand-dark">
-              {Number(order.totalAmount || 0).toFixed(2)} €
-            </p>
-          </div>
-          <button
-            onClick={() => setIsOpen(!isOpen)}
-            className="p-1.5 border border-gray-200 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition"
-          >
-            {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-        </div>
-      </div>
-
-      {/* Corps Principal - Stepper */}
-      <div className="p-6 border-b border-gray-100 bg-white">
-        <TrackingStepper
-          status={order.status}
-          tempHaccp={order.tempHaccp}
-          signature={order.signature}
-        />
-      </div>
-
-      {/* Accordéon - Détails de la Commande */}
-      {isOpen && (
-        <div className="p-6 bg-gray-50/30 border-t border-gray-50 animate-fade-in space-y-6">
-          <div>
-            <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-              <Package size={14} /> Contenu de votre Panier Local
-            </h4>
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-gray-50 text-gray-500 border-b border-gray-150 uppercase font-bold text-[10px] tracking-wider">
-                    <th className="p-4">Désignation</th>
-                    <th className="p-4 text-center">Quantité</th>
-                    <th className="p-4 text-right">Prix Unitaire</th>
-                    <th className="p-4 text-right">Total TTC</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {/* Note : En cas d'items absents du payload orders, nous affichons des lignes sécurisées */}
-                  {(
-                    order.items || [
-                      {
-                        name: "Panier maraîcher de saison (Tomates, Carottes, Salades)",
-                        quantity: 1,
-                        price: order.totalAmount || 0,
-                      },
-                    ]
-                  ).map((item, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50/50 transition">
-                      <td className="p-4 font-bold text-gray-900">
-                        {item.name || item.title}
-                      </td>
-                      <td className="p-4 text-center font-black text-emerald-800 bg-emerald-50/20">
-                        {item.quantity}
-                      </td>
-                      <td className="p-4 text-right text-gray-500 font-semibold">
-                        {Number(item.price || 0).toFixed(2)} €
-                      </td>
-                      <td className="p-4 text-right font-black text-gray-900">
-                        {Number(
-                          (item.price || 0) * (item.quantity || 1),
-                        ).toFixed(2)}{" "}
-                        €
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-            {/* Facturation & Options */}
-            <div className="border border-gray-200 bg-white rounded-xl p-4 space-y-3 shadow-sm">
-              <h5 className="text-[11px] font-black text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                <Receipt size={13} /> Options de Facturation
-              </h5>
-              <div className="space-y-1.5 text-xs">
-                <div className="flex justify-between text-gray-600">
-                  <span>Méthode de règlement :</span>
-                  <span className="font-bold text-gray-900 uppercase">
-                    {order.paymentMethod === "mandat"
-                      ? "🏛️ Mandat Administratif"
-                      : "💳 Carte Bancaire"}
-                  </span>
-                </div>
-                {order.refEngagement && order.refEngagement !== "-" && (
-                  <div className="flex justify-between text-gray-600">
-                    <span>N° Engagement Chorus :</span>
-                    <span className="font-bold text-blue-700">
-                      {order.refEngagement}
-                    </span>
-                  </div>
-                )}
-                {order.buyerSiret && order.buyerSiret !== "-" && (
-                  <div className="flex justify-between text-gray-600">
-                    <span>N° SIRET :</span>
-                    <span className="font-bold text-gray-900">
-                      {order.buyerSiret}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Expédition / Livraison */}
-            <div className="border border-gray-200 bg-white rounded-xl p-4 space-y-3 shadow-sm">
-              <h5 className="text-[11px] font-black text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                <MapPin size={13} /> Distribution de proximité
-              </h5>
-              <div className="space-y-1.5 text-xs">
-                <div className="flex justify-between text-gray-600">
-                  <span>Point de distribution :</span>
-                  <span className="font-bold text-gray-900 text-right">
-                    {order.deliveryAddress || "Point de distribution Central"}
-                  </span>
-                </div>
-                {order.carrierName && (
-                  <div className="flex justify-between text-gray-600">
-                    <span>Opérateur logistique :</span>
-                    <span className="font-bold text-gray-900">
-                      {order.carrierName}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// =========================================================================
-// COMPOSANT PRINCIPAL : SUIVI DES COMMANDES (OrderTracking)
-// =========================================================================
+/**
+ * 📦 COMPOSANT PRINCIPAL : OrderTracking.jsx
+ * Emplacement : src/pages/SuiviDesCommandes/OrderTracking.jsx
+ *
+ * Suivi Logistique et Traçabilité des Commandes Acheteur (B2B / B2G)
+ */
 export default function OrderTracking() {
-  const { user } = useAuth();
-  const [orders, setOrders] = useState([]);
+  const auth = useAuth() || {};
+  const { user, userProfile } = auth;
+
+  const [rawOrders, setRawOrders] = useState([]);
+  const [subOrders, setSubOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showDebug, setShowDebug] = useState(false);
 
-  // Écouteur Firestore en temps réel pour synchroniser les statuts logistiques instantanément
+  // Filtres
+  const [activeFilter, setActiveFilter] = useState("all"); // 'all' | 'in_progress' | 'completed'
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const uid = user?.uid || userProfile?.uid || userProfile?.id;
+  const userEmail = user?.email || userProfile?.email || "";
+  const isAdmin = userProfile?.role === "admin" || user?.role === "admin";
+
   useEffect(() => {
-    if (!user?.uid) {
+    if (!uid && !userEmail) {
       setLoading(false);
       return;
     }
@@ -367,96 +46,273 @@ export default function OrderTracking() {
     setLoading(true);
     setError(null);
 
-    // Requête réelle sur les commandes associées à cet acheteur précis
-    const q = query(collection(db, "orders"), where("buyerId", "==", user.uid));
-
-    const unsubscribe = onSnapshot(
-      q,
+    // 1. Écoute globale de la collection 'orders'
+    const ordersRef = collection(db, "orders");
+    const unsubscribeOrders = onSnapshot(
+      ordersRef,
       (snapshot) => {
-        const docsList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
+        const docsList = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...docSnap.data(),
         }));
 
-        // Tri chronologique décroissant des commandes
+        // Tri par date récente
         docsList.sort((a, b) => {
-          const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date();
-          const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date();
+          const dateA = a.createdAt?.toDate
+            ? a.createdAt.toDate()
+            : new Date(a.createdAt || 0);
+          const dateB = b.createdAt?.toDate
+            ? b.createdAt.toDate()
+            : new Date(b.createdAt || 0);
           return dateB - dateA;
         });
 
-        setOrders(docsList);
+        setRawOrders(docsList);
         setLoading(false);
       },
       (err) => {
-        console.error("Erreur d'écoute en temps réel des commandes :", err);
+        console.error("Erreur synchronisation commandes :", err);
         setError(
-          "Erreur de permissions ou de connexion lors de la récupération de vos commandes.",
+          `Erreur Firestore : ${err.message || "Permissions insuffisantes"}`,
         );
         setLoading(false);
       },
     );
 
-    return () => unsubscribe();
-  }, [user?.uid]);
+    // 2. Écoute globale des sous-commandes maraîchères 'sub_orders'
+    const subRef = collection(db, "sub_orders");
+    const unsubscribeSub = onSnapshot(
+      subRef,
+      (snapshot) => {
+        const subList = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+        setSubOrders(subList);
+      },
+      (err) => {
+        console.error("Erreur synchronisation sub_orders :", err);
+      },
+    );
+
+    return () => {
+      unsubscribeOrders();
+      unsubscribeSub();
+    };
+  }, [uid, userEmail]);
+
+  // Filtrage des commandes pour l'utilisateur connecté (Acheteur ou Admin)
+  const userOrders = rawOrders.filter((order) => {
+    if (isAdmin) return true;
+
+    const matchUid =
+      order.buyerId === uid ||
+      order.clientId === uid ||
+      order.userId === uid ||
+      order.buyerUid === uid;
+
+    const matchEmail =
+      userEmail &&
+      order.buyerEmail &&
+      order.buyerEmail.toLowerCase() === userEmail.toLowerCase();
+
+    return matchUid || matchEmail;
+  });
+
+  // Groupement des sub_orders par parentOrderId
+  const subOrdersMap = subOrders.reduce((acc, sub) => {
+    const parentKey = sub.parentOrderId || sub.orderId;
+    if (parentKey) {
+      if (!acc[parentKey]) acc[parentKey] = [];
+      acc[parentKey].push(sub);
+    }
+    return acc;
+  }, {});
+
+  // Filtrage combiné (Statut + Recherche)
+  const filteredOrders = userOrders.filter((order) => {
+    const status = order.status || "A_PREPARER";
+    const isCompleted = ["LIVRE", "TERMINE"].includes(status);
+    const isInProgress = !isCompleted;
+
+    if (activeFilter === "in_progress" && !isInProgress) return false;
+    if (activeFilter === "completed" && !isCompleted) return false;
+
+    if (searchQuery.trim() !== "") {
+      const q = searchQuery.toLowerCase();
+      const matchId =
+        (order.id || "").toLowerCase().includes(q) ||
+        (order.orderId || "").toLowerCase().includes(q);
+      const matchProducer = (order.producerName || "")
+        .toLowerCase()
+        .includes(q);
+      const matchAddress = (order.deliveryAddress || "")
+        .toLowerCase()
+        .includes(q);
+      const matchItems = (order.items || []).some((item) =>
+        (item.title || item.name || "").toLowerCase().includes(q),
+      );
+
+      return matchId || matchProducer || matchAddress || matchItems;
+    }
+
+    return true;
+  });
+
+  // Métriques
+  const totalCount = userOrders.length;
+  const inProgressCount = userOrders.filter(
+    (o) => !["LIVRE", "TERMINE"].includes(o.status),
+  ).length;
+  const completedCount = userOrders.filter((o) =>
+    ["LIVRE", "TERMINE"].includes(o.status),
+  ).length;
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center py-20 bg-gray-50 min-h-screen">
-        <div className="flex flex-col items-center gap-3">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-emerald-700"></div>
-          <span className="text-gray-500 font-semibold text-xs uppercase tracking-wider">
-            Synchronisation de vos commandes...
-          </span>
-        </div>
+      <div className="flex flex-col items-center justify-center py-20 space-y-3">
+        <RefreshCw size={32} className="animate-spin text-emerald-700" />
+        <p className="text-xs font-bold text-gray-600">
+          Synchronisation de vos approvisionnements...
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in">
-      {/* En-tête */}
-      <div className="border-b border-gray-150 pb-5">
-        <h1 className="text-3xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
-          <span className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg">
-            <Package size={28} />
+    <div className="max-w-6xl mx-auto p-6 space-y-6 animate-fade-in text-xs">
+      {/* HEADER PAGE */}
+      <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
+            <ListOrdered size={26} />
+          </div>
+          <div>
+            <h1 className="text-xl font-black text-gray-900">
+              Suivi & Traçabilité des Commandes
+            </h1>
+            <p className="text-xs text-gray-500 font-semibold">
+              Pilotez en direct la récolte chez vos maraîchers et le transport
+              frigorifique
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowDebug(!showDebug)}
+            className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+            title="Diagnostiquer la connexion Firestore"
+          >
+            <Terminal size={14} />
+            <span>Diagnostic</span>
+          </button>
+          <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 font-black px-3.5 py-1.5 rounded-full text-[11px]">
+            {totalCount} commande(s) enregistrée(s)
           </span>
-          Suivi de mes Commandes
-        </h1>
-        <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1.5">
-          Pilotez l'état de préparation de vos récoltes bio locales et suivez en
-          direct la double-tournée logistique.
-        </p>
+        </div>
       </div>
 
-      {error && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-semibold flex items-center gap-2 animate-fade-in">
-          <AlertCircle size={16} />
-          {error}
+      {/* PANNEAU DE DIAGNOSTIC SI CLIQUE OU SI ERREUR */}
+      {(showDebug || error) && (
+        <div className="p-4 bg-slate-900 text-slate-100 rounded-2xl space-y-2 text-[11px] font-mono border border-slate-700 shadow-lg">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span className="font-bold text-amber-400 flex items-center gap-2">
+              <Info size={14} /> Diagnostic de Connexion Firestore &
+              Authentification
+            </span>
+            <button
+              onClick={() => setShowDebug(false)}
+              className="text-slate-400 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
+            <p>
+              • <strong>UID Utilisateur :</strong> {uid || "Non détecté"}
+            </p>
+            <p>
+              • <strong>E-mail :</strong> {userEmail || "Non renseigné"}
+            </p>
+            <p>
+              • <strong>Rôle :</strong>{" "}
+              {userProfile?.role || user?.role || "Non spécifié"}
+            </p>
+            <p>
+              • <strong>Commandes Firestore Brutes :</strong> {rawOrders.length}{" "}
+              doc(s)
+            </p>
+            <p>
+              • <strong>Commandes Correspondantes :</strong> {userOrders.length}{" "}
+              doc(s)
+            </p>
+            <p>
+              • <strong>Erreur Firestore :</strong> {error || "Aucune"}
+            </p>
+          </div>
         </div>
       )}
 
-      {/* Liste des cartes de suivi de commandes */}
-      <div className="space-y-6">
-        {orders.length > 0 ? (
-          orders.map((order) => (
-            <OrderTrackingCard key={order.id} order={order} />
-          ))
-        ) : (
-          <div className="bg-white border border-gray-200 rounded-2xl p-16 text-center shadow-sm flex flex-col items-center justify-center space-y-4">
-            <div className="p-4 bg-gray-50 text-gray-300 rounded-full">
-              <Package size={40} />
-            </div>
-            <p className="text-sm font-bold text-gray-700">
-              Vous n'avez pas encore passé de commande.
-            </p>
-            <p className="text-xs text-gray-400 max-w-sm">
-              Visitez notre Boutique du Marché pour y commander de succulents
-              fruits et légumes bio locaux en circuit court !
-            </p>
-          </div>
-        )}
-      </div>
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 font-bold flex items-center gap-2">
+          <AlertCircle size={18} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* BARRE DE FILTRES ET SYNTHÈSE */}
+      <TrackingFilters
+        activeFilter={activeFilter}
+        setActiveFilter={setActiveFilter}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        totalCount={totalCount}
+        inProgressCount={inProgressCount}
+        completedCount={completedCount}
+      />
+
+      {/* LISTE DES CARTES DE SUIVI */}
+      {filteredOrders.length > 0 ? (
+        <div className="space-y-6">
+          {filteredOrders.map((order) => {
+            const associatedSubs =
+              subOrdersMap[order.id] || subOrdersMap[order.orderId] || [];
+            return (
+              <OrderTrackingCard
+                key={order.id}
+                order={order}
+                associatedSubs={associatedSubs}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center space-y-3">
+          <ListOrdered size={40} className="mx-auto text-gray-300" />
+          <h3 className="font-extrabold text-gray-800 text-base">
+            Aucune commande trouvée
+          </h3>
+          <p className="text-gray-500 max-w-sm mx-auto">
+            {!uid
+              ? "Veuillez vous connecter pour consulter vos commandes."
+              : rawOrders.length === 0
+                ? "Aucune commande n'est encore présente dans la base de données globale Firestore."
+                : "Vous n'avez pas encore passé de commande avec cet identifiant ou les filtres actuels masquent le résultat."}
+          </p>
+          <button
+            onClick={() => setShowDebug(!showDebug)}
+            className="mt-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <Terminal size={14} />
+            <span>
+              {showDebug
+                ? "Masquer le diagnostic"
+                : "Afficher le diagnostic technique"}
+            </span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

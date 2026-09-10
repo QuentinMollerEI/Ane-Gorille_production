@@ -1,35 +1,28 @@
 import React from "react";
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  Navigate,
-} from "react-router-dom";
-import { AuthProvider, useAuth } from "./context/AuthContext";
-import { CartProvider } from "./context/CartContext"; // 👈 Ajout indispensable pour le panier global
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
-// Import des éléments de structure globaux
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import Navbar from "./components/Navbar";
-import Footer from "./components/Footer";
+import Register from "./components/auth/Register";
+import Login from "./components/auth/Login";
+import Workspace from "./components/Workspace";
 import DashboardLayout from "./layouts/DashboardLayout";
 
-// Import de vos vues applicatives
-import Hero from "./components/Hero";
-import Workspace from "./components/Workspace";
-import Login from "./components/auth/Login";
-import Register from "./components/auth/Register";
-
 /**
- * Gardien de sécurité (PrivateRoute)
- * Bloque l'accès si déconnecté et affiche un écran de chargement propre.
+ * 🔒 Route Privée : Accès réservé aux utilisateurs connectés.
  */
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-brand-light">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-green"></div>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="p-6 bg-white rounded-2xl shadow-sm border border-gray-100 text-center space-y-3">
+          <div className="w-8 h-8 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-xs font-bold text-gray-600">
+            Chargement de votre session...
+          </p>
+        </div>
       </div>
     );
   }
@@ -38,59 +31,74 @@ function PrivateRoute({ children }) {
 }
 
 /**
- * Vue Publique de la Boutique / Accueil
+ * 🔓 Route Publique Uniquement : Redirige vers /dashboard si déjà connecté.
  */
-function PublicHome() {
-  return (
-    <>
-      <Hero />
-    </>
-  );
+function PublicOnlyRoute({ children }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="p-6 bg-white rounded-2xl shadow-sm border border-gray-100 text-center space-y-3">
+          <div className="w-8 h-8 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-xs font-bold text-gray-600">
+            Vérification de la session...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return user ? <Navigate to="/dashboard" replace /> : children;
 }
 
 export default function App() {
   return (
     <AuthProvider>
-      <CartProvider>
-        {" "}
-        {/* 👈 Enveloppe le Router pour fournir le contexte du panier à toute l'application */}
-        <Router
-          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-        >
-          <div className="min-h-screen flex flex-col bg-brand-light relative">
-            {/* Navbar universelle */}
-            <Navbar />
+      <BrowserRouter
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <div className="min-h-screen bg-gray-50 font-sans text-gray-900 flex flex-col">
+          <Navbar />
 
-            {/* Zone de contenu dynamique */}
-            <div className="flex-grow flex flex-col">
-              <Routes>
-                {/* Routes Publiques */}
-                <Route path="/" element={<PublicHome />} />
-                <Route path="/login" element={<Login />} />
-                <Route path="/register" element={<Register />} />
+          <main className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full">
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-                {/* Route Privée Connectée */}
-                <Route
-                  path="/dashboard"
-                  element={
-                    <PrivateRoute>
-                      <DashboardLayout>
-                        <Workspace />
-                      </DashboardLayout>
-                    </PrivateRoute>
-                  }
-                />
+              <Route
+                path="/register"
+                element={
+                  <PublicOnlyRoute>
+                    <Register />
+                  </PublicOnlyRoute>
+                }
+              />
+              <Route
+                path="/login"
+                element={
+                  <PublicOnlyRoute>
+                    <Login />
+                  </PublicOnlyRoute>
+                }
+              />
 
-                {/* Redirection automatique de secours */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </div>
+              {/* 🎯 Dashboard enveloppé dans DashboardLayout pour restituer la Sidebar */}
+              <Route
+                path="/dashboard"
+                element={
+                  <PrivateRoute>
+                    <DashboardLayout>
+                      <Workspace />
+                    </DashboardLayout>
+                  </PrivateRoute>
+                }
+              />
 
-            {/* Footer universel */}
-            <Footer />
-          </div>
-        </Router>
-      </CartProvider>
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            </Routes>
+          </main>
+        </div>
+      </BrowserRouter>
     </AuthProvider>
   );
 }
