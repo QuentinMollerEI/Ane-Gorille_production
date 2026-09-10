@@ -112,6 +112,7 @@ export default function AcheteurPriveContainer() {
         city: profileData.city,
         address: profileData.address,
         preferredPayment: profileData.preferredPayment,
+        isProfileCompleted: true,
         updatedAt: new Date().toISOString(),
       });
 
