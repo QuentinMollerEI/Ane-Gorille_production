@@ -1,153 +1,125 @@
 import React, { useState } from "react";
 import { loadStripe } from "@stripe/stripe-js";
-import {
-  Elements,
-  PaymentElement,
-  useStripe,
-  useElements,
-} from "@stripe/react-stripe-js";
-import { ShieldCheck, Loader2, X, AlertTriangle } from "lucide-react";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 
-// Initialisation unique de Stripe.js via la clé publique Vite
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
+// 1. Récupération dynamique de la clé d'environnement Vite
+const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+
+// 2. Initialisation sécurisée
+const stripePromise = stripePublishableKey 
+  ? loadStripe(stripePublishableKey)
+  : null;
+
+export default function SepaMandateModal({ clientSecret, onClose, onSuccess }) {
+  if (!stripePublishableKey) {
+    console.error(
+      "[STRIPE ERROR] : La variable VITE_STRIPE_PUBLISHABLE_KEY est manquante dans votre fichier frontend/.env"
+    );
+  }
+
+  return (
+    /* Conteneur d'arrière-plan avec défilement global et espacement responsive (p-4 sm:p-6) */
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+      
+      {/* Carte Pop-up avec hauteur maximale (90vh) et défilement interne (overflow-y-auto) */}
+      <div className="bg-white rounded-3xl p-5 sm:p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-gray-100 relative my-auto">
+        
+        {stripePromise && clientSecret ? (
+          <Elements stripe={stripePromise} options={{ clientSecret }}>
+            <SepaMandateForm onClose={onClose} onSuccess={onSuccess} />
+          </Elements>
+        ) : (
+          <div className="p-4 bg-red-50 text-red-700 rounded-2xl text-xs font-semibold space-y-2">
+            <p className="font-bold text-sm">Configuration Stripe manquante</p>
+            <p className="text-[11px] leading-relaxed">
+              La clé publique d'API est introuvable dans votre fichier <code className="bg-red-100 px-1 py-0.5 rounded font-mono">frontend/.env</code> (<code className="font-mono">VITE_STRIPE_PUBLISHABLE_KEY</code>).
+            </p>
+            <button
+              onClick={onClose}
+              type="button"
+              className="mt-2 w-full py-2 bg-red-200 hover:bg-red-300 text-red-900 rounded-xl font-bold transition-colors cursor-pointer"
+            >
+              Fermer
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /**
- * 🔒 Formulaire interne de signature du Mandat SEPA
+ * Sous-composant du Formulaire SEPA
  */
-function SepaFormContent({ userName, userEmail, onClose, onSuccess }) {
+function SepaMandateForm({ onClose, onSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const handleSubmitMandate = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!stripe || !elements) return;
 
-    setIsProcessing(true);
-    setErrorMsg(null);
+    setLoading(true);
+    setErrorMessage("");
 
-    // 🎯 Confirmation du SetupIntent SEPA avec transmission obligatoire des billing_details
-    const { error, setupIntent } = await stripe.confirmSetup({
+    const { error } = await stripe.confirmSetup({
       elements,
       confirmParams: {
-        return_url: `${window.location.origin}/dashboard`,
-        payment_method_data: {
-          billing_details: {
-            name: userName || "Acheteur Professionnel",
-            email: userEmail || "contact@entreprise.fr",
-          },
-        },
+        return_url: `${window.location.origin}/dashboard?sepa=success`,
       },
       redirect: "if_required",
     });
 
     if (error) {
-      console.error("[SEPA CONFIRM ERROR] Détails de l'erreur :", error);
-      setErrorMsg(
-        error.message ||
-          "Impossible de valider le mandat SEPA. Vérifiez les informations saisies.",
-      );
-      setIsProcessing(false);
-    } else if (setupIntent && setupIntent.status === "succeeded") {
-      console.log("[SEPA MANDAT VALIDÉ] SetupIntent ID :", setupIntent.id);
-      setIsProcessing(false);
-      onSuccess(setupIntent);
+      setErrorMessage(error.message);
+      setLoading(false);
     } else {
-      setIsProcessing(false);
+      setLoading(false);
+      onSuccess();
     }
   };
 
   return (
-    <form onSubmit={handleSubmitMandate} className="space-y-5">
-      {errorMsg && (
-        <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-bold flex items-center gap-2">
-          <AlertTriangle size={16} className="shrink-0 text-red-600" />
-          <span>{errorMsg}</span>
-        </div>
-      )}
+    <form onSubmit={handleSubmit} className="space-y-5 text-xs">
+      <div>
+        <h3 className="font-extrabold text-gray-900 text-base sm:text-lg">
+          Mandat de Prélèvement SEPA B2B
+        </h3>
+        <p className="text-gray-500 font-medium text-[11px] sm:text-xs mt-1">
+          Saisissez les coordonnées bancaires de votre structure. La saisie est sécurisée directement par Stripe.
+        </p>
+      </div>
 
-      {/* Saisie de l'IBAN gérée par l'iFrame sécurisée Stripe */}
-      <div className="p-4 border border-gray-200 rounded-2xl bg-gray-50/50">
+      {/* Conteneur d'élément Stripe réactif */}
+      <div className="p-1 min-h-[180px]">
         <PaymentElement />
       </div>
 
-      <div className="flex items-center justify-end gap-3 pt-2">
+      {errorMessage && (
+        <div className="p-3 bg-red-50 border border-red-100 text-red-600 rounded-xl font-semibold text-[11px] leading-relaxed">
+          {errorMessage}
+        </div>
+      )}
+
+      {/* Boutons d'action adaptés aux petits écrans */}
+      <div className="flex flex-col-reverse sm:flex-row gap-2 pt-3 border-t border-gray-100">
         <button
           type="button"
           onClick={onClose}
-          disabled={isProcessing}
-          className="px-4 py-2.5 border border-gray-300 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer"
+          className="w-full sm:w-1/2 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition-colors cursor-pointer text-center"
         >
           Annuler
         </button>
         <button
           type="submit"
-          disabled={!stripe || isProcessing}
-          className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 disabled:bg-gray-300 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-colors cursor-pointer"
+          disabled={!stripe || loading}
+          className="w-full sm:w-1/2 py-3 bg-emerald-800 text-white font-extrabold rounded-xl hover:bg-emerald-900 disabled:bg-gray-300 transition-colors cursor-pointer text-center shadow-sm"
         >
-          {isProcessing ? (
-            <>
-              <Loader2 size={16} className="animate-spin" />
-              <span>Signature en cours...</span>
-            </>
-          ) : (
-            <>
-              <ShieldCheck size={16} />
-              <span>Signer le Mandat SEPA</span>
-            </>
-          )}
+          {loading ? "Validation en cours..." : "Signer le mandat"}
         </button>
       </div>
     </form>
-  );
-}
-
-/**
- * 💳 Modal Principale avec injection du contexte Stripe Elements
- */
-export default function SepaMandateModal({
-  clientSecret,
-  userName,
-  userEmail,
-  onClose,
-  onSuccess,
-}) {
-  if (!clientSecret) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white border border-gray-200 rounded-3xl max-w-lg w-full p-6 shadow-xl space-y-4 relative">
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100 transition-colors cursor-pointer"
-        >
-          <X size={18} />
-        </button>
-
-        <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
-          <div className="p-2.5 bg-emerald-100 text-emerald-800 rounded-2xl">
-            <ShieldCheck size={22} />
-          </div>
-          <div>
-            <h3 className="font-black text-gray-900 text-base">
-              Mandat de Prélèvement SEPA B2B
-            </h3>
-            <p className="text-xs text-gray-500 font-medium">
-              Prélèvement sécurisé régi par le Code Monétaire et Financier.
-            </p>
-          </div>
-        </div>
-
-        <Elements stripe={stripePromise} options={{ clientSecret }}>
-          <SepaFormContent
-            userName={userName}
-            userEmail={userEmail}
-            onClose={onClose}
-            onSuccess={onSuccess}
-          />
-        </Elements>
-      </div>
-    </div>
   );
 }
