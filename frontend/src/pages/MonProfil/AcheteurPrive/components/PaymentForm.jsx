@@ -1,251 +1,198 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../../../../context/AuthContext";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { db } from "../../../../config/firebase";
-import * as paymentService from "../../../../services/paymentService";
+import { doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import { db, auth } from "../../../../config/firebase";
 import SepaMandateModal from "../../../../components/payments/SepaMandateModal";
+
 import {
+  CreditCard,
+  CheckCircle2,
+  ShieldCheck,
+  Loader2,
   Building,
   Lock,
-  CheckCircle2,
-  Loader2,
-  ShieldCheck,
-  CreditCard,
 } from "lucide-react";
 
+/**
+ * 🔒 COMPOSANT : PaymentForm.jsx
+ * Responsabilité : Gestion du mode de règlement B2B et ouverture de la modal SEPA
+ */
 export default function PaymentForm({ onProfileUpdated }) {
   const { user } = useAuth();
-
   const [activeTab, setActiveTab] = useState("stripe_sepa");
-  const [deferredPaymentEnabled, setDeferredPaymentEnabled] = useState(true);
-  const [sepaStatus, setSepaStatus] = useState("unconfigured");
-
-  const [loading, setLoading] = useState(true);
-  const [savingPreferences, setSavingPreferences] = useState(false);
-  const [loadingMandateSession, setLoadingMandateSession] = useState(false);
-
+  const [mandateSuccess, setMandateSuccess] = useState(false);
+  const [loadingSepa, setLoadingSepa] = useState(false);
   const [clientSecret, setClientSecret] = useState(null);
-  const [message, setMessage] = useState(null);
 
+  // Synchronisation du statut SEPA en temps réel
   useEffect(() => {
     if (!user?.uid) return;
-    async function loadPaymentProfile() {
-      try {
-        const snap = await getDoc(doc(db, "users", user.uid));
-        if (snap.exists()) {
-          const data = snap.data();
-          setActiveTab(
-            data.preferredPayment === "bank_transfer"
-              ? "bank_transfer"
-              : "stripe_sepa",
-          );
-          setDeferredPaymentEnabled(data.deferredPaymentEnabled ?? true);
-          setSepaStatus(data.sepaMandateActive ? "active" : "unconfigured");
+
+    const userRef = doc(db, "users", user.uid);
+    const unsubscribe = onSnapshot(userRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.sepaMandateActive || data.preferredPayment === "stripe_sepa") {
+          setMandateSuccess(true);
         }
-      } catch (err) {
-        console.error("Erreur de chargement :", err);
-      } finally {
-        setLoading(false);
       }
-    }
-    loadPaymentProfile();
+    });
+
+    return () => unsubscribe();
   }, [user?.uid]);
 
-  const handleSavePreferences = async (e) => {
-    e.preventDefault();
-    setSavingPreferences(true);
-    setMessage(null);
-    try {
-      await updateDoc(doc(db, "users", user.uid), {
-        preferredPayment: activeTab,
-        deferredPaymentEnabled: deferredPaymentEnabled,
-        updatedAt: new Date().toISOString(),
-      });
-      setMessage({
-        type: "success",
-        text: "Préférences commerciales enregistrées.",
-      });
-      if (onProfileUpdated) onProfileUpdated();
-      setTimeout(() => setMessage(null), 3000);
-    } catch (err) {
-      setMessage({ type: "error", text: "Erreur lors de la sauvegarde." });
-    } finally {
-      setSavingPreferences(false);
-    }
-  };
+  // Initialisation du SetupIntent SEPA
+  const handleStartSepaSetup = async () => {
+    if (!user?.uid || loadingSepa) return;
 
-  const handleSetupSepaMandate = async () => {
-    setLoadingMandateSession(true);
+    setLoadingSepa(true);
     try {
-      const result = await paymentService.initSepaSetupIntent();
-      if (result && result.clientSecret) {
-        setClientSecret(result.clientSecret);
+      const functions = getFunctions(auth.app, "europe-west9");
+      const createSetupIntent = httpsCallable(
+        functions,
+        "createSepaSetupIntentServer",
+      );
+
+      const res = await createSetupIntent({ userId: user.uid });
+
+      if (res.data?.clientSecret) {
+        setClientSecret(res.data.clientSecret);
       } else {
-        throw new Error("Impossible de générer le jeton Stripe.");
+        alert("Impossible d'initialiser le mandat SEPA.");
       }
-    } catch (err) {
-      setMessage({
-        type: "error",
-        text: err.message || "Échec de connexion au PSP.",
-      });
+    } catch (error) {
+      console.error("[SEPA SETUP ERROR] :", error);
+      alert(error.message || "Erreur lors de l'accès au service bancaire.");
     } finally {
-      setLoadingMandateSession(false);
+      setLoadingSepa(false);
     }
   };
-
-  if (loading) return null;
 
   return (
     <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-5 text-xs">
       <div className="flex items-center justify-between border-b border-gray-100 pb-3">
         <div>
-          <h3 className="font-extrabold text-gray-900 text-sm">
-            Moyen de Paiement Professionnel
+          <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+            <CreditCard size={16} className="text-emerald-700" />
+            Moyen de Paiement Professionnel (B2B)
           </h3>
           <p className="text-gray-500 font-medium mt-0.5">
-            Choisissez votre mode de règlement B2B/B2G.
+            Choisissez votre mode de règlement certifié et conforme DSP2.
           </p>
         </div>
-        <div className="flex gap-2 bg-gray-50 p-1 rounded-xl border border-gray-200">
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => setActiveTab("stripe_sepa")}
-            className={`px-4 py-1.5 rounded-lg font-bold transition-all ${activeTab === "stripe_sepa" ? "bg-white text-emerald-800 shadow-sm border border-gray-200" : "text-gray-500"}`}
+            className={`px-3 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
+              activeTab === "stripe_sepa"
+                ? "bg-emerald-800 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
           >
             Prélèvement SEPA
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("bank_transfer")}
-            className={`px-4 py-1.5 rounded-lg font-bold transition-all ${activeTab === "bank_transfer" ? "bg-white text-emerald-800 shadow-sm border border-gray-200" : "text-gray-500"}`}
+            className={`px-3 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
+              activeTab === "bank_transfer"
+                ? "bg-emerald-800 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
           >
             Virement Bancaire
           </button>
         </div>
       </div>
 
-      {message && (
-        <div
-          className={`p-3 rounded-xl font-bold text-[11px] ${message.type === "success" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"}`}
-        >
-          {message.text}
-        </div>
-      )}
-
       {activeTab === "stripe_sepa" && (
-        <div className="space-y-4 animate-fade-in">
-          <div className="p-4 bg-gray-50 border border-gray-200 rounded-2xl flex items-start gap-3 text-gray-600">
-            <Lock size={18} className="text-emerald-700 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <strong className="text-gray-900 block text-xs">
-                Coffre-fort électronique certifié PCI-DSS
-              </strong>
-              <p className="text-[11px] font-medium leading-relaxed">
-                Conformément à la directive européenne DSP2, vos données
-                bancaires sont cryptées et gérées exclusivement par notre
-                Prestataire de Services de Paiement (PSP) agréé par l'ACPR. La
-                plateforme ne stocke aucune coordonnée brute sur ses serveurs.
-              </p>
-            </div>
+        <div className="space-y-4">
+          <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl flex items-center gap-3 text-gray-600">
+            <Lock size={18} className="text-emerald-700 shrink-0" />
+            <p className="text-[11px] font-medium leading-relaxed">
+              <strong className="text-gray-900">Sécurité PCI-DSS v4 : </strong>
+              Saisie isolée sous iFrame certifiée Stripe. Aucun IBAN n'est
+              stocké sur nos serveurs.
+            </p>
           </div>
 
-          <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-2xl space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-extrabold text-emerald-950">
-                Statut de l'autorisation de prélèvement :
-              </span>
-              {sepaStatus === "active" ? (
-                <span className="px-2.5 py-1 bg-emerald-100 text-emerald-900 font-black text-[10px] uppercase rounded-lg flex items-center gap-1">
-                  <CheckCircle2 size={13} /> Mandat Actif
-                </span>
-              ) : (
-                <span className="px-2.5 py-1 bg-amber-100 text-amber-900 font-black text-[10px] uppercase rounded-lg">
-                  En attente de signature
-                </span>
-              )}
-            </div>
-
-            {sepaStatus !== "active" && (
+          {mandateSuccess ? (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl font-extrabold flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={18} className="text-emerald-700" />
+                <span>Mandat SEPA configuré et actif pour votre compte.</span>
+              </div>
               <button
                 type="button"
-                onClick={handleSetupSepaMandate}
-                disabled={loadingMandateSession}
-                className="w-full py-3 bg-emerald-800 hover:bg-emerald-900 text-white font-black rounded-xl uppercase flex items-center justify-center gap-2 transition-all disabled:bg-gray-300"
+                onClick={handleStartSepaSetup}
+                className="px-3 py-1.5 bg-white border border-emerald-300 text-emerald-800 rounded-xl font-bold hover:bg-emerald-100 transition-colors cursor-pointer"
               >
-                {loadingMandateSession ? (
-                  <Loader2 size={15} className="animate-spin" />
-                ) : (
-                  <CreditCard size={15} />
-                )}
-                <span>Renseigner mon IBAN (Popup Sécurisé Stripe)</span>
+                Mettre à jour l'IBAN
               </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex items-center justify-between">
+              <div>
+                <p className="font-bold text-emerald-950">
+                  Aucun Mandat SEPA actif
+                </p>
+                <p className="text-gray-500 text-[11px] mt-0.5">
+                  Signez votre mandat pour débloquer le règlement différé B2B à
+                  30 jours.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleStartSepaSetup}
+                disabled={loadingSepa}
+                className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold rounded-xl transition-colors flex items-center gap-2 cursor-pointer shadow-sm disabled:bg-gray-300"
+              >
+                {loadingSepa ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <ShieldCheck size={16} />
+                )}
+                <span>Configurer le Mandat SEPA</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {activeTab === "bank_transfer" && (
-        <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl space-y-2 animate-fade-in">
+        <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-2xl space-y-3">
           <div className="flex items-center gap-2 text-blue-950 font-extrabold">
-            <Building size={16} className="text-blue-700" />
+            <Building size={18} className="text-blue-700" />
             <span>
               Paiement par Virement Bancaire à Réception de Bon de Commande
             </span>
           </div>
-          <p className="text-gray-600 font-medium">
-            Vos commandes généreront immédiatement un{" "}
-            <strong>Bon de Commande officiel</strong>. Les marchandises seront
-            expédiées à réception des fonds sur le compte séquestre.
+          <p className="text-gray-600 leading-relaxed font-medium">
+            En choisissant ce mode, vos commandes généreront immédiatement un{" "}
+            <strong>Bon de Commande officiel (BC)</strong>.
           </p>
         </div>
       )}
 
-      <form
-        onSubmit={handleSavePreferences}
-        className="space-y-4 pt-3 border-t border-gray-100"
-      >
-        <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl flex items-center justify-between">
-          <span className="font-bold text-gray-800">
-            Autoriser le règlement différé (30 jours) sur mes factures :
-          </span>
-          <input
-            type="checkbox"
-            checked={deferredPaymentEnabled}
-            onChange={(e) => setDeferredPaymentEnabled(e.target.checked)}
-            className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500 cursor-pointer"
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={savingPreferences}
-          className="w-full py-3 bg-gray-900 hover:bg-black disabled:bg-gray-300 text-white font-black rounded-xl uppercase flex items-center justify-center gap-2"
-        >
-          {savingPreferences ? (
-            <Loader2 size={15} className="animate-spin" />
-          ) : (
-            <ShieldCheck size={15} />
-          )}
-          <span>Valider mes préférences</span>
-        </button>
-      </form>
-
-      {/* Pop-up isolé */}
+      {/* Pop-up Modal Stripe Elements */}
       {clientSecret && (
         <SepaMandateModal
           clientSecret={clientSecret}
           onClose={() => setClientSecret(null)}
           onSuccess={async () => {
             setClientSecret(null);
-            setSepaStatus("active");
-            await updateDoc(doc(db, "users", user.uid), {
-              sepaMandateActive: true,
-            });
-            setMessage({
-              type: "success",
-              text: "Mandat SEPA activé avec succès.",
-            });
-            if (onProfileUpdated) onProfileUpdated();
+            setMandateSuccess(true);
+            if (user?.uid) {
+              const userRef = doc(db, "users", user.uid);
+              await updateDoc(userRef, {
+                sepaMandateActive: true,
+                preferredPayment: "stripe_sepa",
+                updatedAt: new Date().toISOString(),
+              });
+              if (onProfileUpdated) onProfileUpdated();
+            }
           }}
         />
       )}

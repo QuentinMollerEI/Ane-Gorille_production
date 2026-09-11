@@ -6,7 +6,8 @@ import { db } from "../config/firebase";
 /**
  * 🔒 HOOK : useProfileCompletion.js
  * Emplacement : src/hooks/useProfileCompletion.js
- * Lit la valeur Firestore isProfileCompleted en priorité absolue.
+ * Lit la valeur Firestore isProfileCompleted en priorité absolue et applique
+ * un fallback incluant la validation du mandat SEPA / moyen de paiement.
  */
 export function useProfileCompletion() {
   const { user } = useAuth();
@@ -31,7 +32,7 @@ export function useProfileCompletion() {
         if (data.isProfileCompleted === true) {
           setIsProfileCompleted(true);
         } else {
-          // Fallback de sécurité
+          // 1. Informations de base du profil
           const hasBase = Boolean(
             data.displayName?.trim() &&
             data.companyName?.trim() &&
@@ -39,18 +40,26 @@ export function useProfileCompletion() {
             data.phone?.trim() &&
             data.address?.trim() &&
             data.postalCode?.trim() &&
-            data.city?.trim(),
+            data.city?.trim()
           );
 
+          // 2. 💳 Validation IBAN / Mandat SEPA ou Virement B2B
+          const hasPayment = Boolean(
+            data.preferredPayment === "bank_transfer" ||
+            (data.preferredPayment === "stripe_sepa" && data.sepaMandateActive === true)
+          );
+
+          // 3. Application selon le rôle
           if (data.role === "acheteur_public") {
             const hasChorus = Boolean(
               data.codeServiceChorus?.trim() ||
               data.codeService?.trim() ||
-              data.refEngagement?.trim(),
+              data.refEngagement?.trim()
             );
             setIsProfileCompleted(hasBase && hasChorus);
           } else {
-            setIsProfileCompleted(hasBase);
+            // Pour l'acheteur privé : Profil de base + Mandat SEPA / Moyen de paiement validé
+            setIsProfileCompleted(hasBase && hasPayment);
           }
         }
       } else {
