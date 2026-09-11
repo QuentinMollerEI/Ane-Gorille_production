@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Navbar from "./components/Navbar";
+import Hero from "./components/Hero";
+import Footer from "./components/Footer";
 import Register from "./components/auth/Register";
 import Login from "./components/auth/Login";
 import Workspace from "./components/Workspace";
@@ -54,11 +56,14 @@ export default function App() {
         future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
       >
         <div className="min-h-screen bg-gray-50 font-sans text-gray-900 flex flex-col">
+          {/* En-tête de navigation universel */}
           <Navbar />
 
-          <main className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full">
+          {/* Zone de contenu dynamic principale */}
+          <main className="flex-1 w-full">
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              {/* 🏠 Page d'accueil publique : Bandeau Hero */}
+              <Route path="/" element={<Hero />} />
 
               <Route
                 path="/register"
@@ -91,9 +96,13 @@ export default function App() {
                 }
               />
 
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              {/* Redirection automatique pour routes inconnues vers la page d'accueil */}
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
+
+          {/* 🦶 Footer universel (Accessible sur TOUTES les pages) */}
+          <Footer />
         </div>
       </BrowserRouter>
     </AuthProvider>
