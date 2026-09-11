@@ -6,9 +6,10 @@
 // 1. Module Authentification & Contrôle Territorial
 const { checkGeoFenceServer } = require("./src/auth/auth.functions");
 
-// 2. Module Paiements (Stripe SEPA & Virement Bancaire B2B/B2G)
+// 2. Module Paiements (Stripe SEPA, Stripe Connect Express & Virement B2B/B2G)
 const {
   createSepaSetupIntentServer,
+  createStripeConnectAccountServer, // 👈 AJOUTÉ : Indispensable pour l'onboarding des maraîchers !
   confirmBankTransferOrderServer,
 } = require("./src/payments/payments.functions");
 
@@ -23,6 +24,7 @@ const { getAdminDashboardStatsServer } = require("./src/admin/admin.functions");
 // EXPORTATIONS OFFICIELLES DU CLOUD
 exports.checkGeoFenceServer = checkGeoFenceServer;
 exports.createSepaSetupIntentServer = createSepaSetupIntentServer;
+exports.createStripeConnectAccountServer = createStripeConnectAccountServer; // 👈 EXPORTÉ OFFICIELLEMENT
 exports.confirmBankTransferOrderServer = confirmBankTransferOrderServer;
 exports.calculateDeliverySlotsServer = calculateDeliverySlotsServer;
 exports.getAdminDashboardStatsServer = getAdminDashboardStatsServer;

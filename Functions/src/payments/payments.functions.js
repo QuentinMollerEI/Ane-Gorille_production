@@ -1,94 +1,103 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { defineSecret } = require("firebase-functions/params");
 const { db } = require("../config/firebaseAdmin");
 
+const stripeSecret = defineSecret("STRIPE_SECRET_KEY");
+
 /**
- * 🔒 CLOUD FUNCTION v2 : createSepaSetupIntentServer
+ * 🔒 CLOUD FUNCTION v2 : createStripeConnectAccountServer
  * Région : europe-west9 (Paris)
- * Secret : STRIPE_SECRET_KEY (Google Cloud Secret Manager)
+ * Rôle : Onboarding Express Stripe Connect pour Maraîchers
  */
-exports.createSepaSetupIntentServer = onCall(
+exports.createStripeConnectAccountServer = onCall(
   {
     region: "europe-west9",
-    secrets: ["STRIPE_SECRET_KEY"],
+    secrets: [stripeSecret],
   },
   async (request) => {
-    // 1. Contrôle d'authentification
     if (!request.auth) {
       throw new HttpsError(
         "unauthenticated",
-        "Vous devez être connecté pour configurer un mandat SEPA.",
+        "Vous devez être connecté pour lier votre compte Stripe."
       );
     }
 
-    const userId = request.auth.uid;
-    const userEmail = request.auth.token.email || "";
+    const producerId = request.data?.producerId || request.auth.uid;
 
     try {
-      // 2. Récupération sécurisée du secret Stripe depuis process.env
-      const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-      if (!stripeSecretKey) {
+      const secretValue = stripeSecret.value() || process.env.STRIPE_SECRET_KEY;
+      if (!secretValue) {
         throw new HttpsError(
           "failed-precondition",
-          "La clé STRIPE_SECRET_KEY est introuvable sur le serveur.",
+          "La clé STRIPE_SECRET_KEY est introuvable sur le serveur."
         );
       }
 
-      const stripe = require("stripe")(stripeSecretKey);
+      const stripe = require("stripe")(secretValue);
 
-      // 3. Récupération du profil dans Firestore (Instance "ane-et-gorille-v2")
-      const userRef = db.collection("users").doc(userId);
-      let userData = {};
+      // Récupération du profil maraîcher
+      const userRef = db.collection("users").doc(producerId);
+      const userSnap = await userRef.get();
 
-      try {
-        const userSnap = await userRef.get();
-        if (userSnap.exists) {
-          userData = userSnap.data();
-        }
-      } catch (dbError) {
-        console.error(
-          "[SEPA DB ERROR] Lecture document utilisateur :",
-          dbError,
+      if (!userSnap.exists) {
+        throw new HttpsError(
+          "not-found",
+          "Profil maraîcher introuvable dans Firestore."
         );
       }
 
-      let customerId = userData.stripeCustomerId;
+      const userData = userSnap.data();
+      let accountId = userData.stripeAccountId;
 
-      // 4. Création du Customer Stripe si non existant
-      if (!customerId) {
-        console.log(`[STRIPE] Création Customer pour UID: ${userId}`);
-        const customer = await stripe.customers.create({
-          email: userData.email || userEmail,
-          name:
-            userData.companyName ||
-            userData.displayName ||
-            "Acheteur Professionnel",
-          metadata: { firebaseUID: userId, siret: userData.siret || "" },
+      // 1. Création du compte Express si non existant
+      if (!accountId) {
+        // Domaine de votre marketplace (évite http://localhost qui peut être rejeté)
+        const baseUrl = "https://ane-et-gorille-v2.web.app";
+
+        const account = await stripe.accounts.create({
+          type: "express",
+          country: "FR",
+          email: userData.email || request.auth.token.email,
+          capabilities: {
+            card_payments: { requested: true },
+            transfers: { requested: true },
+          },
+          business_type: "individual",
+          business_profile: {
+            name: userData.companyName || userData.displayName || "Maraîcher Coopératif",
+            url: baseUrl, // 👈 URL valide exigée par Stripe
+          },
         });
-        customerId = customer.id;
+        accountId = account.id;
 
-        // Sauvegarde de l'ID Customer dans Firestore
         await userRef.set(
-          { stripeCustomerId: customerId, updatedAt: new Date().toISOString() },
-          { merge: true },
+          {
+            stripeAccountId: accountId,
+            stripeOnboardingStatus: "PENDING",
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
         );
       }
 
-      // 5. Création du SetupIntent SEPA Direct Debit
-      const setupIntent = await stripe.setupIntents.create({
-        customer: customerId,
-        payment_method_types: ["sepa_debit"],
-        metadata: { firebaseUID: userId },
+      // 2. Génération de l'URL d'onboarding Express Stripe avec redirections valides
+      const baseUrl = "https://ane-et-gorille-v2.web.app";
+      const onboardingLink = await stripe.accountLinks.create({
+        account: accountId,
+        refresh_url: `${baseUrl}/dashboard/profil?stripe=refresh`,
+        return_url: `${baseUrl}/dashboard/profil?stripe=success`,
+        type: "account_onboarding",
       });
 
-      console.log(`[SEPA SUCCESS] SetupIntent généré : ${setupIntent.id}`);
+      console.log(`[STRIPE CONNECT SUCCESS] Lien généré pour ${producerId} : ${accountId}`);
 
       return {
         success: true,
-        clientSecret: setupIntent.client_secret,
-        customerId,
+        stripeAccountId: accountId,
+        onboardingUrl: onboardingLink.url,
       };
     } catch (error) {
-      console.error("[SEPA SERVER ERROR] :", error);
+      console.error("[STRIPE CONNECT SERVER ERROR] :", error);
 
       if (error instanceof HttpsError) {
         throw error;
@@ -96,8 +105,8 @@ exports.createSepaSetupIntentServer = onCall(
 
       throw new HttpsError(
         "internal",
-        error.message || "Erreur lors de l'initialisation du mandat SEPA.",
+        error.message || "Erreur lors de la création du compte Stripe Connect."
       );
     }
-  },
+  }
 );
