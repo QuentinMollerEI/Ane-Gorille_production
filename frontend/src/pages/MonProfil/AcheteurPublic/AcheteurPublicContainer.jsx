@@ -4,24 +4,20 @@ import GeneralInfoForm from "../components/GeneralInfoForm";
 import ChorusProForm from "./components/ChorusProForm";
 import PublicDeliveryForm from "./components/PublicDeliveryForm";
 import { useProfileCompletion } from "../../../hooks/useProfileCompletion";
+import { Landmark } from "lucide-react";
 
-/**
- * 🔒 CONTENEUR : AcheteurPublicContainer.jsx
- * Emplacement : src/pages/MonProfil/AcheteurPublic/AcheteurPublicContainer.jsx
- * Connecte la vérification du hook useProfileCompletion au composant d'en-tête.
- */
 export default function AcheteurPublicContainer() {
+  // LIAISON DU HOOK DE SÉCURITÉ
   const { isProfileCompleted, refetchProfile } = useProfileCompletion();
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 text-xs animate-fade-in pb-12">
-      {/* 🎯 Transmission de la prop isComplete avec la valeur dynamique du hook */}
       <ProfileHeader
         roleLabel="Acheteur Public (B2G / Cantines Scolaires & Collectivités)"
         isComplete={isProfileCompleted}
+        icon={Landmark}
       />
-
-      {/* Synchronisation de la relecture de base à chaque mise à jour */}
+      {/* Passage du trigger de re-validation à tous les formulaires */}
       <GeneralInfoForm onProfileUpdated={refetchProfile} />
       <ChorusProForm onProfileUpdated={refetchProfile} />
       <PublicDeliveryForm onProfileUpdated={refetchProfile} />

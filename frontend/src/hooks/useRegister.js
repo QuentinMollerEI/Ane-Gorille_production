@@ -19,6 +19,15 @@ export const useRegister = () => {
     setError(null);
 
     try {
+      // 🛡️ SÉCURITÉ ANTI-CROISEMENT :
+      // On s'assure qu'aucun ancien compte n'est actif avant de créer le nouveau.
+      // On purge également le cache local par précaution pour éviter la persistance.
+      if (auth.currentUser) {
+        await auth.signOut();
+        localStorage.clear();
+        sessionStorage.clear();
+      }
+
       // 1. Contrôle GeoFence (50 km autour du Hub)
       setIsCheckingGeo(true);
       const geoResult = await checkGeoFence(
@@ -85,6 +94,9 @@ export const useRegister = () => {
           break;
         case "auth/invalid-email":
           setError("L'adresse e-mail saisie est invalide.");
+          break;
+        case "auth/weak-password":
+          setError("Le mot de passe fourni est trop faible.");
           break;
         default:
           setError(err.message || "Une erreur est survenue lors de l'inscription.");

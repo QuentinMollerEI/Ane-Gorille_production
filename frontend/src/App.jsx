@@ -9,7 +9,8 @@ import Register from "./components/auth/Register";
 import Login from "./components/auth/Login";
 import Workspace from "./components/Workspace";
 import DashboardLayout from "./layouts/DashboardLayout";
-import RequireProfileCompleted from "./components/auth/RequireProfileCompleted";
+// IMPORT CORRIGÉ : RequireCompleteProfile
+import RequireCompleteProfile from "./components/auth/RequireCompleteProfile";
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -82,16 +83,15 @@ export default function App() {
                 }
               />
 
-              {/* 🔒 Route Protégée + Validation de Conformité Profil */}
+              {/* 🔒 Route Protégée (Dashboard) */}
               <Route
                 path="/dashboard"
                 element={
                   <PrivateRoute>
-                    <RequireProfileCompleted>
-                      <DashboardLayout>
-                        <Workspace />
-                      </DashboardLayout>
-                    </RequireProfileCompleted>
+                    <DashboardLayout>
+                      {/* Le RequireCompleteProfile a été retiré d'ici pour éviter le blocage de l'onglet "Profil" */}
+                      <Workspace />
+                    </DashboardLayout>
                   </PrivateRoute>
                 }
               />
