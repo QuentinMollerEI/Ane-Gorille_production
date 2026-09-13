@@ -16,7 +16,6 @@ import {
 } from "firebase/firestore";
 import { db } from "../../services/firestore.service.js";
 import { useAuth } from "../../context/AuthContext";
-import { DocumentWorkflowService } from "../../services/documentWorkflowService";
 
 // Importation des sous-compartiments d'onglet conformément au principe SRP
 import RouteFilters from "./components/RouteFilters";
