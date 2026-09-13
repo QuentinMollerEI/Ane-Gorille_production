@@ -1,9 +1,6 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
-import { auth, db } from "../../config/firebase";
-import { checkGeoFence } from "../../services/logisticsService";
+import { Link, useNavigate } from "react-router-dom";
+import { useRegister } from "../../hooks/useRegister"; // IMPORT DU NOUVEAU HOOK
 import {
   User,
   Mail,
@@ -22,12 +19,15 @@ import {
 } from "lucide-react";
 
 /**
- * 🔒 COMPOSANT : Register.jsx
- * Emplacement : src/components/auth/Register.jsx
- * Responsabilité : Inscription des professionnels avec vérification GeoFence (50km)
- *                  et synchronisation immédiate du rôle Firestore.
+ * COMPOSANT : Register.jsx
+ * Responsabilité (SRP) : Gérer l'interface utilisateur, capturer les entrées 
+ * et déléguer la création de compte au hook `useRegister`.
  */
 export default function Register() {
+  const navigate = useNavigate();
+  // DÉLÉGATION DE LA LOGIQUE MÉTIER AU HOOK
+  const { registerUser, isLoading, isCheckingGeo, error, setError } = useRegister();
+
   const [role, setRole] = useState("acheteur_prive");
   const [formData, setFormData] = useState({
     email: "",
@@ -41,9 +41,7 @@ export default function Register() {
     city: "",
   });
 
-  const [isCheckingGeo, setIsCheckingGeo] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState(null);
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -51,102 +49,32 @@ export default function Register() {
   };
 
   const isPasswordMatch =
-    formData.password.length >= 6 &&
+    formData.password.length >= 8 &&
+    passwordRegex.test(formData.password) &&
     formData.password === formData.confirmPassword;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (isLoading || isCheckingGeo) return;
-
-    setErrorMessage(null);
+    setError(null); // On utilise le setError fourni par le hook
 
     if (formData.password !== formData.confirmPassword) {
-      setErrorMessage("Les mots de passe ne correspondent pas.");
+      setError("Les mots de passe ne correspondent pas.");
       return;
     }
 
-    if (formData.password.length < 6) {
-      setErrorMessage("Le mot de passe doit contenir au moins 6 caractères.");
+    if (!passwordRegex.test(formData.password)) {
+      setError(
+        "Le mot de passe doit contenir au moins 8 caractères, une majuscule, un chiffre et un caractère spécial."
+      );
       return;
     }
 
-    try {
-      // 🎯 ÉTAPE 1 : Contrôle Geo-Fence (50 km autour du Hub Saint-Rémy-sur-Avre)
-      setIsCheckingGeo(true);
-      const geoResult = await checkGeoFence(
-        formData.postalCode.trim(),
-        formData.city.trim(),
-        50,
-      );
+    // EXÉCUTION VIA LE SERVICE EXTERNALISÉ
+    const result = await registerUser(formData, role);
 
-      if (geoResult && geoResult.isEligible === false) {
-        setErrorMessage(
-          geoResult.message ||
-            "Désolé, votre commune se situe au-delà du périmètre de livraison de proximité (50 km).",
-        );
-        setIsCheckingGeo(false);
-        return;
-      }
-      setIsCheckingGeo(false);
-
-      // 🎯 ÉTAPE 2 : Création de compte Firebase Authentication
-      setIsLoading(true);
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        formData.email.trim(),
-        formData.password,
-      );
-      const user = userCredential.user;
-
-      if (formData.displayName) {
-        await updateProfile(user, { displayName: formData.displayName.trim() });
-      }
-
-      // 🎯 ÉTAPE 3 : Écriture synchrone du profil Firestore (`users/{uid}`)
-      const userProfile = {
-        uid: user.uid,
-        email: user.email,
-        role: role,
-        displayName: formData.displayName.trim(),
-        companyName: formData.companyName.trim(),
-        siret: formData.siret.trim(),
-        phone: formData.phone.trim(),
-        postalCode: formData.postalCode.trim(),
-        city: formData.city.trim(),
-        address: "",
-        isProfileCompleted: false,
-        deferredPaymentEnabled:
-          role === "acheteur_public" || role === "acheteur_prive",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      await setDoc(doc(db, "users", user.uid), userProfile);
-      console.log(
-        `[REGISTER SUCCESS] Compte ${role} créé pour UID: ${user.uid}`,
-      );
-
-      setIsLoading(false);
-
-      // 🎯 FORCE LA SYNCHRONISATION DU CONTEXTE AUTH ET REDIRIGE AVEC LE BON RÔLE
-      window.location.href = "/dashboard";
-    } catch (err) {
-      console.error("[REGISTER ERROR] :", err);
-      setIsCheckingGeo(false);
-      setIsLoading(false);
-
-      switch (err.code) {
-        case "auth/email-already-in-use":
-          setErrorMessage("Cet e-mail est déjà associé à un compte existant.");
-          break;
-        case "auth/invalid-email":
-          setErrorMessage("L'adresse e-mail saisie est invalide.");
-          break;
-        default:
-          setErrorMessage(
-            err.message || "Une erreur est survenue lors de l'inscription.",
-          );
-      }
+    if (result.success) {
+      navigate("/dashboard", { replace: true });
     }
   };
 
@@ -167,7 +95,6 @@ export default function Register() {
         </div>
 
         <div className="mt-6 bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6">
-          {/* SÉLECTION DU RÔLE */}
           <div className="space-y-2">
             <label className="block font-extrabold text-gray-900 uppercase tracking-wider">
               1. Choisissez votre profil professionnel *
@@ -195,7 +122,6 @@ export default function Register() {
                   Chorus Pro / Cantines
                 </span>
               </button>
-
               <button
                 type="button"
                 onClick={() => setRole("acheteur_prive")}
@@ -218,7 +144,6 @@ export default function Register() {
                   Restaurateurs / Commerces
                 </span>
               </button>
-
               <button
                 type="button"
                 onClick={() => setRole("producteur")}
@@ -242,10 +167,10 @@ export default function Register() {
             </div>
           </div>
 
-          {errorMessage && (
+          {error && (
             <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-2xl font-bold flex items-center gap-2">
               <AlertTriangle size={16} className="shrink-0 text-red-600" />
-              <span>{errorMessage}</span>
+              <span>{error}</span>
             </div>
           )}
 
@@ -256,10 +181,7 @@ export default function Register() {
                   Nom & Prénom du Responsable *
                 </label>
                 <div className="relative">
-                  <User
-                    className="absolute left-3 top-2.5 text-gray-400"
-                    size={16}
-                  />
+                  <User className="absolute left-3 top-2.5 text-gray-400" size={16} />
                   <input
                     type="text"
                     name="displayName"
@@ -271,16 +193,12 @@ export default function Register() {
                   />
                 </div>
               </div>
-
               <div>
                 <label className="block font-bold text-gray-700 mb-1">
                   Raison Sociale / Enseigne *
                 </label>
                 <div className="relative">
-                  <Building2
-                    className="absolute left-3 top-2.5 text-gray-400"
-                    size={16}
-                  />
+                  <Building2 className="absolute left-3 top-2.5 text-gray-400" size={16} />
                   <input
                     type="text"
                     name="companyName"
@@ -300,10 +218,7 @@ export default function Register() {
                   Adresse E-mail Professionnelle *
                 </label>
                 <div className="relative">
-                  <Mail
-                    className="absolute left-3 top-2.5 text-gray-400"
-                    size={16}
-                  />
+                  <Mail className="absolute left-3 top-2.5 text-gray-400" size={16} />
                   <input
                     type="email"
                     name="email"
@@ -315,16 +230,12 @@ export default function Register() {
                   />
                 </div>
               </div>
-
               <div>
                 <label className="block font-bold text-gray-700 mb-1">
                   Téléphone Direct *
                 </label>
                 <div className="relative">
-                  <Phone
-                    className="absolute left-3 top-2.5 text-gray-400"
-                    size={16}
-                  />
+                  <Phone className="absolute left-3 top-2.5 text-gray-400" size={16} />
                   <input
                     type="tel"
                     name="phone"
@@ -347,6 +258,7 @@ export default function Register() {
                 name="siret"
                 required
                 maxLength={14}
+                pattern="\d{14}"
                 value={formData.siret}
                 onChange={handleChange}
                 placeholder="12345678900012"
@@ -360,10 +272,7 @@ export default function Register() {
                   Code Postal *
                 </label>
                 <div className="relative">
-                  <MapPin
-                    className="absolute left-3 top-2.5 text-emerald-600"
-                    size={16}
-                  />
+                  <MapPin className="absolute left-3 top-2.5 text-emerald-600" size={16} />
                   <input
                     type="text"
                     name="postalCode"
@@ -375,7 +284,6 @@ export default function Register() {
                   />
                 </div>
               </div>
-
               <div>
                 <label className="block font-bold text-emerald-950 mb-1">
                   Ville / Commune *
@@ -398,38 +306,31 @@ export default function Register() {
                   Mot de Passe Sécurisé *
                 </label>
                 <div className="relative">
-                  <Lock
-                    className="absolute left-3 top-2.5 text-gray-400"
-                    size={16}
-                  />
+                  <Lock className="absolute left-3 top-2.5 text-gray-400" size={16} />
                   <input
                     type="password"
                     name="password"
                     required
                     value={formData.password}
                     onChange={handleChange}
-                    placeholder="••••••••"
+                    placeholder="Min. 8 car. (Maj, chif., spéc.)"
                     className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
               </div>
-
               <div>
                 <label className="block font-bold text-gray-700 mb-1">
                   Confirmer le Mot de Passe *
                 </label>
                 <div className="relative">
-                  <Lock
-                    className="absolute left-3 top-2.5 text-gray-400"
-                    size={16}
-                  />
+                  <Lock className="absolute left-3 top-2.5 text-gray-400" size={16} />
                   <input
                     type="password"
                     name="confirmPassword"
                     required
                     value={formData.confirmPassword}
                     onChange={handleChange}
-                    placeholder="••••••••"
+                    placeholder="Confirmez le mot de passe"
                     className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
@@ -439,7 +340,7 @@ export default function Register() {
             {isPasswordMatch && (
               <div className="flex items-center gap-1.5 text-emerald-700 font-extrabold text-[11px] pt-1">
                 <CheckCircle2 size={14} />
-                <span>Les mots de passe correspondent parfaitement.</span>
+                <span>Le mot de passe est sécurisé et correspond.</span>
               </div>
             )}
 

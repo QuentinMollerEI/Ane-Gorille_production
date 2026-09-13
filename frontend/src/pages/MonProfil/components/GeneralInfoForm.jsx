@@ -1,3 +1,4 @@
+// Chemin du fichier : src/pages/MonProfil/components/GeneralInfoForm.jsx
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../../../context/AuthContext";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
@@ -6,9 +7,10 @@ import { checkGeoFence } from "../../../services/logisticsService";
 import { User, Save, Loader2, CheckCircle2, AlertTriangle, MapPin } from "lucide-react";
 
 /**
- * 🔒 COMPOSANT HARMONISÉ : GeneralInfoForm.jsx
+ * COMPOSANT HARMONISÉ : GeneralInfoForm.jsx
  * Saisie des coordonnées de base, contrôle GeoFence (50 km / Saint-Rémy-sur-Avre)
  * en temps réel (onBlur) + à la soumission, et calcul dynamique de isProfileCompleted.
+ * Ajout de l'auto-complétion BAN pour l'adresse de facturation.
  */
 export default function GeneralInfoForm({ onProfileUpdated }) {
   const { user } = useAuth();
@@ -17,7 +19,7 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
   const [isSaved, setIsSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
 
-  // 🎯 Statut du contrôle GeoFence temps réel : "idle" | "checking" | "valid" | "invalid"
+  // Statut du contrôle GeoFence temps réel : "idle" | "checking" | "valid" | "invalid"
   const [geoStatus, setGeoStatus] = useState("idle");
   const [geoMessage, setGeoMessage] = useState(null);
 
@@ -34,6 +36,11 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
     billingPostalCode: "",
     billingCity: "",
   });
+
+  // ÉTATS POUR L'AUTO-COMPLÉTION BAN DE L'ADRESSE DE FACTURATION
+  const [billingAddressQuery, setBillingAddressQuery] = useState("");
+  const [billingSuggestions, setBillingSuggestions] = useState([]);
+  const [showBillingSuggestions, setShowBillingSuggestions] = useState(false);
 
   useEffect(() => {
     if (!user?.uid) {
@@ -65,6 +72,9 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
           if (data.postalCode && data.city) {
             setGeoStatus("valid");
           }
+          if (data.billingAddress && !data.billingSameAsAddress) {
+             setBillingAddressQuery(`${data.billingAddress}, ${data.billingPostalCode} ${data.billingCity}`);
+          }
         }
       } catch (error) {
         console.error(
@@ -94,7 +104,47 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
     }
   };
 
-  // 🎯 Contrôle GeoFence en temps réel, déclenché à la perte de focus
+  // RECHERCHE BAN POUR L'ADRESSE DE FACTURATION
+  const handleBillingAddressSearch = async (queryText) => {
+    setBillingAddressQuery(queryText);
+    if (queryText.length < 3) {
+      setBillingSuggestions([]);
+      setShowBillingSuggestions(false);
+      return;
+    }
+    try {
+      const response = await fetch(
+        `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(queryText)}&limit=5`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        const list = data.features.map((feat) => ({
+          street: feat.properties.name,
+          zipCode: feat.properties.postcode,
+          city: feat.properties.city,
+          label: feat.properties.label,
+        }));
+        setBillingSuggestions(list);
+        setShowBillingSuggestions(true);
+      }
+    } catch (err) {
+      console.error("Erreur API BAN :", err);
+    }
+  };
+
+  const handleSelectBillingAddress = (suggestion) => {
+    setFormData((prev) => ({
+      ...prev,
+      billingAddress: suggestion.street || "",
+      billingPostalCode: suggestion.zipCode || "",
+      billingCity: suggestion.city || "",
+    }));
+    setBillingAddressQuery(suggestion.label);
+    setShowBillingSuggestions(false);
+  };
+
+
+  // Contrôle GeoFence en temps réel, déclenché à la perte de focus
   const runGeoCheck = async (nextFormData) => {
     const postalCode = nextFormData.postalCode.trim();
     const city = nextFormData.city.trim();
@@ -111,7 +161,6 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
 
     try {
       const geoResult = await checkGeoFence(postalCode, city, 50);
-
       if (geoResult && geoResult.isEligible === false) {
         setGeoStatus("invalid");
         setGeoMessage(
@@ -124,7 +173,7 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
       }
     } catch (error) {
       console.error("Erreur lors du contrôle GeoFence :", error);
-      setGeoStatus("idle");
+      setGeoStatus("invalid"); // SECURITÉ RENFORCÉE : si échec, on considère invalide
       setGeoMessage(
         "Impossible de vérifier la zone de livraison pour le moment. Le contrôle sera refait à l'enregistrement.",
       );
@@ -138,13 +187,18 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!user?.uid || isSubmitting || geoStatus === "checking") return;
+    
+    // BLOCAGE STRICT SI LE GEOFENCE N'EST PAS VALIDE
+    if (geoStatus !== "valid") {
+      setErrorMessage("Veuillez renseigner une adresse valide dans le périmètre autorisé (50 km).");
+      return;
+    }
 
     setIsSaved(false);
     setErrorMessage(null);
 
     try {
-      // 🎯 0. Contrôle GeoFence obligatoire avant tout enregistrement
-      // (garde-fou final, même si le contrôle onBlur a déjà été fait)
+      // 0. Contrôle GeoFence obligatoire avant tout enregistrement (garde-fou final)
       setGeoStatus("checking");
       const geoResult = await checkGeoFence(
         formData.postalCode.trim(),
@@ -161,16 +215,15 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
         setErrorMessage(message);
         return;
       }
-
       setGeoStatus("valid");
       setGeoMessage(null);
-      setIsSubmitting(true);
 
+      setIsSubmitting(true);
       const userRef = doc(db, "users", user.uid);
       const userSnap = await getDoc(userRef);
       const currentData = userSnap.exists() ? userSnap.data() : {};
 
-      // 🎯 1. Vérification des coordonnées de base
+      // 1. Vérification des coordonnées de base
       const hasBaseInfo = Boolean(
         formData.displayName.trim() &&
         formData.companyName.trim() &&
@@ -181,7 +234,7 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
         formData.city.trim(),
       );
 
-      // 🎯 1bis. Vérification de l'adresse de facturation (si distincte)
+      // 1bis. Vérification de l'adresse de facturation (si distincte)
       const hasBillingInfo = formData.billingSameAsAddress
         ? true
         : Boolean(
@@ -190,7 +243,7 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
             formData.billingCity.trim(),
           );
 
-      // 🎯 2. Vérification des spécificités selon le rôle
+      // 2. Vérification des spécificités selon le rôle
       const userRole = currentData.role || "acheteur_prive";
       let isRoleComplete = false;
 
@@ -215,7 +268,7 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
 
       const isComplete = hasBaseInfo && hasBillingInfo && isRoleComplete;
 
-      // 🎯 3. Sauvegarde Firestore avec écriture du statut
+      // 3. Sauvegarde Firestore avec écriture du statut
       await updateDoc(userRef, {
         displayName: formData.displayName.trim(),
         companyName: formData.companyName.trim(),
@@ -266,7 +319,7 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
         </h3>
         {isSaved && (
           <span className="flex items-center gap-1 text-emerald-700 font-bold">
-            <CheckCircle2 size={14} /> Enregistré !
+            <CheckCircle2 size={14} /> Enregistré
           </span>
         )}
       </div>
@@ -294,10 +347,9 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
-
           <div>
             <label className="block font-bold text-gray-700 mb-1">
-              Raison Sociale / Entité *
+              Raison Sociale / Entité
             </label>
             <input
               type="text"
@@ -309,7 +361,6 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
-
           <div>
             <label className="block font-bold text-gray-700 mb-1">
               Numéro de SIRET *
@@ -325,7 +376,6 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-mono font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
-
           <div>
             <label className="block font-bold text-gray-700 mb-1">
               Téléphone de Contact *
@@ -374,7 +424,6 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               />
             </div>
           </div>
-
           <div>
             <label className="block font-bold text-gray-700 mb-1">
               Code Postal *
@@ -391,7 +440,6 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
-
           <div className="sm:col-span-3">
             <label className="block font-bold text-gray-700 mb-1">Ville *</label>
             <input
@@ -406,7 +454,7 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
             />
           </div>
 
-          {/* 🎯 Feedback GeoFence temps réel */}
+          {/* Feedback GeoFence temps réel */}
           <div className="sm:col-span-3">
             {geoStatus === "checking" && (
               <p className="flex items-center gap-1.5 text-gray-500 font-bold">
@@ -454,66 +502,63 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
           </div>
 
           {!formData.billingSameAsAddress && (
-            <>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="block font-bold text-gray-700 mb-1">
-                    Adresse de Facturation *
-                  </label>
+            <div className="space-y-4">
+              <div className="relative">
+                <label className="block font-bold text-gray-700 mb-1">
+                  Rechercher l'adresse de facturation (BAN) *
+                </label>
+                <div className="relative">
+                   <MapPin className="absolute left-3 top-2.5 text-emerald-600" size={16}/>
                   <input
                     type="text"
-                    name="billingAddress"
                     required={!formData.billingSameAsAddress}
-                    value={formData.billingAddress}
-                    onChange={handleChange}
-                    placeholder="Numéro et nom de rue"
-                    className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                    value={billingAddressQuery}
+                    onChange={(e) => handleBillingAddressSearch(e.target.value)}
+                    placeholder="Saisissez votre rue, code postal ou commune..."
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
-
-                <div>
-                  <label className="block font-bold text-gray-700 mb-1">
-                    Code Postal *
-                  </label>
-                  <input
-                    type="text"
-                    name="billingPostalCode"
-                    required={!formData.billingSameAsAddress}
-                    maxLength="5"
-                    value={formData.billingPostalCode}
-                    onChange={handleChange}
-                    placeholder="31000"
-                    className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
+                {showBillingSuggestions && billingSuggestions.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 max-h-48 overflow-y-auto">
+                    {billingSuggestions.map((s, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => handleSelectBillingAddress(s)}
+                        className={`p-3 text-xs cursor-pointer hover:bg-emerald-50 transition-colors ${idx < billingSuggestions.length - 1 ? 'border-b border-gray-100' : ''}`}
+                      >
+                        {s.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">
-                  Ville *
-                </label>
-                <input
-                  type="text"
-                  name="billingCity"
-                  required={!formData.billingSameAsAddress}
-                  value={formData.billingCity}
-                  onChange={handleChange}
-                  placeholder="Toulouse"
-                  className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
+               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                <div className="sm:col-span-2">
+                  <span className="text-[10px] font-bold text-gray-500 block">Rue / Établissement</span>
+                  <span className="text-xs text-gray-900 font-bold">{formData.billingAddress || 'Non spécifiée'}</span>
+                </div>
+                <div>
+                   <span className="text-[10px] font-bold text-gray-500 block">Code Postal</span>
+                   <span className="text-xs text-gray-900 font-bold">{formData.billingPostalCode || 'Non spécifié'}</span>
+                </div>
+                <div className="sm:col-span-3">
+                   <span className="text-[10px] font-bold text-gray-500 block">Commune</span>
+                   <span className="text-xs text-gray-900 font-bold">{formData.billingCity || 'Non spécifiée'}</span>
+                </div>
               </div>
               <p className="text-[11px] text-gray-400 font-medium">
                 L'adresse de facturation n'est pas soumise au contrôle GeoFence (elle ne sert pas à la livraison/collecte).
               </p>
-            </>
+            </div>
           )}
         </div>
 
         <div className="flex justify-end pt-2">
           <button
             type="submit"
-            disabled={isSubmitting || geoStatus === "checking" || geoStatus === "invalid"}
-            className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold rounded-xl transition-colors flex items-center gap-2 cursor-pointer disabled:bg-gray-300"
+            disabled={isSubmitting || geoStatus !== "valid"} // DÉSACTIVÉ TANT QUE LE GEOFENCE N'EST PAS VALIDE
+            className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold rounded-xl transition-colors flex items-center gap-2 cursor-pointer disabled:bg-gray-300 disabled:cursor-not-allowed"
           >
             {geoStatus === "checking" ? (
               <>
