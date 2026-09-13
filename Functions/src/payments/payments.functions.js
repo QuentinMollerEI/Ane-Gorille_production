@@ -1,112 +1,115 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { defineSecret } = require("firebase-functions/params");
-const { db } = require("../config/firebaseAdmin");
+const admin = require("firebase-admin");
 
-const stripeSecret = defineSecret("STRIPE_SECRET_KEY");
+const db = admin.firestore();
+
+// Fonction utilitaire pour initialiser Stripe dynamiquement à l'exécution
+function getStripe() {
+  const secretKey = process.env.STRIPE_SECRET_KEY;
+  if (!secretKey) {
+    throw new HttpsError("internal", "La clé secrète Stripe n'est pas configurée sur le serveur.");
+  }
+  return require("stripe")(secretKey);
+}
 
 /**
- * 🔒 CLOUD FUNCTION v2 : createStripeConnectAccountServer
- * Région : europe-west9 (Paris)
- * Rôle : Onboarding Express Stripe Connect pour Maraîchers
+ * 1. Création d'un SetupIntent SEPA pour l'enregistrement des mandats de prélèvement
  */
-exports.createStripeConnectAccountServer = onCall(
-  {
-    region: "europe-west9",
-    secrets: [stripeSecret],
-  },
-  async (request) => {
-    if (!request.auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "Vous devez être connecté pour lier votre compte Stripe."
-      );
-    }
-
-    const producerId = request.data?.producerId || request.auth.uid;
-
-    try {
-      const secretValue = stripeSecret.value() || process.env.STRIPE_SECRET_KEY;
-      if (!secretValue) {
-        throw new HttpsError(
-          "failed-precondition",
-          "La clé STRIPE_SECRET_KEY est introuvable sur le serveur."
-        );
-      }
-
-      const stripe = require("stripe")(secretValue);
-
-      // Récupération du profil maraîcher
-      const userRef = db.collection("users").doc(producerId);
-      const userSnap = await userRef.get();
-
-      if (!userSnap.exists) {
-        throw new HttpsError(
-          "not-found",
-          "Profil maraîcher introuvable dans Firestore."
-        );
-      }
-
-      const userData = userSnap.data();
-      let accountId = userData.stripeAccountId;
-
-      // 1. Création du compte Express si non existant
-      if (!accountId) {
-        // Domaine de votre marketplace (évite http://localhost qui peut être rejeté)
-        const baseUrl = "https://ane-et-gorille-v2.web.app";
-
-        const account = await stripe.accounts.create({
-          type: "express",
-          country: "FR",
-          email: userData.email || request.auth.token.email,
-          capabilities: {
-            card_payments: { requested: true },
-            transfers: { requested: true },
-          },
-          business_type: "individual",
-          business_profile: {
-            name: userData.companyName || userData.displayName || "Maraîcher Coopératif",
-            url: baseUrl, // 👈 URL valide exigée par Stripe
-          },
-        });
-        accountId = account.id;
-
-        await userRef.set(
-          {
-            stripeAccountId: accountId,
-            stripeOnboardingStatus: "PENDING",
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      }
-
-      // 2. Génération de l'URL d'onboarding Express Stripe avec redirections valides
-      const baseUrl = "https://ane-et-gorille-v2.web.app";
-      const onboardingLink = await stripe.accountLinks.create({
-        account: accountId,
-        refresh_url: `${baseUrl}/dashboard/profil?stripe=refresh`,
-        return_url: `${baseUrl}/dashboard/profil?stripe=success`,
-        type: "account_onboarding",
-      });
-
-      console.log(`[STRIPE CONNECT SUCCESS] Lien généré pour ${producerId} : ${accountId}`);
-
-      return {
-        success: true,
-        stripeAccountId: accountId,
-        onboardingUrl: onboardingLink.url,
-      };
-    } catch (error) {
-      console.error("[STRIPE CONNECT SERVER ERROR] :", error);
-
-      if (error instanceof HttpsError) {
-        throw error;
-      }
-
-      throw new HttpsError(
-        "internal",
-        error.message || "Erreur lors de la création du compte Stripe Connect."
-      );
-    }
+exports.createSepaSetupIntentServer = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Vous devez être connecté pour configurer un prélèvement SEPA.");
   }
-);
+
+  const stripe = getStripe();
+  const { customerId } = request.data || {};
+
+  try {
+    let stripeCustomerId = customerId;
+
+    if (!stripeCustomerId) {
+      const userDoc = await db.collection("users").doc(request.auth.uid).get();
+      const userData = userDoc.exists ? userDoc.data() : {};
+
+      const customer = await stripe.customers.create({
+        email: userData.email || request.auth.token.email,
+        name: userData.companyName || userData.displayName || "Client Âne & Gorille",
+      });
+      stripeCustomerId = customer.id;
+
+      await db.collection("users").doc(request.auth.uid).update({
+        stripeCustomerId: stripeCustomerId,
+      });
+    }
+
+    const setupIntent = await stripe.setupIntents.create({
+      customer: stripeCustomerId,
+      payment_method_types: ["sepa_debit"],
+      usage: "off_session",
+    });
+
+    return {
+      success: true,
+      clientSecret: setupIntent.client_secret,
+      setupIntentId: setupIntent.id,
+      customerId: stripeCustomerId,
+    };
+  } catch (error) {
+    console.error("Erreur createSepaSetupIntentServer :", error);
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError("internal", error.message || "Impossible de générer l'intention SEPA.");
+  }
+});
+
+/**
+ * 2. Confirmation et validation d'une commande par virement bancaire (B2B / B2G)
+ */
+exports.confirmBankTransferOrderServer = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Vous devez être connecté pour confirmer une commande.");
+  }
+
+  const { orderId } = request.data || {};
+  if (!orderId) {
+    throw new HttpsError("invalid-argument", "L'identifiant de la commande est requis.");
+  }
+
+  try {
+    const orderRef = db.collection("orders").doc(orderId);
+    const orderSnap = await orderRef.get();
+
+    if (!orderSnap.exists) {
+      throw new HttpsError("not-found", "Commande introuvable.");
+    }
+
+    const orderData = orderSnap.data();
+
+    if (orderData.buyerId !== request.auth.uid) {
+      throw new HttpsError("permission-denied", "Accès non autorisé à cette commande.");
+    }
+
+    await orderRef.update({
+      status: "EN_ATTENTE_VIREMENT",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const subOrdersSnap = await db.collection("sub_orders").where("parentOrderId", "==", orderId).get();
+    const batch = db.batch();
+
+    subOrdersSnap.forEach((doc) => {
+      batch.update(doc.ref, {
+        status: "EN_ATTENTE_VIREMENT",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    await batch.commit();
+
+    return { success: true, message: "Commande enregistrée en attente de virement." };
+  } catch (error) {
+    console.error("Erreur confirmBankTransferOrderServer :", error);
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    throw new HttpsError("internal", error.message || "Échec de la confirmation du virement.");
+  }
+});
