@@ -1,21 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { ArrowLeft, ShoppingBag, MapPin, Building, Award, Store, FileText, Sparkles, Info } from "lucide-react";
 
-// Helper d'extraction stricte du code département
+// Extraction du code département à 2 chiffres
 const getDepartmentCode = (product) => {
   if (!product) return null;
-
   const rawPostal = product.producerPostalCode || product.postalCode || product.zipCode || product.postal_code || "";
   const cleanDigits = String(rawPostal).replace(/\D/g, "");
-  if (cleanDigits.length >= 2) {
-    return cleanDigits.substring(0, 2);
-  }
+  if (cleanDigits.length >= 2) return cleanDigits.substring(0, 2);
 
   const deptField = String(product.producerDepartment || product.department || product.departmentCode || product.origin || "").trim();
   const deptDigits = deptField.replace(/\D/g, "");
-  if (deptDigits.length >= 2) {
-    return deptDigits.substring(0, 2);
-  }
+  if (deptDigits.length >= 2) return deptDigits.substring(0, 2);
 
   return null;
 };
@@ -30,7 +25,6 @@ export default function ProductDetailPage({
 }) {
   const [quantity, setQuantity] = useState(1);
 
-  // 🚀 RECENTRAGE AUTOMATIQUE : Remonte automatiquement en haut de page à l'ouverture du produit
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [product?.id]);
@@ -68,11 +62,12 @@ export default function ProductDetailPage({
     return isSameProducer && isDifferentProduct && isVisible;
   });
 
-  const hasIncoInfo = product.incoImageUrl || product.incoImage || product.ingredients || product.allergens || product.ddmDate || product.dlcDate || product.storageInstructions;
+  const incoPhoto = product.incoImageUrl || product.incoImage || product.incoImagePreview;
+  const hasIncoInfo = incoPhoto || product.ingredients || product.allergens || product.ddmDate || product.dlcDate || product.storageInstructions;
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto pb-12 text-xs">
-      {/* Bouton de retour */}
+      {/* Navigation */}
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
@@ -88,7 +83,7 @@ export default function ProductDetailPage({
 
       <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
         
-        {/* Visuel principal & Badge Département */}
+        {/* Visuel du produit */}
         <div className="md:col-span-5 relative w-full h-64 md:h-80 bg-gray-100 rounded-2xl overflow-hidden border border-gray-200 flex items-center justify-center">
           {product.imageUrl || product.image ? (
             <img
@@ -112,68 +107,38 @@ export default function ProductDetailPage({
         </div>
 
         {/* Détails du produit */}
-        <div className="md:col-span-7 space-y-5">
+        <div className="md:col-span-7 space-y-4">
           <div>
+            {/* Badges SIQO */}
             <div className="flex flex-wrap items-center gap-1.5 mb-2">
-              <button
-                onClick={() => onOpenProducerStore && onOpenProducerStore(product.producerId)}
-                className="text-[10px] font-black uppercase text-emerald-900 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-full flex items-center gap-1 transition-colors cursor-pointer"
-              >
-                <Store size={12} />
-                <span>Producteur Vérifié — Voir la boutique</span>
-              </button>
-
               {product.isBio && (
                 <span className="text-[10px] font-black uppercase text-amber-900 bg-amber-200 border border-amber-300 px-2.5 py-0.5 rounded-full flex items-center gap-1">
                   <Award size={12} />
                   <span>Bio (EGAlim)</span>
                 </span>
               )}
-
-              {product.isHve && (
-                <span className="text-[10px] font-black uppercase text-emerald-900 bg-emerald-200 border border-emerald-300 px-2.5 py-0.5 rounded-full">
-                  HVE
-                </span>
-              )}
-
-              {product.isAop && (
-                <span className="text-[10px] font-black uppercase text-blue-900 bg-blue-100 border border-blue-300 px-2.5 py-0.5 rounded-full">
-                  AOP
-                </span>
-              )}
-
-              {product.isAoc && (
-                <span className="text-[10px] font-black uppercase text-indigo-900 bg-indigo-100 border border-indigo-300 px-2.5 py-0.5 rounded-full">
-                  AOC
-                </span>
-              )}
-
-              {product.isIgp && (
-                <span className="text-[10px] font-black uppercase text-purple-900 bg-purple-100 border border-purple-300 px-2.5 py-0.5 rounded-full">
-                  IGP
-                </span>
-              )}
-
-              {(!product.isAop && !product.isAoc && !product.isIgp && product.isAopIgp) && (
-                <span className="text-[10px] font-black uppercase text-blue-900 bg-blue-100 border border-blue-300 px-2.5 py-0.5 rounded-full">
-                  AOP / IGP
-                </span>
-              )}
-
-              {product.isLabelRouge && (
-                <span className="text-[10px] font-black uppercase text-red-900 bg-red-100 border border-red-300 px-2.5 py-0.5 rounded-full">
-                  Label Rouge
-                </span>
-              )}
+              {product.isHve && <span className="text-[10px] font-black uppercase text-emerald-900 bg-emerald-200 border border-emerald-300 px-2.5 py-0.5 rounded-full">HVE</span>}
+              {product.isAop && <span className="text-[10px] font-black uppercase text-blue-900 bg-blue-100 border border-blue-300 px-2.5 py-0.5 rounded-full">AOP</span>}
+              {product.isAoc && <span className="text-[10px] font-black uppercase text-indigo-900 bg-indigo-100 border border-indigo-300 px-2.5 py-0.5 rounded-full">AOC</span>}
+              {product.isIgp && <span className="text-[10px] font-black uppercase text-purple-900 bg-purple-100 border border-purple-300 px-2.5 py-0.5 rounded-full">IGP</span>}
+              {product.isLabelRouge && <span className="text-[10px] font-black uppercase text-red-900 bg-red-100 border border-red-300 px-2.5 py-0.5 rounded-full">Label Rouge</span>}
             </div>
 
             <h1 className="text-2xl font-black text-gray-900">{product.title || product.name}</h1>
             
+            {/* 🚀 CLIC SUR LE NOM DU PRODUCTEUR POUR OUVRIR SA BOUTIQUE */}
             <button
-              onClick={() => onOpenProducerStore && onOpenProducerStore(product.producerId)}
-              className="text-xs text-emerald-800 font-extrabold uppercase tracking-wider mt-0.5 hover:underline cursor-pointer block"
+              type="button"
+              onClick={() => {
+                const producerId = product.producerId || product.userId || product.ownerId;
+                if (onOpenProducerStore && producerId) {
+                  onOpenProducerStore(producerId, producerName);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 font-extrabold text-xs rounded-xl transition-all cursor-pointer mt-2 shadow-2xs"
             >
-              {producerName}
+              <Store size={14} className="text-emerald-700 shrink-0" />
+              <span>{producerName} — Voir la boutique du producteur</span>
             </button>
           </div>
 
@@ -185,16 +150,8 @@ export default function ProductDetailPage({
                 <span>Spécificités du Miel & Apiculture</span>
               </p>
               <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
-                {product.honeyNetWeight && (
-                  <p className="text-gray-800 font-medium">
-                    <strong className="text-amber-900">Poids Net du Pot :</strong> {product.honeyNetWeight}
-                  </p>
-                )}
-                {product.floralOrigin && (
-                  <p className="text-gray-800 font-medium">
-                    <strong className="text-amber-900">Origine florale :</strong> {product.floralOrigin}
-                  </p>
-                )}
+                {product.honeyNetWeight && <p className="text-gray-800 font-medium"><strong className="text-amber-900">Poids Net :</strong> {product.honeyNetWeight}</p>}
+                {product.floralOrigin && <p className="text-gray-800 font-medium"><strong className="text-amber-900">Origine florale :</strong> {product.floralOrigin}</p>}
               </div>
             </div>
           )}
@@ -207,21 +164,9 @@ export default function ProductDetailPage({
                 <span>Traçabilité Élevage & Œufs</span>
               </p>
               <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
-                {product.eggRearingMode && (
-                  <p className="text-gray-800 font-medium">
-                    <strong className="text-yellow-950">Mode d'élevage :</strong> {eggRearingLabels[product.eggRearingMode] || product.eggRearingMode}
-                  </p>
-                )}
-                {product.eggCaliber && (
-                  <p className="text-gray-800 font-medium">
-                    <strong className="text-yellow-950">Calibre :</strong> {product.eggCaliber}
-                  </p>
-                )}
-                {product.dcrDate && (
-                  <p className="text-gray-800 font-medium col-span-2">
-                    <strong className="text-yellow-950">DCR :</strong> {product.dcrDate}
-                  </p>
-                )}
+                {product.eggRearingMode && <p className="text-gray-800 font-medium"><strong className="text-yellow-950">Mode d'élevage :</strong> {eggRearingLabels[product.eggRearingMode] || product.eggRearingMode}</p>}
+                {product.eggCaliber && <p className="text-gray-800 font-medium"><strong className="text-yellow-950">Calibre :</strong> {product.eggCaliber}</p>}
+                {product.dcrDate && <p className="text-gray-800 font-medium col-span-2"><strong className="text-yellow-950">DCR :</strong> {product.dcrDate}</p>}
               </div>
             </div>
           )}
@@ -233,61 +178,33 @@ export default function ProductDetailPage({
                 <FileText size={14} className="text-emerald-700 shrink-0" />
                 <span>Composition & Traçabilité Sanitaire (INCO)</span>
               </p>
-
-              {(product.incoImageUrl || product.incoImage) && (
-                <div className="my-2 rounded-xl overflow-hidden border border-emerald-200 bg-white max-w-xs">
-                  <img
-                    src={product.incoImageUrl || product.incoImage}
-                    alt="Étiquette INCO - Ingrédients & Allergènes"
-                    className="w-full h-auto object-contain max-h-48"
-                  />
+              {incoPhoto && (
+                <div className="my-2 rounded-xl overflow-hidden border border-emerald-200 bg-white max-w-xs shadow-xs">
+                  <img src={incoPhoto} alt="Étiquette INCO" className="w-full h-auto object-contain max-h-56" />
                 </div>
               )}
-
-              {product.ingredients && (
-                <p className="text-gray-800 text-[11px]">
-                  <strong>Ingrédients :</strong> {product.ingredients}
-                </p>
-              )}
-              {product.allergens && (
-                <p className="text-red-700 font-bold text-[11px] bg-red-50 p-2 rounded-xl border border-red-200">
-                  ⚠️ Allergènes : {product.allergens}
-                </p>
-              )}
-              {(product.ddmDate || product.dlcDate) && (
-                <p className="text-gray-700 font-medium text-[11px]">
-                  <strong>Date limite (DDM/DLC) :</strong> {product.ddmDate || product.dlcDate}
-                </p>
-              )}
-              {product.storageInstructions && (
-                <p className="text-gray-600 text-[10px] italic">
-                  <strong>Conservation :</strong> {product.storageInstructions}
-                </p>
-              )}
+              {product.ingredients && <p className="text-gray-800 text-[11px]"><strong>Ingrédients :</strong> {product.ingredients}</p>}
+              {product.allergens && <p className="text-red-700 font-bold text-[11px] bg-red-50 p-2 rounded-xl border border-red-200">⚠️ Allergènes : {product.allergens}</p>}
             </div>
           )}
 
           {/* Adresse Exploitation */}
-          <div className="p-4 bg-gray-50 border border-gray-200 rounded-2xl space-y-1">
+          <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl space-y-0.5">
             <p className="font-bold text-gray-800 flex items-center gap-1.5">
               <MapPin size={14} className="text-emerald-700 shrink-0" />
-              <span>
-                {producerAddress}
-                {producerCity ? ` — ${producerCity}` : ""}
-                {deptCode ? ` (${deptCode})` : ""}
-              </span>
+              <span>{producerAddress} {producerCity ? `— ${producerCity}` : ""} {deptCode ? `(${deptCode})` : ""}</span>
             </p>
             <p className="text-[10px] text-gray-500 italic">Adresse certifiée au registre des exploitants agricoles.</p>
           </div>
 
           {/* Tarifs et Stock */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl">
+            <div className="p-3 bg-gray-50 border border-gray-200 rounded-2xl">
               <span className="text-gray-400 font-extrabold uppercase text-[9px] block">Tarif Unitaire HT</span>
               <p className="text-base font-black text-gray-900">{priceHT.toFixed(2)} € / {product.unit || "kg"}</p>
               <p className="text-emerald-800 font-bold text-[10px]">Prix TTC : {priceTTC.toFixed(2)} €</p>
             </div>
-            <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl">
+            <div className="p-3 bg-gray-50 border border-gray-200 rounded-2xl">
               <span className="text-gray-400 font-extrabold uppercase text-[9px] block">Disponibilité</span>
               <p className="text-base font-black text-gray-900">{stock} {product.unit || "kg"}</p>
             </div>
@@ -295,7 +212,7 @@ export default function ProductDetailPage({
 
           {/* Action Panier */}
           {stock > 0 ? (
-            <div className="space-y-2 pt-2">
+            <div className="space-y-2 pt-1">
               <div className="flex items-center gap-3">
                 <input
                   type="number"
@@ -303,7 +220,7 @@ export default function ProductDetailPage({
                   max={stock}
                   value={quantity}
                   onChange={(e) => setQuantity(Math.max(1, Math.min(stock, Number(e.target.value))))}
-                  className="w-24 p-3 border border-gray-300 rounded-xl font-bold text-center text-sm focus:ring-2 focus:ring-emerald-500"
+                  className="w-20 p-3 border border-gray-300 rounded-xl font-bold text-center text-sm focus:ring-2 focus:ring-emerald-500"
                 />
                 <button
                   onClick={() => onAddToCart(product, quantity)}
@@ -315,14 +232,14 @@ export default function ProductDetailPage({
               </div>
             </div>
           ) : (
-            <div className="p-4 bg-red-50 text-red-700 font-bold rounded-2xl text-center">
-              Ce produit est actuellement en rupture de stock.
+            <div className="p-3 bg-red-50 text-red-700 font-bold rounded-2xl text-center">
+              Rupture de stock.
             </div>
           )}
         </div>
       </div>
 
-      {/* Autres produits du même producteur */}
+      {/* Autres récoltes du même producteur */}
       {otherProducerProducts.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4">
           <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
@@ -348,7 +265,6 @@ export default function ProductDetailPage({
                   <div className="truncate">
                     <p className="font-extrabold text-gray-900 text-xs truncate">{p.title || p.name}</p>
                     <p className="text-emerald-800 font-bold text-[10px]">{pHT.toFixed(2)} € HT / {p.unit || "kg"}</p>
-                    <p className="text-[9px] text-gray-500 font-bold">Stock : {p.stock || 0} {p.unit || "kg"}</p>
                   </div>
                 </div>
               );

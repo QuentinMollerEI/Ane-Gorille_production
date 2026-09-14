@@ -1,21 +1,23 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/firestore.service";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
 import FilterBar from "./components/FilterBar";
 import ProductGrid from "./components/ProductGrid";
 import ProductDetailPage from "./components/ProductDetailPage";
 import CartContainer from "./components/CartContainer";
+import ProducerStorePage from "./components/ProducerStorePage";
 import { ShoppingCart, Store, CheckCircle } from "lucide-react";
 
-export default function ShopContainer() {
+export default function ShopContainer({ products: propsProducts, usersMap: propsUsersMap }) {
   const { user } = useAuth();
+
   const [productsList, setProductsList] = useState([]);
-  const [usersMap, setUsersMap] = useState({});
+  const [usersMap, setUsersMap] = useState(propsUsersMap || {});
   const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState(null);
 
-  // --- ÉTATS DES FILTRES & TRI ---
+  // Filtres
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedLabel, setSelectedLabel] = useState("all");
@@ -24,12 +26,13 @@ export default function ShopContainer() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sortBy, setSortBy] = useState("default");
 
-  // --- NIVEAUX DE VUE & SÉLECTION ---
-  const [activeView, setActiveView] = useState("grid"); // 'grid' | 'detail' | 'cart'
+  // Vues : 'grid' | 'detail' | 'cart' | 'producer_store'
+  const [activeView, setActiveView] = useState("grid");
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedProducerId, setSelectedProducerId] = useState(null);
 
-  // --- SÉCURITÉ RGPD : PANIER INDIVIDUEL PAR UTILISATEUR ---
-  const cartKey = user?.uid ? `ane_gorille_cart_$ [cite: 11, 112] [cite: 128] [cite: 11, 16, 17] [cite: 10, 94]{user.uid}` : "ane_gorille_cart_guest";
+  // Panier cloisonné par utilisateur
+  const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
 
   const [cart, setCart] = useState(() => {
     if (!user?.uid && cartKey.includes("guest")) return [];
@@ -37,67 +40,78 @@ export default function ShopContainer() {
       const savedCart = localStorage.getItem(cartKey);
       return savedCart ? JSON.parse(savedCart) : [];
     } catch (e) {
-      console.error("Erreur de lecture du panier :", e);
       return [];
     }
   });
 
-  // Persistance cloisonnée du panier
   useEffect(() => {
     if (user?.uid) {
       try {
         localStorage.setItem(cartKey, JSON.stringify(cart));
       } catch (e) {
-        console.error("Erreur de sauvegarde du panier :", e);
+        console.error("Erreur sauvegarde panier :", e);
       }
     }
   }, [cart, user?.uid, cartKey]);
 
-  // Écoute des profils utilisateurs (pour enrichir les producteurs)
+  // Écoute de la collection `users` avec gestion d'erreur sécurisée
   useEffect(() => {
+    if (propsUsersMap && Object.keys(propsUsersMap).length > 0) {
+      setUsersMap(propsUsersMap);
+      return;
+    }
+
     const unsubscribeUsers = onSnapshot(
       collection(db, "users"),
       (snapshot) => {
         const map = {};
-        snapshot.docs.forEach((docSnap) => {
-          map[docSnap.id] = docSnap.data();
-        });
+        snapshot.docs.forEach((docSnap) => { map[docSnap.id] = docSnap.data(); });
         setUsersMap(map);
       },
-      (err) => console.error("Erreur chargement utilisateurs :", err)
+      (error) => {
+        // Capture l'erreur de permission sans interrompre le rendu
+        console.warn("Lecture restreinte de la collection users :", error.message);
+      }
     );
-    return () => unsubscribeUsers();
-  }, []);
 
-  // Écoute temps réel du catalogue Firestore
+    return () => unsubscribeUsers();
+  }, [propsUsersMap]);
+
+  // Écoute des produits
   useEffect(() => {
+    if (propsProducts && propsProducts.length > 0) {
+      setProductsList(propsProducts);
+      setLoading(false);
+      return;
+    }
+
     const unsubscribeProducts = onSnapshot(
       collection(db, "products"),
       (snapshot) => {
-        const raw = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        }));
+        const raw = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
         setProductsList(raw);
         setLoading(false);
       },
-      (err) => {
-        console.error("Erreur chargement produits :", err);
+      (error) => {
+        console.warn("Erreur lecture produits :", error.message);
         setLoading(false);
       }
     );
-    return () => unsubscribeProducts();
-  }, []);
 
-  // Enrichissement dynamique des informations du producteur & extraction du département
-  const enrichedProducts = productsList.map((p) => {
+    return () => unsubscribeProducts();
+  }, [propsProducts]);
+
+  const activeProducts = propsProducts && propsProducts.length > 0 ? propsProducts : productsList;
+  const activeUsersMap = propsUsersMap && Object.keys(propsUsersMap).length > 0 ? propsUsersMap : usersMap;
+
+  // Enrichissement des produits avec les données du producteur
+  const enrichedProducts = activeProducts.map((p) => {
     const producerId = p.producerId || p.userId || p.ownerId;
-    const profile = usersMap[producerId] || {};
-    
-    // Extraction stricte des 2 premiers chiffres du code postal
+    const profile = activeUsersMap[producerId] || {};
+
     const rawPostalCode = p.producerPostalCode || profile.postalCode || profile.codePostal || profile.zipCode || "";
     const cleanDigits = String(rawPostalCode).replace(/\D/g, "");
-    
+
     let deptCode = null;
     if (cleanDigits.length >= 2) {
       deptCode = cleanDigits.substring(0, 2);
@@ -115,43 +129,17 @@ export default function ShopContainer() {
     };
   });
 
-  // Filtrage des produits actifs/visibles
-  const visibleProducts = enrichedProducts.filter((p) => {
-    const isHidden = p.isHidden === true || p.status === "hidden" || p.status === "draft" || p.isPublished === false || p.isMasked === true;
-    return !isHidden;
-  });
+  const visibleProducts = enrichedProducts.filter((p) => !p.isHidden && p.status !== "hidden" && p.status !== "draft" && p.isPublished !== false && !p.isMasked);
 
-  // Extraction dynamique des catégories et départements présents
-  const availableCategories = Array.from(
-    new Set(visibleProducts.map((p) => p.category).filter(Boolean))
-  ).map((cat) => ({ id: cat, label: cat }));
+  const availableCategories = Array.from(new Set(visibleProducts.map((p) => p.category).filter(Boolean))).map((cat) => ({ id: cat, label: cat }));
+  const availableDepartments = Array.from(new Set(visibleProducts.map((p) => p.producerDepartment).filter((d) => d && /^\d{2}$/.test(d)))).sort();
 
-  const availableDepartments = Array.from(
-    new Set(visibleProducts.map((p) => p.producerDepartment).filter((d) => d && /^\d{2}$/.test(d)))
-  ).sort();
-
-  // --- FILTRAGE MULTI-CRITÈRES ---
   const filteredProducts = visibleProducts.filter((p) => {
-    // Recherche textuelle
     const query = searchTerm.toLowerCase().trim();
-    const matchesSearch =
-      !query ||
-      (p.title || p.name || "").toLowerCase().includes(query) ||
-      (p.producerCompany || "").toLowerCase().includes(query) ||
-      (p.producerCity || "").toLowerCase().includes(query);
+    const matchesSearch = !query || (p.title || p.name || "").toLowerCase().includes(query) || (p.producerCompany || "").toLowerCase().includes(query) || (p.producerCity || "").toLowerCase().includes(query);
+    const matchesCategory = !selectedCategory || selectedCategory === "all" || selectedCategory === "" || p.category === selectedCategory;
+    const matchesDept = !selectedDept || selectedDept === "all" || selectedDept === "" || (p.producerDepartment && String(p.producerDepartment) === String(selectedDept));
 
-    // Filtre par catégorie
-    const matchesCategory =
-      !selectedCategory || selectedCategory === "all" || selectedCategory === "" || p.category === selectedCategory;
-
-    // Filtre par département
-    const matchesDept =
-      !selectedDept ||
-      selectedDept === "all" ||
-      selectedDept === "" ||
-      (p.producerDepartment && String(p.producerDepartment) === String(selectedDept));
-
-    // Filtre dynamique par Label (Bio, HVE, AOP, AOC, IGP, Label Rouge)
     let matchesLabel = true;
     if (selectedLabel && selectedLabel !== "all") {
       matchesLabel = Boolean(p[selectedLabel]);
@@ -159,7 +147,6 @@ export default function ShopContainer() {
       matchesLabel = Boolean(p.isBio);
     }
 
-    // Filtre Favoris
     let matchesFavorites = true;
     if (favoritesOnly) {
       const favList = user?.favoriteProducers || [];
@@ -169,7 +156,6 @@ export default function ShopContainer() {
     return matchesSearch && matchesCategory && matchesDept && matchesLabel && matchesFavorites;
   });
 
-  // --- TRI DES PRODUITS ---
   const sortedProducts = [...filteredProducts].sort((a, b) => {
     const priceA = Number(a?.priceHT ?? a?.price ?? 0);
     const priceB = Number(b?.priceHT ?? b?.price ?? 0);
@@ -182,7 +168,6 @@ export default function ShopContainer() {
     return 0;
   });
 
-  // --- LOGIQUE DU PANIER ---
   const handleAddToCart = (product, quantityToAdd = 1) => {
     setCart((prevCart) => {
       const existingIndex = prevCart.findIndex((item) => item.id === product.id);
@@ -200,9 +185,7 @@ export default function ShopContainer() {
 
   const handleUpdateQuantity = (productId, newQty) => {
     if (newQty <= 0) return handleRemoveFromCart(productId);
-    setCart((prevCart) =>
-      prevCart.map((item) => (item.id === productId ? { ...item, quantity: newQty } : item))
-    );
+    setCart((prevCart) => prevCart.map((item) => (item.id === productId ? { ...item, quantity: newQty } : item)));
   };
 
   const handleRemoveFromCart = (productId) => {
@@ -211,16 +194,36 @@ export default function ShopContainer() {
 
   const handleClearCart = () => {
     setCart([]);
+    try { localStorage.removeItem(cartKey); } catch (e) { console.error(e); }
+  };
+
+  // 🚀 Redirection vers la vitrine dédiée du producteur
+  const handleOpenProducerStore = (producerId) => {
+    const targetId = producerId || selectedProduct?.producerId || selectedProduct?.userId;
+    if (targetId) {
+      setSelectedProducerId(targetId);
+      setActiveView("producer_store");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
+  const handleToggleFavorite = async (producerId) => {
+    if (!user?.uid) return;
+    const currentFavs = user?.favoriteProducers || [];
+    const updatedFavs = currentFavs.includes(producerId)
+      ? currentFavs.filter((id) => id !== producerId)
+      : [...currentFavs, producerId];
+
     try {
-      localStorage.removeItem(cartKey);
-    } catch (e) {
-      console.error(e);
+      await updateDoc(doc(db, "users", user.uid), { favoriteProducers: updatedFavs });
+    } catch (err) {
+      console.error("Erreur favoris :", err);
     }
   };
 
   const totalCartCount = cart.reduce((sum, item) => sum + (item.quantity || 1), 0);
 
-  if (loading) {
+  if (loading && activeProducts.length === 0) {
     return (
       <div className="flex justify-center items-center py-20 min-h-[350px]">
         <div className="animate-spin rounded-full h-9 w-9 border-b-2 border-emerald-700"></div>
@@ -229,8 +232,7 @@ export default function ShopContainer() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-12">
-      {/* Notification Flottante */}
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-12 text-xs">
       {notification && (
         <div className="fixed top-5 right-5 z-50 bg-emerald-800 text-white font-black px-5 py-3 rounded-2xl shadow-xl flex items-center gap-2 animate-bounce text-xs">
           <CheckCircle size={18} />
@@ -238,7 +240,7 @@ export default function ShopContainer() {
         </div>
       )}
 
-      {/* En-tête Boutique */}
+      {/* En-tête de la boutique */}
       <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
@@ -251,7 +253,9 @@ export default function ShopContainer() {
             </p>
           </div>
         </div>
+
         <button
+          type="button"
           onClick={() => setActiveView(activeView === "cart" ? "grid" : "cart")}
           className={`px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2.5 cursor-pointer shadow-sm ${
             activeView === "cart" ? "bg-gray-900 text-white" : "bg-emerald-700 hover:bg-emerald-800 text-white"
@@ -262,7 +266,7 @@ export default function ShopContainer() {
         </button>
       </div>
 
-      {/* RENDER CONDITIONNEL DE LA VUE ACTIVE */}
+      {/* VUE PANIER */}
       {activeView === "cart" && (
         <CartContainer
           cart={cart}
@@ -273,6 +277,7 @@ export default function ShopContainer() {
         />
       )}
 
+      {/* VUE FICHE DÉTAILLÉE PRODUIT */}
       {activeView === "detail" && selectedProduct && (
         <ProductDetailPage
           product={selectedProduct}
@@ -280,9 +285,27 @@ export default function ShopContainer() {
           onBack={() => setActiveView("grid")}
           onAddToCart={handleAddToCart}
           onSelectProduct={(p) => setSelectedProduct(p)}
+          onOpenProducerStore={handleOpenProducerStore}
         />
       )}
 
+      {/* VUE VITRINE PRODUCTEUR */}
+      {activeView === "producer_store" && selectedProducerId && (
+        <ProducerStorePage
+          producerId={selectedProducerId}
+          producerProfile={activeUsersMap[selectedProducerId]}
+          products={visibleProducts}
+          onBack={() => setActiveView("grid")}
+          onAddToCart={handleAddToCart}
+          onSelectProduct={(p) => {
+            setSelectedProduct(p);
+            setActiveView("detail");
+          }}
+          onToggleFavorite={handleToggleFavorite}
+        />
+      )}
+
+      {/* VUE CATALOGUE GÉNÉRAL */}
       {activeView === "grid" && (
         <div className="space-y-4">
           <FilterBar
@@ -313,6 +336,7 @@ export default function ShopContainer() {
               setActiveView("detail");
             }}
             onAddToCart={handleAddToCart}
+            onOpenProducerStore={handleOpenProducerStore}
           />
         </div>
       )}

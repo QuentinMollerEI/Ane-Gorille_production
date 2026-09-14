@@ -227,7 +227,7 @@ export default function StockCompartment({ products, onRefresh }) {
             <Search size={15} className="absolute left-3 top-3 text-gray-400" />
             <input
               type="text"
-              placeholder="Rechercher un produit, lot..."
+              placeholder="Rechercher"
               className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-xl text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-emerald-500"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -239,11 +239,13 @@ export default function StockCompartment({ products, onRefresh }) {
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
           >
-            <option value="all">Toutes catégories</option>
             <option value="Légumes">Légumes</option>
-            <option value="Fruits">Fruits</option>
-            <option value="Herbes">Herbes</option>
-            <option value="Transformés">Transformés</option>
+          <option value="Fruits">Fruits</option>
+          <option value="Herbes">Herbes</option>
+          <option value="Miel & Apiculture">Miel & Apiculture</option>
+          <option value="Œufs & Élevage">Œufs & Élevage</option>
+          <option value="Produits Secs & Épicerie">Produits Secs & Épicerie</option>
+          <option value="Produits Transformés & Conserves">Produits Transformés & Conserves</option>
           </select>
         </div>
       </div>
