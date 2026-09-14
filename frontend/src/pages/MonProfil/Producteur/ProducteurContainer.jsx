@@ -5,6 +5,7 @@ import StripeOnboardingForm from "./components/StripeOnboardingForm";
 import BioCertificationForm from "./components/BioCertificationForm";
 import HarvestLogisticsForm from "./components/HarvestLogisticsForm";
 import ProducerBannerSettings from "../components/ProducerBannerSettings"; // 👈 1. Import
+import ProducerStorySettings from "../components/ProducerStorySettings";
 import { useProfileCompletion } from "../../../hooks/useProfileCompletion";
 import { Sprout } from "lucide-react";
 
@@ -24,6 +25,12 @@ export default function ProducteurContainer() {
 
       {/* 👈 2. Insertion du composant de gestion de l'image de couverture */}
       <ProducerBannerSettings
+        profileData={profileData}
+        onProfileUpdated={refetchProfile}
+      />
+
+      {/* 👈 3. Descriptif */}
+      <ProducerStorySettings
         profileData={profileData}
         onProfileUpdated={refetchProfile}
       />

@@ -254,16 +254,28 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setActiveView(activeView === "cart" ? "grid" : "cart")}
-          className={`px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2.5 cursor-pointer shadow-sm ${
-            activeView === "cart" ? "bg-gray-900 text-white" : "bg-emerald-700 hover:bg-emerald-800 text-white"
-          }`}
-        >
-          <ShoppingCart size={18} />
-          <span>Mon Panier ({totalCartCount})</span>
-        </button>
+        {/* Bouton d'action dynamique : Panier / Retour au catalogue */}
+<button
+  type="button"
+  onClick={() => setActiveView(activeView === "cart" ? "grid" : "cart")}
+  className={`px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2.5 cursor-pointer shadow-sm ${
+    activeView === "cart"
+      ? "bg-gray-900 hover:bg-black text-white"
+      : "bg-emerald-700 hover:bg-emerald-800 text-white"
+  }`}
+>
+  {activeView === "cart" ? (
+    <>
+      <Store size={18} />
+      <span>Continuer mes achats</span>
+    </>
+  ) : (
+    <>
+      <ShoppingCart size={18} />
+      <span>Mon Panier ({totalCartCount})</span>
+    </>
+  )}
+</button>
       </div>
 
       {/* VUE PANIER */}
