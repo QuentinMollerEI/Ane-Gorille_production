@@ -49,6 +49,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     }
   }, [cart, cartKey]);
 
+  // Synchronisation Firestore des utilisateurs avec gestion d'erreur sécurisée
   useEffect(() => {
     if (propsUsersMap && Object.keys(propsUsersMap).length > 0) {
       setUsersMap(propsUsersMap);
@@ -64,12 +65,14 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         setUsersMap(map);
       },
       (error) => {
-        console.warn("Accès collection 'users' restreint.");
+        // En cas de restriction de sécurité Firestore, dégradation douce silencieuse
+        console.warn("Accès restreint à la collection 'users' par les règles Firestore.");
       }
     );
     return () => unsubscribeUsers();
   }, [propsUsersMap]);
 
+  // Synchronisation Firestore des produits
   useEffect(() => {
     if (propsProducts && propsProducts.length > 0) {
       setProductsList(propsProducts);
@@ -87,7 +90,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         setLoading(false);
       },
       (error) => {
-        console.error("Erreur lecture produits :", error.message);
+        console.warn("Erreur ou restriction d'accès aux produits :", error.message);
         setLoading(false);
       }
     );
@@ -97,7 +100,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
   const activeProducts = propsProducts && propsProducts.length > 0 ? propsProducts : productsList;
   const activeUsersMap = propsUsersMap && Object.keys(propsUsersMap).length > 0 ? propsUsersMap : usersMap;
 
-  // Enrichissement dynamique
+  // Enrichissement dynamique des produits
   const enrichedProducts = activeProducts.map((p) => {
     const producerId = p.producerId || p.userId || p.ownerId;
     const profile = activeUsersMap[producerId] || {};
@@ -126,6 +129,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     return !isHidden;
   });
 
+  // Extraction dynamique des départements présents
   const availableDepartments = Array.from(
     new Set(
       visibleProducts
@@ -134,6 +138,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     )
   ).sort();
 
+  // Extraction dynamique des catégories présentes
   const availableCategories = Array.from(
     new Set(
       visibleProducts
@@ -164,7 +169,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     return true;
   });
 
-  // 2. Tri des produits filtrés
+  // 2. Tri des produits
   const sortedProducts = [...filteredProducts].sort((a, b) => {
     const priceA = Number(a?.priceHT ?? a?.price ?? 0);
     const priceB = Number(b?.priceHT ?? b?.price ?? 0);
