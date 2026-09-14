@@ -1,60 +1,60 @@
 import React, { useState, useEffect } from "react";
-import { ShoppingCart, Store, CheckCircle, Loader2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/firestore.service";
 import { collection, onSnapshot } from "firebase/firestore";
-
+import FilterBar from "./components/FilterBar";
 import ProductGrid from "./components/ProductGrid";
 import ProductDetailPage from "./components/ProductDetailPage";
-import FilterBar from "./components/FilterBar";
 import CartContainer from "./components/CartContainer";
-import ProducerStorePage from "./components/ProducerStorePage";
+import { ShoppingCart, Store, CheckCircle } from "lucide-react";
 
-export default function ShopContainer({ products: propsProducts, usersMap: propsUsersMap }) {
+export default function ShopContainer() {
   const { user } = useAuth();
-
   const [productsList, setProductsList] = useState([]);
   const [usersMap, setUsersMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState(null);
 
-  const [activeView, setActiveView] = useState("grid");
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [selectedProducerId, setSelectedProducerId] = useState(null);
-
-  // Filtres & Tri
+  // --- ÉTATS DES FILTRES & TRI ---
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [isBioOnly, setIsBioOnly] = useState(false);
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [selectedLabel, setSelectedLabel] = useState("all");
+  const [bioOnly, setBioOnly] = useState(false);
   const [selectedDept, setSelectedDept] = useState("all");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sortBy, setSortBy] = useState("default");
 
-  const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
+  // --- NIVEAUX DE VUE & SÉLECTION ---
+  const [activeView, setActiveView] = useState("grid"); // 'grid' | 'detail' | 'cart'
+  const [selectedProduct, setSelectedProduct] = useState(null);
+
+  // --- SÉCURITÉ RGPD : PANIER INDIVIDUEL PAR UTILISATEUR ---
+  const cartKey = user?.uid ? `ane_gorille_cart_$ [cite: 11, 112] [cite: 128] [cite: 11, 16, 17] [cite: 10, 94]{user.uid}` : "ane_gorille_cart_guest";
 
   const [cart, setCart] = useState(() => {
+    if (!user?.uid && cartKey.includes("guest")) return [];
     try {
       const savedCart = localStorage.getItem(cartKey);
       return savedCart ? JSON.parse(savedCart) : [];
     } catch (e) {
+      console.error("Erreur de lecture du panier :", e);
       return [];
     }
   });
 
+  // Persistance cloisonnée du panier
   useEffect(() => {
-    try {
-      localStorage.setItem(cartKey, JSON.stringify(cart));
-    } catch (e) {
-      console.error("Erreur sauvegarde panier :", e);
+    if (user?.uid) {
+      try {
+        localStorage.setItem(cartKey, JSON.stringify(cart));
+      } catch (e) {
+        console.error("Erreur de sauvegarde du panier :", e);
+      }
     }
-  }, [cart, cartKey]);
+  }, [cart, user?.uid, cartKey]);
 
-  // Synchronisation Firestore des utilisateurs avec gestion d'erreur sécurisée
+  // Écoute des profils utilisateurs (pour enrichir les producteurs)
   useEffect(() => {
-    if (propsUsersMap && Object.keys(propsUsersMap).length > 0) {
-      setUsersMap(propsUsersMap);
-      return;
-    }
     const unsubscribeUsers = onSnapshot(
       collection(db, "users"),
       (snapshot) => {
@@ -64,21 +64,13 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         });
         setUsersMap(map);
       },
-      (error) => {
-        // En cas de restriction de sécurité Firestore, dégradation douce silencieuse
-        console.warn("Accès restreint à la collection 'users' par les règles Firestore.");
-      }
+      (err) => console.error("Erreur chargement utilisateurs :", err)
     );
     return () => unsubscribeUsers();
-  }, [propsUsersMap]);
+  }, []);
 
-  // Synchronisation Firestore des produits
+  // Écoute temps réel du catalogue Firestore
   useEffect(() => {
-    if (propsProducts && propsProducts.length > 0) {
-      setProductsList(propsProducts);
-      setLoading(false);
-      return;
-    }
     const unsubscribeProducts = onSnapshot(
       collection(db, "products"),
       (snapshot) => {
@@ -89,100 +81,108 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         setProductsList(raw);
         setLoading(false);
       },
-      (error) => {
-        console.warn("Erreur ou restriction d'accès aux produits :", error.message);
+      (err) => {
+        console.error("Erreur chargement produits :", err);
         setLoading(false);
       }
     );
     return () => unsubscribeProducts();
-  }, [propsProducts]);
+  }, []);
 
-  const activeProducts = propsProducts && propsProducts.length > 0 ? propsProducts : productsList;
-  const activeUsersMap = propsUsersMap && Object.keys(propsUsersMap).length > 0 ? propsUsersMap : usersMap;
-
-  // Enrichissement dynamique des produits
-  const enrichedProducts = activeProducts.map((p) => {
+  // Enrichissement dynamique des informations du producteur & extraction du département
+  const enrichedProducts = productsList.map((p) => {
     const producerId = p.producerId || p.userId || p.ownerId;
-    const profile = activeUsersMap[producerId] || {};
-    const postalCode = p.producerPostalCode || profile.postalCode || profile.codePostal || profile.zipCode || "";
+    const profile = usersMap[producerId] || {};
     
-    const cleanPostalDigits = String(postalCode).replace(/\D/g, "");
-    let department = null;
-    if (cleanPostalDigits.length >= 2) {
-      department = cleanPostalDigits.substring(0, 2);
+    // Extraction stricte des 2 premiers chiffres du code postal
+    const rawPostalCode = p.producerPostalCode || profile.postalCode || profile.codePostal || profile.zipCode || "";
+    const cleanDigits = String(rawPostalCode).replace(/\D/g, "");
+    
+    let deptCode = null;
+    if (cleanDigits.length >= 2) {
+      deptCode = cleanDigits.substring(0, 2);
     } else if (typeof p.producerDepartment === "string" && /^\d{2}$/.test(p.producerDepartment.trim())) {
-      department = p.producerDepartment.trim();
+      deptCode = p.producerDepartment.trim();
     }
 
     return {
       ...p,
-      producerCompany: p.producerCompany || p.companyName || profile.companyName || profile.displayName || "Exploitation",
-      producerAddress: p.producerAddress || profile.address || "",
-      producerCity: p.producerCity || profile.city || "",
-      producerPostalCode: postalCode,
-      producerDepartment: department,
+      producerCompany: p.producerCompany || p.companyName || profile.companyName || profile.displayName || "Exploitation Locale",
+      producerAddress: p.producerAddress || profile.address || "Adresse enregistrée au registre",
+      producerCity: p.producerCity || profile.city || "Commune locale",
+      producerPostalCode: rawPostalCode,
+      producerDepartment: deptCode,
     };
   });
 
+  // Filtrage des produits actifs/visibles
   const visibleProducts = enrichedProducts.filter((p) => {
     const isHidden = p.isHidden === true || p.status === "hidden" || p.status === "draft" || p.isPublished === false || p.isMasked === true;
     return !isHidden;
   });
 
-  // Extraction dynamique des départements présents
-  const availableDepartments = Array.from(
-    new Set(
-      visibleProducts
-        .map((p) => p.producerDepartment)
-        .filter((dept) => dept && /^\d{2}$/.test(dept))
-    )
-  ).sort();
-
-  // Extraction dynamique des catégories présentes
+  // Extraction dynamique des catégories et départements présents
   const availableCategories = Array.from(
-    new Set(
-      visibleProducts
-        .map((p) => p.category)
-        .filter((cat) => Boolean(cat))
-    )
+    new Set(visibleProducts.map((p) => p.category).filter(Boolean))
   ).map((cat) => ({ id: cat, label: cat }));
 
-  // 1. Filtrage des produits
+  const availableDepartments = Array.from(
+    new Set(visibleProducts.map((p) => p.producerDepartment).filter((d) => d && /^\d{2}$/.test(d)))
+  ).sort();
+
+  // --- FILTRAGE MULTI-CRITÈRES ---
   const filteredProducts = visibleProducts.filter((p) => {
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      const matchTitle = (p.title || p.name || "").toLowerCase().includes(term);
-      const matchProducer = (p.producerCompany || p.producerName || "").toLowerCase().includes(term);
-      const matchCity = (p.producerCity || "").toLowerCase().includes(term);
-      if (!matchTitle && !matchProducer && !matchCity) return false;
+    // Recherche textuelle
+    const query = searchTerm.toLowerCase().trim();
+    const matchesSearch =
+      !query ||
+      (p.title || p.name || "").toLowerCase().includes(query) ||
+      (p.producerCompany || "").toLowerCase().includes(query) ||
+      (p.producerCity || "").toLowerCase().includes(query);
+
+    // Filtre par catégorie
+    const matchesCategory =
+      !selectedCategory || selectedCategory === "all" || selectedCategory === "" || p.category === selectedCategory;
+
+    // Filtre par département
+    const matchesDept =
+      !selectedDept ||
+      selectedDept === "all" ||
+      selectedDept === "" ||
+      (p.producerDepartment && String(p.producerDepartment) === String(selectedDept));
+
+    // Filtre dynamique par Label (Bio, HVE, AOP, AOC, IGP, Label Rouge)
+    let matchesLabel = true;
+    if (selectedLabel && selectedLabel !== "all") {
+      matchesLabel = Boolean(p[selectedLabel]);
+    } else if (bioOnly) {
+      matchesLabel = Boolean(p.isBio);
     }
 
-    if (selectedCategory !== "all" && p.category !== selectedCategory) return false;
-    if (isBioOnly && !p.isBio) return false;
-    if (selectedDept !== "all" && p.producerDepartment !== selectedDept) return false;
-
+    // Filtre Favoris
+    let matchesFavorites = true;
     if (favoritesOnly) {
       const favList = user?.favoriteProducers || [];
-      if (!favList.includes(p.producerId)) return false;
+      matchesFavorites = favList.includes(p.producerId);
     }
 
-    return true;
+    return matchesSearch && matchesCategory && matchesDept && matchesLabel && matchesFavorites;
   });
 
-  // 2. Tri des produits
+  // --- TRI DES PRODUITS ---
   const sortedProducts = [...filteredProducts].sort((a, b) => {
     const priceA = Number(a?.priceHT ?? a?.price ?? 0);
     const priceB = Number(b?.priceHT ?? b?.price ?? 0);
     const stockA = Number(a?.stock ?? 0);
     const stockB = Number(b?.stock ?? 0);
 
-    if (sortBy === "price-asc") return priceA - priceB;
-    if (sortBy === "price-desc") return priceB - priceA;
-    if (sortBy === "stock-desc") return stockB - stockA;
-    if (sortBy === "name-asc") return (a.title || a.name || "").localeCompare(b.title || b.name || "");
+    if (sortBy === "priceAsc" || sortBy === "price-asc") return priceA - priceB;
+    if (sortBy === "priceDesc" || sortBy === "price-desc") return priceB - priceA;
+    if (sortBy === "stockDesc" || sortBy === "stock-desc") return stockB - stockA;
     return 0;
   });
 
+  // --- LOGIQUE DU PANIER ---
   const handleAddToCart = (product, quantityToAdd = 1) => {
     setCart((prevCart) => {
       const existingIndex = prevCart.findIndex((item) => item.id === product.id);
@@ -199,10 +199,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
   };
 
   const handleUpdateQuantity = (productId, newQty) => {
-    if (newQty <= 0) {
-      handleRemoveFromCart(productId);
-      return;
-    }
+    if (newQty <= 0) return handleRemoveFromCart(productId);
     setCart((prevCart) =>
       prevCart.map((item) => (item.id === productId ? { ...item, quantity: newQty } : item))
     );
@@ -221,28 +218,19 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     }
   };
 
-  const handleSelectProduct = (prod) => {
-    setSelectedProduct(prod);
-    setActiveView("detail");
-  };
-
-  const handleOpenProducerStore = (producerId) => {
-    setSelectedProducerId(producerId);
-    setActiveView("producer_store");
-  };
-
   const totalCartCount = cart.reduce((sum, item) => sum + (item.quantity || 1), 0);
 
-  if (loading && activeProducts.length === 0) {
+  if (loading) {
     return (
       <div className="flex justify-center items-center py-20 min-h-[350px]">
-        <Loader2 className="animate-spin text-emerald-700" size={36} />
+        <div className="animate-spin rounded-full h-9 w-9 border-b-2 border-emerald-700"></div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-12">
+      {/* Notification Flottante */}
       {notification && (
         <div className="fixed top-5 right-5 z-50 bg-emerald-800 text-white font-black px-5 py-3 rounded-2xl shadow-xl flex items-center gap-2 animate-bounce text-xs">
           <CheckCircle size={18} />
@@ -250,84 +238,31 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         </div>
       )}
 
-      {/* En-tête Panier */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-black text-gray-900">Marché Local & Pro</h1>
-          <p className="text-xs text-gray-500 font-medium">Récoltes en circuit court certifiées Âne & Gorille</p>
+      {/* En-tête Boutique */}
+      <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
+            <Store size={26} />
+          </div>
+          <div>
+            <h1 className="text-xl font-black text-gray-900">Boutique & Approvisionnement</h1>
+            <p className="text-xs text-gray-500 font-semibold">
+              Circuit court auprès des exploitations locales certifiées
+            </p>
+          </div>
         </div>
-
         <button
           onClick={() => setActiveView(activeView === "cart" ? "grid" : "cart")}
-          className={`px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2.5 shadow-sm cursor-pointer ${
-            activeView === "cart"
-              ? "bg-emerald-800 hover:bg-emerald-900 text-white"
-              : "bg-emerald-700 hover:bg-emerald-800 text-white"
+          className={`px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2.5 cursor-pointer shadow-sm ${
+            activeView === "cart" ? "bg-gray-900 text-white" : "bg-emerald-700 hover:bg-emerald-800 text-white"
           }`}
         >
-          {activeView === "cart" ? (
-            <>
-              <Store size={18} />
-              <span>Continuer mes achats</span>
-            </>
-          ) : (
-            <>
-              <ShoppingCart size={18} />
-              <span>Mon Panier ({totalCartCount})</span>
-            </>
-          )}
+          <ShoppingCart size={18} />
+          <span>Mon Panier ({totalCartCount})</span>
         </button>
       </div>
 
-      {/* Vues */}
-      {activeView === "grid" && (
-        <div className="space-y-6">
-          <FilterBar
-            searchTerm={searchTerm}
-            setSearchTerm={setSearchTerm}
-            selectedCategory={selectedCategory}
-            setSelectedCategory={setSelectedCategory}
-            isBioOnly={isBioOnly}
-            setIsBioOnly={setIsBioOnly}
-            favoritesOnly={favoritesOnly}
-            setFavoritesOnly={setFavoritesOnly}
-            selectedDept={selectedDept}
-            setSelectedDept={setSelectedDept}
-            sortBy={sortBy}
-            setSortBy={setSortBy}
-            categories={availableCategories}
-            departments={availableDepartments}
-          />
-          <ProductGrid
-            products={sortedProducts}
-            onSelectProduct={handleSelectProduct}
-            onAddToCart={handleAddToCart}
-          />
-        </div>
-      )}
-
-      {activeView === "detail" && selectedProduct && (
-        <ProductDetailPage
-          product={selectedProduct}
-          allProducts={visibleProducts}
-          onBack={() => setActiveView("grid")}
-          onAddToCart={handleAddToCart}
-          onSelectProduct={handleSelectProduct}
-          onOpenProducerStore={handleOpenProducerStore}
-        />
-      )}
-
-      {activeView === "producer_store" && selectedProducerId && (
-        <ProducerStorePage
-          producerId={selectedProducerId}
-          producerProfile={activeUsersMap[selectedProducerId]}
-          products={visibleProducts}
-          onBack={() => setActiveView("grid")}
-          onAddToCart={handleAddToCart}
-          onSelectProduct={handleSelectProduct}
-        />
-      )}
-
+      {/* RENDER CONDITIONNEL DE LA VUE ACTIVE */}
       {activeView === "cart" && (
         <CartContainer
           cart={cart}
@@ -336,6 +271,50 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
           onClearCart={handleClearCart}
           onBackToShop={() => setActiveView("grid")}
         />
+      )}
+
+      {activeView === "detail" && selectedProduct && (
+        <ProductDetailPage
+          product={selectedProduct}
+          allProducts={visibleProducts}
+          onBack={() => setActiveView("grid")}
+          onAddToCart={handleAddToCart}
+          onSelectProduct={(p) => setSelectedProduct(p)}
+        />
+      )}
+
+      {activeView === "grid" && (
+        <div className="space-y-4">
+          <FilterBar
+            searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
+            searchQuery={searchTerm}
+            setSearchQuery={setSearchTerm}
+            selectedCategory={selectedCategory}
+            setSelectedCategory={setSelectedCategory}
+            selectedLabel={selectedLabel}
+            setSelectedLabel={setSelectedLabel}
+            onlyBio={bioOnly}
+            setOnlyBio={setBioOnly}
+            selectedDept={selectedDept}
+            setSelectedDept={setSelectedDept}
+            favoritesOnly={favoritesOnly}
+            setFavoritesOnly={setFavoritesOnly}
+            sortBy={sortBy}
+            setSortBy={setSortBy}
+            categories={availableCategories}
+            departments={availableDepartments}
+          />
+
+          <ProductGrid
+            products={sortedProducts}
+            onSelectProduct={(product) => {
+              setSelectedProduct(product);
+              setActiveView("detail");
+            }}
+            onAddToCart={handleAddToCart}
+          />
+        </div>
       )}
     </div>
   );

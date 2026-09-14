@@ -1,7 +1,31 @@
 import React from "react";
-import { ShoppingBag, MapPin, Building, Award, Store } from "lucide-react";
+import { ShoppingBag, MapPin, Award, Store } from "lucide-react";
 
-export default function ProductCard({ product, onSelectProduct, onAddToCart }) {
+// Helper d'extraction stricte du code département (2 premiers chiffres du Code Postal)
+const getDepartmentCode = (product) => {
+  if (!product) return null;
+
+  const rawPostal = product.producerPostalCode || product.postalCode || product.zipCode || product.postal_code || "";
+  const cleanDigits = String(rawPostal).replace(/\D/g, "");
+  if (cleanDigits.length >= 2) {
+    return cleanDigits.substring(0, 2);
+  }
+
+  const deptField = String(product.producerDepartment || product.department || product.departmentCode || product.origin || "").trim();
+  const deptDigits = deptField.replace(/\D/g, "");
+  if (deptDigits.length >= 2) {
+    return deptDigits.substring(0, 2);
+  }
+
+  return null;
+};
+
+export default function ProductCard({
+  product,
+  onSelectProduct,
+  onAddToCart,
+  onOpenProducerStore,
+}) {
   if (!product) return null;
 
   const priceHT = Number(product?.priceHT ?? product?.price ?? 0);
@@ -10,108 +34,132 @@ export default function ProductCard({ product, onSelectProduct, onAddToCart }) {
   const stock = Number(product?.stock ?? 0);
 
   const producerName = product?.producerCompany || product?.producerName || "Exploitation Locale";
-
-  // Extraction dynamique sans fallback en dur
-  const rawPostalCode = product?.producerPostalCode || product?.postalCode || "";
-  const cleanPostalDigits = String(rawPostalCode).replace(/\D/g, "");
-  let producerDepartment = null;
-  if (cleanPostalDigits.length >= 2) {
-    producerDepartment = cleanPostalDigits.substring(0, 2);
-  } else if (typeof product?.producerDepartment === "string" && /^\d{2}$/.test(product.producerDepartment.trim())) {
-    producerDepartment = product.producerDepartment.trim();
-  }
+  const deptCode = getDepartmentCode(product);
 
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:border-emerald-600 transition-all flex flex-col justify-between group cursor-pointer text-xs">
+    <div className="bg-white border border-gray-200 hover:border-emerald-500 rounded-3xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-3 group text-xs">
       
-      {/* Visuel & Badges */}
-      <div 
-        onClick={() => onSelectProduct && onSelectProduct(product)}
-        className="relative w-full h-44 bg-gray-100 rounded-xl overflow-hidden border border-gray-200 mb-3"
-      >
-        {product.imageUrl || product.image ? (
-          <img
-            src={product.imageUrl || product.image}
-            alt={product.title || product.name}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-400">
-            <Building size={36} />
-          </div>
-        )}
+      {/* Zone Supérieure : Visuel & Badge Département */}
+      <div className="space-y-3">
+        <div 
+          onClick={() => onSelectProduct && onSelectProduct(product)}
+          className="relative w-full h-44 bg-gray-100 rounded-2xl overflow-hidden border border-gray-100 cursor-pointer flex items-center justify-center group-hover:scale-[1.01] transition-transform"
+        >
+          {product.imageUrl || product.image ? (
+            <img
+              src={product.imageUrl || product.image}
+              alt={product.title || product.name}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="text-center text-gray-400 font-bold text-[10px]">
+              Visuel non disponible
+            </div>
+          )}
 
-        {/* Badge Département (uniquement si présent) */}
-        {producerDepartment && (
-          <div className="absolute top-2.5 left-2.5 bg-black/60 backdrop-blur-sm text-white px-2.5 py-1 rounded-xl text-[10px] font-black flex items-center gap-1 shadow-xs">
-            <MapPin size={11} className="text-emerald-400" />
-            <span>Dépt: {producerDepartment}</span>
-          </div>
-        )}
+          {/* Badge Département */}
+          {deptCode && (
+            <div className="absolute top-2.5 left-2.5 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-xl text-[10px] font-black flex items-center gap-1 z-10">
+              <MapPin size={10} className="text-emerald-400 shrink-0" />
+              <span>Dépt. {deptCode}</span>
+            </div>
+          )}
+        </div>
 
-        {/* Badge Bio (EGAlim) */}
-        {product.isBio && (
-          <div className="absolute top-2.5 right-2.5 bg-amber-400 text-amber-950 font-black px-2.5 py-1 rounded-xl text-[10px] uppercase tracking-wide flex items-center gap-1 shadow-xs">
-            <Award size={12} className="text-amber-900" />
-            <span>Bio</span>
-          </div>
-        )}
-      </div>
+        {/* Badges SIQO & Qualité (Bio, HVE, AOP, AOC, IGP, Label Rouge) */}
+        <div className="flex flex-wrap items-center gap-1 min-h-[22px]">
+          {product.isBio && (
+            <span className="text-[9px] font-black uppercase text-amber-900 bg-amber-200 border border-amber-300 px-2 py-0.5 rounded-md flex items-center gap-1">
+              <Award size={10} />
+              <span>Bio</span>
+            </span>
+          )}
 
-      {/* Contenu */}
-      <div className="space-y-2 flex-1 flex flex-col justify-between">
+          {product.isHve && (
+            <span className="text-[9px] font-black uppercase text-emerald-900 bg-emerald-200 border border-emerald-300 px-2 py-0.5 rounded-md">
+              HVE
+            </span>
+          )}
+
+          {product.isAop && (
+            <span className="text-[9px] font-black uppercase text-blue-900 bg-blue-100 border border-blue-300 px-2 py-0.5 rounded-md">
+              AOP
+            </span>
+          )}
+
+          {product.isAoc && (
+            <span className="text-[9px] font-black uppercase text-indigo-900 bg-indigo-100 border border-indigo-300 px-2 py-0.5 rounded-md">
+              AOC
+            </span>
+          )}
+
+          {product.isIgp && (
+            <span className="text-[9px] font-black uppercase text-purple-900 bg-purple-100 border border-purple-300 px-2 py-0.5 rounded-md">
+              IGP
+            </span>
+          )}
+
+          {(!product.isAop && !product.isAoc && !product.isIgp && product.isAopIgp) && (
+            <span className="text-[9px] font-black uppercase text-blue-900 bg-blue-100 border border-blue-300 px-2 py-0.5 rounded-md">
+              AOP / IGP
+            </span>
+          )}
+
+          {product.isLabelRouge && (
+            <span className="text-[9px] font-black uppercase text-red-900 bg-red-100 border border-red-300 px-2 py-0.5 rounded-md">
+              Label Rouge
+            </span>
+          )}
+        </div>
+
+        {/* Titre et Producteur */}
         <div>
-          <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider flex items-center gap-1">
-            <Store size={11} />
-            {producerName}
-          </span>
           <h3 
             onClick={() => onSelectProduct && onSelectProduct(product)}
-            className="font-black text-gray-900 text-sm group-hover:text-emerald-800 transition-colors line-clamp-1 mt-0.5"
+            className="text-sm font-black text-gray-900 line-clamp-1 cursor-pointer hover:text-emerald-700 transition-colors"
           >
             {product.title || product.name}
           </h3>
+
+          <button
+            onClick={() => onOpenProducerStore && onOpenProducerStore(product.producerId)}
+            className="text-[11px] text-gray-500 font-bold uppercase tracking-wider flex items-center gap-1 hover:text-emerald-800 transition-colors mt-0.5 cursor-pointer"
+          >
+            <Store size={12} className="text-emerald-600" />
+            <span className="truncate">{producerName}</span>
+          </button>
         </div>
-
-        {/* Prix & Stock ("hangar" supprimé) */}
-        <div className="pt-2 border-t border-gray-100 flex items-end justify-between">
-          <div>
-            <span className="text-[9px] font-extrabold text-gray-400 uppercase block">Prix Unitaire HT</span>
-            <p className="text-sm font-black text-gray-900">
-              {priceHT.toFixed(2)} € <span className="text-[10px] font-bold text-gray-500">/ {product.unit || "kg"}</span>
-            </p>
-            <p className="text-[10px] font-extrabold text-emerald-800">
-              {priceTTC.toFixed(2)} € TTC
-            </p>
-          </div>
-
-          <div className="text-right">
-            <span className="text-[9px] font-bold text-gray-400 block">Stock disponible</span>
-            <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${stock > 0 ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>
-              {stock > 0 ? `${stock} ${product.unit || "kg"}` : "Rupture"}
-            </span>
-          </div>
-        </div>
-
-        {/* Action Panier */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (stock > 0 && onAddToCart) {
-              onAddToCart(product, 1);
-            }
-          }}
-          disabled={stock <= 0}
-          className={`w-full py-2.5 px-3 rounded-xl font-black text-[11px] uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs ${
-            stock > 0
-              ? "bg-emerald-800 hover:bg-emerald-900 text-white"
-              : "bg-gray-100 text-gray-400 cursor-not-allowed"
-          }`}
-        >
-          <ShoppingBag size={14} />
-          <span>{stock > 0 ? "Ajouter au panier" : "Indisponible"}</span>
-        </button>
       </div>
+
+      {/* Zone Inférieure : Prix et Panier */}
+      <div className="pt-2 border-t border-gray-100 space-y-2">
+        <div className="flex items-baseline justify-between">
+          <div>
+            <span className="text-base font-black text-gray-900">{priceHT.toFixed(2)} €</span>
+            <span className="text-[10px] text-gray-400 font-bold"> HT / {product.unit || "kg"}</span>
+          </div>
+          <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">
+            {priceTTC.toFixed(2)} € TTC
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
+          <span className={`text-[10px] font-bold ${stock > 0 ? "text-gray-500" : "text-red-600 font-black"}`}>
+            {stock > 0 ? `Stock : ${stock} ${product.unit || "kg"}` : "Rupture de stock"}
+          </span>
+
+          {stock > 0 && (
+            <button
+              onClick={() => onAddToCart && onAddToCart(product, 1)}
+              className="bg-emerald-700 hover:bg-emerald-800 text-white font-black px-3.5 py-2 rounded-xl uppercase text-[10px] tracking-wider transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <ShoppingBag size={13} />
+              <span>Ajouter</span>
+            </button>
+          )}
+        </div>
+      </div>
+
     </div>
   );
 }

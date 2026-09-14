@@ -1,5 +1,24 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ArrowLeft, ShoppingBag, MapPin, Building, Award, Store, FileText, Sparkles, Info } from "lucide-react";
+
+// Helper d'extraction stricte du code département
+const getDepartmentCode = (product) => {
+  if (!product) return null;
+
+  const rawPostal = product.producerPostalCode || product.postalCode || product.zipCode || product.postal_code || "";
+  const cleanDigits = String(rawPostal).replace(/\D/g, "");
+  if (cleanDigits.length >= 2) {
+    return cleanDigits.substring(0, 2);
+  }
+
+  const deptField = String(product.producerDepartment || product.department || product.departmentCode || product.origin || "").trim();
+  const deptDigits = deptField.replace(/\D/g, "");
+  if (deptDigits.length >= 2) {
+    return deptDigits.substring(0, 2);
+  }
+
+  return null;
+};
 
 export default function ProductDetailPage({
   product,
@@ -10,6 +29,12 @@ export default function ProductDetailPage({
   onOpenProducerStore,
 }) {
   const [quantity, setQuantity] = useState(1);
+
+  // 🚀 RECENTRAGE AUTOMATIQUE : Remonte automatiquement en haut de page à l'ouverture du produit
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [product?.id]);
+
   if (!product) return null;
 
   const priceHT = Number(product?.priceHT ?? product?.price ?? 0);
@@ -21,15 +46,7 @@ export default function ProductDetailPage({
   const producerAddress = product?.producerAddress || "Adresse certifiée au registre";
   const producerCity = product?.producerCity || product?.city || "";
   
-  const rawPostalCode = product?.producerPostalCode || product?.postalCode || "";
-  const cleanPostalDigits = String(rawPostalCode).replace(/\D/g, "");
-  
-  let producerDepartment = null;
-  if (cleanPostalDigits.length >= 2) {
-    producerDepartment = cleanPostalDigits.substring(0, 2);
-  } else if (typeof product?.producerDepartment === "string" && /^\d{2}$/.test(product.producerDepartment.trim())) {
-    producerDepartment = product.producerDepartment.trim();
-  }
+  const deptCode = getDepartmentCode(product);
 
   const eggRearingLabels = {
     "0": "0 - Biologique (AB)",
@@ -38,7 +55,6 @@ export default function ProductDetailPage({
     "3": "3 - En Cage aménagement"
   };
 
-  // VÉRIFICATION STRICTE DE LA FILIÈRE DU PRODUIT
   const categoryStr = (product.category || "").toLowerCase();
   const titleStr = (product.title || product.name || "").toLowerCase();
 
@@ -52,8 +68,11 @@ export default function ProductDetailPage({
     return isSameProducer && isDifferentProduct && isVisible;
   });
 
+  const hasIncoInfo = product.incoImageUrl || product.incoImage || product.ingredients || product.allergens || product.ddmDate || product.dlcDate || product.storageInstructions;
+
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto pb-12 text-xs">
+      {/* Bouton de retour */}
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
@@ -69,6 +88,7 @@ export default function ProductDetailPage({
 
       <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
         
+        {/* Visuel principal & Badge Département */}
         <div className="md:col-span-5 relative w-full h-64 md:h-80 bg-gray-100 rounded-2xl overflow-hidden border border-gray-200 flex items-center justify-center">
           {product.imageUrl || product.image ? (
             <img
@@ -83,14 +103,15 @@ export default function ProductDetailPage({
             </div>
           )}
           
-          {producerDepartment && (
+          {deptCode && (
             <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm text-white px-3 py-1 rounded-xl text-xs font-black flex items-center gap-1">
               <MapPin size={12} className="text-emerald-400" />
-              <span>Dépt: {producerDepartment}</span>
+              <span>Dépt: {deptCode}</span>
             </div>
           )}
         </div>
 
+        {/* Détails du produit */}
         <div className="md:col-span-7 space-y-5">
           <div>
             <div className="flex flex-wrap items-center gap-1.5 mb-2">
@@ -108,6 +129,42 @@ export default function ProductDetailPage({
                   <span>Bio (EGAlim)</span>
                 </span>
               )}
+
+              {product.isHve && (
+                <span className="text-[10px] font-black uppercase text-emerald-900 bg-emerald-200 border border-emerald-300 px-2.5 py-0.5 rounded-full">
+                  HVE
+                </span>
+              )}
+
+              {product.isAop && (
+                <span className="text-[10px] font-black uppercase text-blue-900 bg-blue-100 border border-blue-300 px-2.5 py-0.5 rounded-full">
+                  AOP
+                </span>
+              )}
+
+              {product.isAoc && (
+                <span className="text-[10px] font-black uppercase text-indigo-900 bg-indigo-100 border border-indigo-300 px-2.5 py-0.5 rounded-full">
+                  AOC
+                </span>
+              )}
+
+              {product.isIgp && (
+                <span className="text-[10px] font-black uppercase text-purple-900 bg-purple-100 border border-purple-300 px-2.5 py-0.5 rounded-full">
+                  IGP
+                </span>
+              )}
+
+              {(!product.isAop && !product.isAoc && !product.isIgp && product.isAopIgp) && (
+                <span className="text-[10px] font-black uppercase text-blue-900 bg-blue-100 border border-blue-300 px-2.5 py-0.5 rounded-full">
+                  AOP / IGP
+                </span>
+              )}
+
+              {product.isLabelRouge && (
+                <span className="text-[10px] font-black uppercase text-red-900 bg-red-100 border border-red-300 px-2.5 py-0.5 rounded-full">
+                  Label Rouge
+                </span>
+              )}
             </div>
 
             <h1 className="text-2xl font-black text-gray-900">{product.title || product.name}</h1>
@@ -120,7 +177,7 @@ export default function ProductDetailPage({
             </button>
           </div>
 
-          {/* 🍯 Encart Miel (Affiché SEULEMENT si c'est du Miel) */}
+          {/* Encart Miel */}
           {isHoney && (product.honeyNetWeight || product.floralOrigin) && (
             <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-1">
               <p className="font-extrabold text-amber-950 flex items-center gap-1.5 text-xs">
@@ -142,7 +199,7 @@ export default function ProductDetailPage({
             </div>
           )}
 
-          {/* 🥚 Encart Œufs (Affiché SEULEMENT si c'est la filière Œufs/Élevage) */}
+          {/* Encart Œufs */}
           {isEggs && (product.eggRearingMode || product.eggCaliber || product.dcrDate) && (
             <div className="p-3.5 bg-yellow-50/80 border border-yellow-200 rounded-2xl space-y-1">
               <p className="font-extrabold text-yellow-950 flex items-center gap-1.5 text-xs">
@@ -170,12 +227,23 @@ export default function ProductDetailPage({
           )}
 
           {/* Encart INCO */}
-          {(product.ingredients || product.allergens || product.ddmDate || product.dlcDate || product.storageInstructions) && (
+          {hasIncoInfo && (
             <div className="p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-2xl space-y-2">
               <p className="font-extrabold text-emerald-950 flex items-center gap-1.5 text-xs">
                 <FileText size={14} className="text-emerald-700 shrink-0" />
                 <span>Composition & Traçabilité Sanitaire (INCO)</span>
               </p>
+
+              {(product.incoImageUrl || product.incoImage) && (
+                <div className="my-2 rounded-xl overflow-hidden border border-emerald-200 bg-white max-w-xs">
+                  <img
+                    src={product.incoImageUrl || product.incoImage}
+                    alt="Étiquette INCO - Ingrédients & Allergènes"
+                    className="w-full h-auto object-contain max-h-48"
+                  />
+                </div>
+              )}
+
               {product.ingredients && (
                 <p className="text-gray-800 text-[11px]">
                   <strong>Ingrédients :</strong> {product.ingredients}
@@ -206,13 +274,13 @@ export default function ProductDetailPage({
               <span>
                 {producerAddress}
                 {producerCity ? ` — ${producerCity}` : ""}
-                {producerDepartment ? ` (${producerDepartment})` : ""}
+                {deptCode ? ` (${deptCode})` : ""}
               </span>
             </p>
             <p className="text-[10px] text-gray-500 italic">Adresse certifiée au registre des exploitants agricoles.</p>
           </div>
 
-          {/* Prix & Stock */}
+          {/* Tarifs et Stock */}
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl">
               <span className="text-gray-400 font-extrabold uppercase text-[9px] block">Tarif Unitaire HT</span>
@@ -254,7 +322,7 @@ export default function ProductDetailPage({
         </div>
       </div>
 
-      {/* Autres produits */}
+      {/* Autres produits du même producteur */}
       {otherProducerProducts.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4">
           <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">

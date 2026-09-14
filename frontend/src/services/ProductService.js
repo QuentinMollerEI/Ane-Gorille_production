@@ -1,22 +1,17 @@
 import { db } from "../config/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
-// Nettoyage des chaînes de caractères
 const sanitizeString = (str) => {
   if (!str || typeof str !== "string") return "";
   return str.replace(/[<>]/g, "").trim();
 };
 
-// Validation des nombres positifs
 const sanitizePositiveNumber = (num, fallback = 0) => {
   const parsed = Number(num);
   return isNaN(parsed) || parsed < 0 ? fallback : parsed;
 };
 
 export const ProductService = {
-  /**
-   * Enregistre un produit dans Firestore avec support multi-filières
-   */
   async addProduct(rawProductData, producerProfile) {
     if (!producerProfile?.uid) {
       throw new Error("Accès refusé : Producteur non identifié.");
@@ -34,7 +29,6 @@ export const ProductService = {
 
     const stock = sanitizePositiveNumber(rawProductData.stock);
 
-    // Génération automatique du numéro de lot si non renseigné
     const batchNumber =
       sanitizeString(rawProductData.batchNumber) ||
       `LOT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(100 + Math.random() * 900)}`;
@@ -51,9 +45,7 @@ export const ProductService = {
       producerProfile.address || producerProfile.city || "Exploitation locale"
     );
 
-    // Construction du document Firestore (Socle d'origine + Nouveaux champs)
     const productPayload = {
-      // --- BASE D'ORIGINE STRICTEMENT CONSERVÉE ---
       title: title,
       name: title,
       category: sanitizeString(rawProductData.category) || "Légumes",
@@ -65,7 +57,6 @@ export const ProductService = {
       quantity: stock,
       harvestDate: sanitizeString(rawProductData.harvestDate),
       batchNumber: batchNumber,
-      isBio: Boolean(rawProductData.isBio),
       producerId: producerProfile.uid,
       producer: producerName,
       producerName: producerName,
@@ -76,36 +67,41 @@ export const ProductService = {
       packagingType:
         sanitizeString(rawProductData.packagingContainer) ||
         "Caisses & Cagettes Réutilisables (Consignées)",
-      isReusableCrate: true,
+      isReusableCrate: false,
       imageUrl: rawProductData.imagePreview || null,
       image: rawProductData.imagePreview || null,
+      
+      // Image d'étiquette INCO
+      incoImageUrl: rawProductData.incoImagePreview || null,
+      incoImage: rawProductData.incoImagePreview || null,
+
       isAvailable: stock > 0,
       isHidden: false,
 
-      // --- EXTENSIONS MULTI-FILIÈRES (AJOUTS DYNAMIQUES) ---
-      // Miel & Apiculture
+      // Miel
       floralOrigin: sanitizeString(rawProductData.floralOrigin),
       honeyNetWeight: sanitizeString(rawProductData.honeyNetWeight),
 
-      // Œufs & Élevage
+      // Œufs
       eggRearingMode: sanitizeString(rawProductData.eggRearingMode),
       eggCaliber: sanitizeString(rawProductData.eggCaliber),
       dcrDate: sanitizeString(rawProductData.dcrDate),
       eggSanitaryApproval: sanitizeString(rawProductData.eggSanitaryApproval),
 
-      // Produits Secs & Transformés (INCO)
-      ingredients: sanitizeString(rawProductData.ingredients),
-      allergens: sanitizeString(rawProductData.allergens),
+      // INCO dates & conservation
       ddmDate: sanitizeString(rawProductData.ddmDate),
       dlcDate: sanitizeString(rawProductData.dlcDate),
       storageInstructions: sanitizeString(rawProductData.storageInstructions),
 
-      // Labels EGAlim complémentaires
+      // Labels enregistrés de façon 100% indépendante
+      isBio: Boolean(rawProductData.isBio),
       isHve: Boolean(rawProductData.isHve),
-      isAopIgp: Boolean(rawProductData.isAopIgp),
+      isAop: Boolean(rawProductData.isAop),
+      isAoc: Boolean(rawProductData.isAoc),
+      isIgp: Boolean(rawProductData.isIgp),
+      isAopIgp: Boolean(rawProductData.isAop || rawProductData.isAoc || rawProductData.isIgp || rawProductData.isAopIgp),
       isLabelRouge: Boolean(rawProductData.isLabelRouge),
 
-      // Horodatages système
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
@@ -114,7 +110,7 @@ export const ProductService = {
       const docRef = await addDoc(collection(db, "products"), productPayload);
       return docRef.id;
     } catch (error) {
-      console.error("[ProductService] Erreur lors de la création Firestore :", error);
+      console.error("[ProductService] Erreur :", error);
       throw new Error("Impossible d'ajouter le produit dans la base de données Firestore.");
     }
   },
