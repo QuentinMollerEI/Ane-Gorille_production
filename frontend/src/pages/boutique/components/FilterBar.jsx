@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Award, Heart, MapPin, X } from "lucide-react";
+import { Search, Award, Heart, MapPin, X, ArrowUpDown } from "lucide-react";
 
 export default function FilterBar({
   searchTerm,
@@ -12,10 +12,18 @@ export default function FilterBar({
   setFavoritesOnly,
   selectedDept,
   setSelectedDept,
+  sortBy,
+  setSortBy,
   categories = [],
   departments = []
 }) {
-  const hasActiveFilters = searchTerm || selectedCategory !== "all" || isBioOnly || favoritesOnly || selectedDept !== "all";
+  const hasActiveFilters =
+    searchTerm ||
+    selectedCategory !== "all" ||
+    isBioOnly ||
+    favoritesOnly ||
+    selectedDept !== "all" ||
+    (sortBy && sortBy !== "default");
 
   const resetFilters = () => {
     setSearchTerm("");
@@ -23,6 +31,7 @@ export default function FilterBar({
     setIsBioOnly(false);
     setFavoritesOnly(false);
     setSelectedDept("all");
+    if (setSortBy) setSortBy("default");
   };
 
   return (
@@ -89,6 +98,22 @@ export default function FilterBar({
               <MapPin size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             </div>
           )}
+
+          {/* Sélecteur de Tri */}
+          <div className="relative">
+            <select
+              value={sortBy || "default"}
+              onChange={(e) => setSortBy && setSortBy(e.target.value)}
+              className="px-3.5 py-2.5 bg-gray-50 border border-gray-200 text-gray-700 font-extrabold rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600 cursor-pointer appearance-none pr-8"
+            >
+              <option value="default">Pertinence</option>
+              <option value="price-asc">Prix HT : Croissant</option>
+              <option value="price-desc">Prix HT : Décroissant</option>
+              <option value="stock-desc">Stock le plus élevé</option>
+              <option value="name-asc">Nom (A-Z)</option>
+            </select>
+            <ArrowUpDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          </div>
 
           {hasActiveFilters && (
             <button

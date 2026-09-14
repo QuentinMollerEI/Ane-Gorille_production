@@ -13,25 +13,23 @@ import ProducerStorePage from "./components/ProducerStorePage";
 export default function ShopContainer({ products: propsProducts, usersMap: propsUsersMap }) {
   const { user } = useAuth();
 
-  // États locaux de données
   const [productsList, setProductsList] = useState([]);
   const [usersMap, setUsersMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState(null);
 
-  // Vues internes : 'grid' | 'detail' | 'cart' | 'producer_store'
   const [activeView, setActiveView] = useState("grid");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedProducerId, setSelectedProducerId] = useState(null);
 
-  // Filtres
+  // Filtres & Tri
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isBioOnly, setIsBioOnly] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [selectedDept, setSelectedDept] = useState("all");
+  const [sortBy, setSortBy] = useState("default");
 
-  // Clé unique pour la persistance du panier local
   const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
 
   const [cart, setCart] = useState(() => {
@@ -43,7 +41,6 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     }
   });
 
-  // Sauvegarde panier local
   useEffect(() => {
     try {
       localStorage.setItem(cartKey, JSON.stringify(cart));
@@ -52,7 +49,6 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     }
   }, [cart, cartKey]);
 
-  // Synchronisation Firestore utilisateurs sécurisée
   useEffect(() => {
     if (propsUsersMap && Object.keys(propsUsersMap).length > 0) {
       setUsersMap(propsUsersMap);
@@ -68,13 +64,12 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         setUsersMap(map);
       },
       (error) => {
-        console.warn("Accès collection 'users' restreint par règles Firestore.");
+        console.warn("Accès collection 'users' restreint.");
       }
     );
     return () => unsubscribeUsers();
   }, [propsUsersMap]);
 
-  // Synchronisation Firestore produits
   useEffect(() => {
     if (propsProducts && propsProducts.length > 0) {
       setProductsList(propsProducts);
@@ -99,19 +94,17 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     return () => unsubscribeProducts();
   }, [propsProducts]);
 
-  // Source effective des données
   const activeProducts = propsProducts && propsProducts.length > 0 ? propsProducts : productsList;
   const activeUsersMap = propsUsersMap && Object.keys(propsUsersMap).length > 0 ? propsUsersMap : usersMap;
 
-  // Enrichissement des produits avec nettoyage du département
+  // Enrichissement dynamique
   const enrichedProducts = activeProducts.map((p) => {
     const producerId = p.producerId || p.userId || p.ownerId;
     const profile = activeUsersMap[producerId] || {};
     const postalCode = p.producerPostalCode || profile.postalCode || profile.codePostal || profile.zipCode || "";
     
-    // Nettoyage strict : extraction à 2 chiffres
     const cleanPostalDigits = String(postalCode).replace(/\D/g, "");
-    let department = "31";
+    let department = null;
     if (cleanPostalDigits.length >= 2) {
       department = cleanPostalDigits.substring(0, 2);
     } else if (typeof p.producerDepartment === "string" && /^\d{2}$/.test(p.producerDepartment.trim())) {
@@ -120,21 +113,36 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
 
     return {
       ...p,
-      producerCompany: p.producerCompany || p.companyName || profile.companyName || profile.displayName || "Exploitation Locale",
-      producerAddress: p.producerAddress || profile.address || "Adresse certifiée",
-      producerCity: p.producerCity || profile.city || "Commune locale",
+      producerCompany: p.producerCompany || p.companyName || profile.companyName || profile.displayName || "Exploitation",
+      producerAddress: p.producerAddress || profile.address || "",
+      producerCity: p.producerCity || profile.city || "",
       producerPostalCode: postalCode,
       producerDepartment: department,
     };
   });
 
-  // Filtrage des produits masqués
   const visibleProducts = enrichedProducts.filter((p) => {
     const isHidden = p.isHidden === true || p.status === "hidden" || p.status === "draft" || p.isPublished === false || p.isMasked === true;
     return !isHidden;
   });
 
-  // Filtrage selon critères utilisateur
+  const availableDepartments = Array.from(
+    new Set(
+      visibleProducts
+        .map((p) => p.producerDepartment)
+        .filter((dept) => dept && /^\d{2}$/.test(dept))
+    )
+  ).sort();
+
+  const availableCategories = Array.from(
+    new Set(
+      visibleProducts
+        .map((p) => p.category)
+        .filter((cat) => Boolean(cat))
+    )
+  ).map((cat) => ({ id: cat, label: cat }));
+
+  // 1. Filtrage des produits
   const filteredProducts = visibleProducts.filter((p) => {
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
@@ -146,7 +154,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
 
     if (selectedCategory !== "all" && p.category !== selectedCategory) return false;
     if (isBioOnly && !p.isBio) return false;
-    if (selectedDept !== "all" && (p.producerDepartment || p.department) !== selectedDept) return false;
+    if (selectedDept !== "all" && p.producerDepartment !== selectedDept) return false;
 
     if (favoritesOnly) {
       const favList = user?.favoriteProducers || [];
@@ -156,7 +164,20 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
     return true;
   });
 
-  // Gestion du Panier
+  // 2. Tri des produits filtrés
+  const sortedProducts = [...filteredProducts].sort((a, b) => {
+    const priceA = Number(a?.priceHT ?? a?.price ?? 0);
+    const priceB = Number(b?.priceHT ?? b?.price ?? 0);
+    const stockA = Number(a?.stock ?? 0);
+    const stockB = Number(b?.stock ?? 0);
+
+    if (sortBy === "price-asc") return priceA - priceB;
+    if (sortBy === "price-desc") return priceB - priceA;
+    if (sortBy === "stock-desc") return stockB - stockA;
+    if (sortBy === "name-asc") return (a.title || a.name || "").localeCompare(b.title || b.name || "");
+    return 0;
+  });
+
   const handleAddToCart = (product, quantityToAdd = 1) => {
     setCart((prevCart) => {
       const existingIndex = prevCart.findIndex((item) => item.id === product.id);
@@ -224,7 +245,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         </div>
       )}
 
-      {/* En-tête avec bouton Panier / Continuer mes achats */}
+      {/* En-tête Panier */}
       <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
         <div>
           <h1 className="text-xl font-black text-gray-900">Marché Local & Pro</h1>
@@ -253,7 +274,7 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         </button>
       </div>
 
-      {/* Rendu des Vues */}
+      {/* Vues */}
       {activeView === "grid" && (
         <div className="space-y-6">
           <FilterBar
@@ -267,9 +288,13 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
             setFavoritesOnly={setFavoritesOnly}
             selectedDept={selectedDept}
             setSelectedDept={setSelectedDept}
+            sortBy={sortBy}
+            setSortBy={setSortBy}
+            categories={availableCategories}
+            departments={availableDepartments}
           />
           <ProductGrid
-            products={filteredProducts}
+            products={sortedProducts}
             onSelectProduct={handleSelectProduct}
             onAddToCart={handleAddToCart}
           />
