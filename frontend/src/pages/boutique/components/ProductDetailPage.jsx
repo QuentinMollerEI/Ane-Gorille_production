@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ArrowLeft, ShoppingBag, MapPin, Building, Award } from "lucide-react";
+import { ArrowLeft, ShoppingBag, MapPin, Building, Award, Store } from "lucide-react";
 
 export default function ProductDetailPage({
   product,
@@ -7,6 +7,7 @@ export default function ProductDetailPage({
   onBack,
   onAddToCart,
   onSelectProduct,
+  onOpenProducerStore,
 }) {
   const [quantity, setQuantity] = useState(1);
   if (!product) return null;
@@ -15,15 +16,27 @@ export default function ProductDetailPage({
   const vatRate = Number(product?.vatRate ?? product?.vat ?? 5.5);
   const priceTTC = priceHT * (1 + vatRate / 100);
   const stock = Number(product?.stock ?? 0);
-  
-  const producerName = product?.producerCompany || product?.producerName || "Exploitation Agricole Locale";
-  const producerAddress = product?.producerAddress || "Adresse validée au registre";
-  const producerCity = product?.producerCity || "Commune locale";
-  const producerPostalCode = product?.producerPostalCode || "";
-  const producerDepartment = product?.producerDepartment || product?.department || "31";
 
+  const producerName = product?.producerCompany || product?.producerName || "Exploitation Agricole Locale";
+  const producerAddress = product?.producerAddress || "Adresse certifiée au registre";
+  const producerCity = product?.producerCity || product?.city || "Commune locale";
+  
+  // Extraction stricte du département à 2 chiffres
+  const rawPostalCode = product?.producerPostalCode || product?.postalCode || "";
+  const cleanPostalDigits = String(rawPostalCode).replace(/\D/g, "");
+  
+  let producerDepartment = "31";
+  if (cleanPostalDigits.length >= 2) {
+    producerDepartment = cleanPostalDigits.substring(0, 2);
+  } else if (typeof product?.producerDepartment === "string" && /^\d{2}\$/.test(product.producerDepartment.trim())) {
+    producerDepartment = product.producerDepartment.trim();
+  } else if (typeof product?.department === "string" && /^\d{2}\$/.test(product.department.trim())) {
+    producerDepartment = product.department.trim();
+  }
+
+  // Produits complémentaires du même producteur
   const otherProducerProducts = allProducts.filter((p) => {
-    const isSameProducer = p.producerId === product.producerId || p.producerCompany === product.producerCompany;
+    const isSameProducer = p.producerId === product.producerId || (p.producerCompany && p.producerCompany === product.producerCompany);
     const isDifferentProduct = p.id !== product.id;
     const isVisible = !p.isHidden && p.status !== "hidden" && p.isPublished !== false && !p.isMasked;
     return isSameProducer && isDifferentProduct && isVisible;
@@ -45,20 +58,21 @@ export default function ProductDetailPage({
         </span>
       </div>
 
-      {/* Fiche Produit Principale */}
+      {/* Carte Produit Principale */}
       <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+        
         {/* Visuel du Produit */}
         <div className="md:col-span-5 relative w-full h-64 md:h-80 bg-gray-100 rounded-2xl overflow-hidden border border-gray-200 flex items-center justify-center">
           {product.imageUrl || product.image ? (
-            <img 
-              src={product.imageUrl || product.image} 
-              alt={product.title || product.name} 
-              className="w-full h-full object-cover" 
+            <img
+              src={product.imageUrl || product.image}
+              alt={product.title || product.name}
+              className="w-full h-full object-cover"
             />
           ) : (
             <div className="text-center text-gray-400 space-y-2">
               <Building size={48} className="mx-auto" />
-              <p className="font-bold text-xs">Aucun visuel fourni</p>
+              <p className="font-bold text-xs">Aucun visuel disponible</p>
             </div>
           )}
           <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm text-white px-3 py-1 rounded-xl text-xs font-black flex items-center gap-1">
@@ -67,13 +81,19 @@ export default function ProductDetailPage({
           </div>
         </div>
 
-        {/* Informations & Tarification */}
+        {/* Détails & Tarifs */}
         <div className="md:col-span-7 space-y-5">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full">
-                Producteur Vérifié
-              </span>
+            <div className="flex items-center gap-2 mb-1.5">
+              <button
+                onClick={() => onOpenProducerStore && onOpenProducerStore(product.producerId)}
+                className="text-[10px] font-black uppercase text-emerald-900 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-full flex items-center gap-1 transition-colors cursor-pointer"
+                title="Consulter la boutique complète de ce maraîcher"
+              >
+                <Store size={12} />
+                <span>Producteur Vérifié — Voir la boutique</span>
+              </button>
+
               {product.isBio && (
                 <span className="text-[10px] font-black uppercase text-amber-900 bg-amber-200 border border-amber-300 px-2.5 py-0.5 rounded-full flex items-center gap-1">
                   <Award size={12} />
@@ -81,14 +101,22 @@ export default function ProductDetailPage({
                 </span>
               )}
             </div>
+
             <h1 className="text-2xl font-black text-gray-900">{product.title || product.name}</h1>
-            <p className="text-xs text-gray-500 font-extrabold uppercase tracking-wider mt-0.5">{producerName}</p>
+            
+            <button
+              onClick={() => onOpenProducerStore && onOpenProducerStore(product.producerId)}
+              className="text-xs text-emerald-800 font-extrabold uppercase tracking-wider mt-0.5 hover:underline cursor-pointer block"
+            >
+              {producerName}
+            </button>
           </div>
 
+          {/* Encart Adresse Exploitation */}
           <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-2xl space-y-1">
             <p className="font-bold text-gray-800 flex items-center gap-1.5">
               <MapPin size={14} className="text-emerald-700 shrink-0" />
-              <span>{producerAddress} {producerPostalCode} {producerCity}</span>
+              <span>{producerAddress} — {producerCity} ({producerDepartment})</span>
             </p>
             <p className="text-[10px] text-gray-500 italic">Adresse certifiée au registre des exploitants agricoles.</p>
           </div>
@@ -120,7 +148,7 @@ export default function ProductDetailPage({
                 />
                 <button
                   onClick={() => onAddToCart(product, quantity)}
-                  className="flex-1 bg-emerald-700 hover:bg-emerald-800 text-white font-black py-3.5 px-6 rounded-2xl uppercase tracking-wider text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                  className="flex-1 bg-emerald-800 hover:bg-emerald-900 text-white font-black py-3.5 px-6 rounded-2xl uppercase tracking-wider text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <ShoppingBag size={16} />
                   <span>Ajouter au panier ({(priceTTC * quantity).toFixed(2)} € TTC)</span>
@@ -140,7 +168,7 @@ export default function ProductDetailPage({
         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4">
           <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
             <Building size={16} className="text-emerald-700" />
-            <span>Toutes les autres cultures disponibles de {producerName}</span>
+            <span>Autres récoltes disponibles de {producerName}</span>
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {otherProducerProducts.map((p) => {
