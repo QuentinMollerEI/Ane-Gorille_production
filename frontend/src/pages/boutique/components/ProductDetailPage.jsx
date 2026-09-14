@@ -129,7 +129,7 @@ export default function ProductDetailPage({
               <p className="text-emerald-800 font-bold text-[10px]">Prix TTC : {priceTTC.toFixed(2)} €</p>
             </div>
             <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl">
-              <span className="text-gray-400 font-extrabold uppercase text-[9px] block">Disponibilité Hangar</span>
+              <span className="text-gray-400 font-extrabold uppercase text-[9px] block">Disponibilité </span>
               <p className="text-base font-black text-gray-900">{stock} {product.unit || "kg"}</p>
             </div>
           </div>

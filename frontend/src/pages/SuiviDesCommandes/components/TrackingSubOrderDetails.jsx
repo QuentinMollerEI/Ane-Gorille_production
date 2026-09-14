@@ -38,7 +38,7 @@ export default function TrackingSubOrderDetails({ associatedSubs = [] }) {
                 {sub.status === "A_PREPARER"
                   ? "En récolte..."
                   : sub.status === "PRET_A_EXPEDIER"
-                    ? "Prêt en hangar"
+                    ? "Prêt en "
                     : "Chargé / En route"}
               </span>
             </div>

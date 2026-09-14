@@ -51,7 +51,7 @@ export default function OrderTrackingCard({ order, associatedSubs = [] }) {
         return (
           <span className="bg-purple-100 text-purple-900 border border-purple-300 px-3 py-1 rounded-full font-black text-[10px] uppercase flex items-center gap-1">
             <Package size={12} />
-            Prêt en Hangar
+            Prêt en 
           </span>
         );
       case "EN_COURS_DE_LIVRAISON":

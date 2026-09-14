@@ -229,7 +229,7 @@ export default function RoutePlanner() {
 
   // 3. SEGREGATION DES FLUX DE TOURNÉE (Logique SRP de regroupement)
 
-  // A. Étape 1 - Tournée de ramassage : Tout ce qui est prêt en Hangar ("A_RAMASSER" ou "PRET_A_EXPEDIER")
+  // A. Étape 1 - Tournée de ramassage : Tout ce qui est prêt en  ("A_RAMASSER" ou "PRET_A_EXPEDIER")
   const readyForPickupSubs = filteredSubOrders.filter(
     (sub) => sub.status === "A_RAMASSER" || sub.status === "PRET_A_EXPEDIER",
   );
