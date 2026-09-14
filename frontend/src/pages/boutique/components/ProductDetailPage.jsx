@@ -1,7 +1,13 @@
 import React, { useState } from "react";
 import { ArrowLeft, ShoppingBag, MapPin, Building, Award } from "lucide-react";
 
-export default function ProductDetailPage({ product, allProducts = [], onBack, onAddToCart, onSelectProduct }) {
+export default function ProductDetailPage({
+  product,
+  allProducts = [],
+  onBack,
+  onAddToCart,
+  onSelectProduct,
+}) {
   const [quantity, setQuantity] = useState(1);
   if (!product) return null;
 
@@ -14,7 +20,7 @@ export default function ProductDetailPage({ product, allProducts = [], onBack, o
   const producerAddress = product?.producerAddress || "Adresse validée au registre";
   const producerCity = product?.producerCity || "Commune locale";
   const producerPostalCode = product?.producerPostalCode || "";
-  const producerDepartment = product?.producerDepartment || "31";
+  const producerDepartment = product?.producerDepartment || product?.department || "31";
 
   const otherProducerProducts = allProducts.filter((p) => {
     const isSameProducer = p.producerId === product.producerId || p.producerCompany === product.producerCompany;
@@ -25,6 +31,7 @@ export default function ProductDetailPage({ product, allProducts = [], onBack, o
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto pb-12 text-xs">
+      {/* En-tête de retour */}
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
@@ -38,10 +45,16 @@ export default function ProductDetailPage({ product, allProducts = [], onBack, o
         </span>
       </div>
 
+      {/* Fiche Produit Principale */}
       <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+        {/* Visuel du Produit */}
         <div className="md:col-span-5 relative w-full h-64 md:h-80 bg-gray-100 rounded-2xl overflow-hidden border border-gray-200 flex items-center justify-center">
           {product.imageUrl || product.image ? (
-            <img src={product.imageUrl || product.image} alt={product.title || product.name} className="w-full h-full object-cover" />
+            <img 
+              src={product.imageUrl || product.image} 
+              alt={product.title || product.name} 
+              className="w-full h-full object-cover" 
+            />
           ) : (
             <div className="text-center text-gray-400 space-y-2">
               <Building size={48} className="mx-auto" />
@@ -54,13 +67,17 @@ export default function ProductDetailPage({ product, allProducts = [], onBack, o
           </div>
         </div>
 
+        {/* Informations & Tarification */}
         <div className="md:col-span-7 space-y-5">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full">Producteur Vérifié</span>
+              <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                Producteur Vérifié
+              </span>
               {product.isBio && (
                 <span className="text-[10px] font-black uppercase text-amber-900 bg-amber-200 border border-amber-300 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                  <Award size={12} /><span>Bio (EGAlim)</span>
+                  <Award size={12} />
+                  <span>Bio (EGAlim)</span>
                 </span>
               )}
             </div>
@@ -76,6 +93,7 @@ export default function ProductDetailPage({ product, allProducts = [], onBack, o
             <p className="text-[10px] text-gray-500 italic">Adresse certifiée au registre des exploitants agricoles.</p>
           </div>
 
+          {/* Grille Tarif & Stock */}
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl">
               <span className="text-gray-400 font-extrabold uppercase text-[9px] block">Tarif Unitaire HT</span>
@@ -85,10 +103,10 @@ export default function ProductDetailPage({ product, allProducts = [], onBack, o
             <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-2xl">
               <span className="text-gray-400 font-extrabold uppercase text-[9px] block">Disponibilité Hangar</span>
               <p className="text-base font-black text-gray-900">{stock} {product.unit || "kg"}</p>
-              <p className="text-gray-500 font-bold text-[10px]">Livraison 24h-48h</p>
             </div>
           </div>
 
+          {/* Action Ajout au Panier */}
           {stock > 0 ? (
             <div className="space-y-2 pt-2">
               <div className="flex items-center gap-3">
@@ -110,11 +128,14 @@ export default function ProductDetailPage({ product, allProducts = [], onBack, o
               </div>
             </div>
           ) : (
-            <div className="p-4 bg-red-50 text-red-700 font-bold rounded-2xl text-center">Ce produit est actuellement en rupture de stock.</div>
+            <div className="p-4 bg-red-50 text-red-700 font-bold rounded-2xl text-center">
+              Ce produit est actuellement en rupture de stock.
+            </div>
           )}
         </div>
       </div>
 
+      {/* Autres produits du même producteur */}
       {otherProducerProducts.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4">
           <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">

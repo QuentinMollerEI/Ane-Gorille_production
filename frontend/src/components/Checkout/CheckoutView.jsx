@@ -1,93 +1,116 @@
 import React, { useState } from "react";
-import { useAuth } from "../../context/AuthContext";
+import { CreditCard, Building, ShieldCheck, Loader2 } from "lucide-react";
 import { CheckoutOrchestrator } from "../../services/CheckoutOrchestrator";
-import CheckoutDeliverySelector from "./CheckoutDeliverySelector";
-import { Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 
 export default function CheckoutView({ cartItems, clearCart, onCheckoutSuccess }) {
-  const { user, userProfile } = useAuth();
+  const [paymentMethod, setPaymentMethod] = useState("stripe_b2b"); // 'stripe_b2b' ou 'virement_b2b'
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
-  
-  const buyerProfile = userProfile || user || {};
-  const isPublicBuyer = buyerProfile.role === "acheteur_public" || buyerProfile.role === "client_public" || buyerProfile.buyerProfile === "B2G";
+  const [error, setError] = useState(null);
 
-  const [checkoutOptions, setCheckoutOptions] = useState({
-    deliveryAddress: buyerProfile.address || "",
-    refEngagement: buyerProfile.defaultEngagement || "",
-    deliveryDetails: null 
-  });
-
-  const handleValidateOrder = async () => {
-    setError("");
-
-    if (!checkoutOptions.deliveryDetails?.selectedDate) {
-      setError("Veuillez sélectionner une date de livraison pour valider votre commande.");
-      return;
-    }
-
+  const handleProcessOrder = async () => {
     setLoading(true);
+    setError(null);
     try {
-      await CheckoutOrchestrator.processCheckout(buyerProfile, cartItems, checkoutOptions);
-      setSuccess(true);
-      if (clearCart) clearCart();
-      if (onCheckoutSuccess) setTimeout(onCheckoutSuccess, 3000);
+      // Profil acheteur par défaut ou issu du contexte
+      const buyerProfile = {
+        uid: "USER_UID_TEST",
+        role: "acheteur_prive",
+        companyName: "Mon Restaurant B2B",
+        siret: "12345678900012",
+        address: "10 rue de la République, 31000 Toulouse"
+      };
+
+      const checkoutOptions = {
+        paymentMethod: paymentMethod, // Transmet le choix de l'utilisateur
+        deliveryDetails: { window: "08:00 - 10:00" }
+      };
+
+      const result = await CheckoutOrchestrator.processCheckout(
+        buyerProfile, 
+        cartItems, 
+        checkoutOptions
+      );
+
+      if (result.success) {
+        clearCart();
+        if (onCheckoutSuccess) onCheckoutSuccess();
+        alert(`Commande validée avec succès ! Référence : ${result.orderId}`);
+      }
     } catch (err) {
-      setError(err.message || "Une erreur est survenue lors de la validation.");
+      console.error(err);
+      setError(err.message || "Erreur lors de la validation de la commande.");
     } finally {
       setLoading(false);
     }
   };
 
-  if (success) {
-    return (
-      <div className="text-center p-8 bg-emerald-50 rounded-3xl border border-emerald-200 animate-fade-in">
-        <ShieldCheck size={48} className="mx-auto text-emerald-600 mb-4" />
-        <h2 className="text-xl font-black text-emerald-900">Commande validée !</h2>
-        <p className="text-emerald-800 mt-2 text-xs font-medium leading-relaxed">
-          Vos instructions logistiques ont été transmises au hub régional. Vos maraîchers préparent la récolte.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200 space-y-6">
-      <h2 className="text-lg font-black text-gray-900">Validation & Logistique</h2>
-      
-      {error && (
-        <div className="p-4 bg-red-50 text-red-700 rounded-xl flex items-center gap-2 border border-red-200 text-xs font-bold">
-          <AlertTriangle size={16} className="shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
+    <div className="bg-white border border-gray-200 rounded-3xl p-6 space-y-5 text-xs shadow-sm">
+      <h3 className="font-extrabold text-gray-900 text-sm">Mode de Règlement B2B</h3>
 
-      {isPublicBuyer && (
-        <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl">
-          <label className="block text-xs font-bold text-blue-900 mb-2 uppercase tracking-wider">
-            N° d'Engagement Budgétaire (Chorus Pro) *
-          </label>
+      {/* Sélecteur des deux choix pour l'acheteur privé */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <label 
+          onClick={() => setPaymentMethod("stripe_b2b")}
+          className={`flex items-start gap-3 p-4 border rounded-2xl cursor-pointer transition ${
+            paymentMethod === "stripe_b2b" ? "border-emerald-600 bg-emerald-50/40" : "border-gray-200"
+          }`}
+        >
           <input 
-            type="text" 
-            value={checkoutOptions.refEngagement}
-            onChange={e => setCheckoutOptions(prev => ({...prev, refEngagement: e.target.value}))}
-            className="w-full p-2.5 border border-blue-300 rounded-xl focus:ring-2 focus:ring-blue-500 font-medium text-xs"
-            placeholder="Ex: ENG-2026-908"
+            type="radio" 
+            name="paymentChoice" 
+            checked={paymentMethod === "stripe_b2b"} 
+            onChange={() => setPaymentMethod("stripe_b2b")}
+            className="mt-1 text-emerald-600"
           />
+          <div>
+            <span className="font-extrabold text-gray-900 flex items-center gap-1.5">
+              <CreditCard size={15} className="text-emerald-700" /> Carte Bancaire / SEPA (Stripe Test)
+            </span>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Paiement sécurisé immédiat ou mandat de prélèvement testé via Stripe.
+            </p>
+          </div>
+        </label>
+
+        <label 
+          onClick={() => setPaymentMethod("virement_b2b")}
+          className={`flex items-start gap-3 p-4 border rounded-2xl cursor-pointer transition ${
+            paymentMethod === "virement_b2b" ? "border-emerald-600 bg-emerald-50/40" : "border-gray-200"
+          }`}
+        >
+          <input 
+            type="radio" 
+            name="paymentChoice" 
+            checked={paymentMethod === "virement_b2b"} 
+            onChange={() => setPaymentMethod("virement_b2b")}
+            className="mt-1 text-emerald-600"
+          />
+          <div>
+            <span className="font-extrabold text-gray-900 flex items-center gap-1.5">
+              <Building size={15} className="text-blue-700" /> Virement Bancaire (LME 30 jours)
+            </span>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Génère un Bon de Commande officiel (BC) pour règlement différé interentreprises.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      {error && (
+        <div className="p-3 bg-red-50 text-red-700 font-bold rounded-xl border border-red-200">
+          {error}
         </div>
       )}
 
-      <CheckoutDeliverySelector 
-        onDeliveryChange={(details) => setCheckoutOptions((prev) => ({ ...prev, deliveryDetails: details }))} 
-      />
-
-      <button 
-        onClick={handleValidateOrder} 
-        disabled={loading || cartItems.length === 0}
-        className="w-full bg-gray-900 hover:bg-black text-white font-black py-3.5 rounded-xl flex justify-center items-center gap-2 transition-all disabled:opacity-50 text-sm shadow-md cursor-pointer"
+      <button
+        type="button"
+        onClick={handleProcessOrder}
+        disabled={loading}
+        className="w-full py-3.5 bg-emerald-800 hover:bg-emerald-900 text-white font-black rounded-2xl uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer disabled:bg-gray-300"
       >
-        {loading ? <><Loader2 className="animate-spin" size={18} /><span>Sécurisation...</span></> : "Confirmer la commande"}
+        {loading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+        <span>{loading ? "Traitement de la transaction..." : "Valider mon panier B2B"}</span>
       </button>
     </div>
   );

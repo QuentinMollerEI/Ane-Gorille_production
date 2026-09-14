@@ -120,13 +120,25 @@ export default function ShopContainer() {
           </div>
         </div>
         <button
-          onClick={() => setActiveView(activeView === "cart" ? "grid" : "cart")}
-          className={`px-5 py-2.5 rounded-2xl font-black text-xs uppercase transition-all flex items-center gap-2.5 shadow-sm cursor-pointer ${
-            activeView === "cart" ? "bg-gray-900 text-white" : "bg-emerald-700 hover:bg-emerald-800 text-white"
-          }`}
-        >
-          <ShoppingCart size={18} /><span>Mon Panier ({totalCartCount})</span>
-        </button>
+  onClick={() => setActiveView(activeView === "cart" ? "grid" : "cart")}
+  className={`px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2.5 shadow-sm cursor-pointer ${
+    activeView === "cart"
+      ? "bg-emerald-800 hover:bg-emerald-900 text-white"
+      : "bg-emerald-700 hover:bg-emerald-800 text-white"
+  }`}
+>
+  {activeView === "cart" ? (
+    <>
+      <Store size={18} />
+      <span>Continuer mes achats</span>
+    </>
+  ) : (
+    <>
+      <ShoppingCart size={18} />
+      <span>Mon Panier ({totalCartCount})</span>
+    </>
+  )}
+</button>
       </div>
 
       {activeView === "cart" && (

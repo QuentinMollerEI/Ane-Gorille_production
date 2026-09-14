@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Sidebar from '../components/Sidebar';
 import { useAuth } from '../context/AuthContext';
 
@@ -16,14 +16,14 @@ export default function DashboardLayout({ children }) {
   });
 
   return (
-    <div className="flex flex-grow items-stretch">
+    <div className="flex w-full min-h-screen bg-gray-50 items-stretch">
       <Sidebar
         isCollapsed={isCollapsed}
         setIsCollapsed={setIsCollapsed}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
       />
-      <main className="flex-grow p-6 md:p-8 bg-gray-50/50">
+      <main className="flex-1 overflow-hidden transition-all duration-300 p-6 md:p-8 bg-gray-50/50">
         {childrenWithProps}
       </main>
     </div>
