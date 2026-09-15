@@ -13,6 +13,7 @@ const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const {
   sendOrderConfirmation,
   sendHarvestAlertToProducer,
+  sendWelcomeEmail, // 👈 Ajout de l'import pour l'e-mail de bienvenue
 } = require("./services/emailService");
 
 // Import sécurisé du service PDF
@@ -40,14 +41,14 @@ const db = getFirestore("ane-et-gorille-v2");
 // 1. Module Authentification & Contrôle Territorial
 const { checkGeoFenceServer } = require("./src/auth/auth.functions");
 
-// 2. Module Paiements (Inclusion de l'INTEGRALITÉ des fonctions Stripe Connect & SEPA)
+// 2. Module Paiements (Inclusion de l'intégralité des fonctions Stripe Connect & SEPA)
 const {
-  createPaymentIntentServer,             // 👈 Rétablissement du paiement Carte Bancaire
-  createSepaSetupIntentServer,            // 👈 Prélèvement SEPA
-  createStripeConnectAccountServer,       // 👈 Onboarding maraîchers Express
-  confirmBankTransferOrderServer,         // 👈 Virement / Mandat public
-  dispatchMultiProducerTransfersServer,  // 👈 Ventilation des fonds
-  scheduledSepaChargeServer,              // 👈 Tâche planifiée SEPA 30 jours
+  createPaymentIntentServer,
+  createSepaSetupIntentServer,
+  createStripeConnectAccountServer,
+  confirmBankTransferOrderServer,
+  dispatchMultiProducerTransfersServer,
+  scheduledSepaChargeServer,
 } = require("./src/payments/payments.functions");
 
 // 3. Module Logistique & Tournées Mutualisées
@@ -135,7 +136,6 @@ const processCheckoutServer = onCall(async (request) => {
         });
       }
 
-      // Enregistrement de la commande principale avec buyerEmail
       const globalOrder = {
         id: orderId,
         buyerId: auth.uid,
@@ -214,7 +214,7 @@ const processCheckoutServer = onCall(async (request) => {
   }
 });
 
-// 6. Déclencheur Firestore (Envoi d'e-mails Brevo + PDF)
+// 6. Déclencheur Firestore : Envoi d'e-mails Brevo (+ PDF s'ils existent)
 const onOrderCreatedTrigger = onDocumentCreated(
   {
     document: "orders/{orderId}",
@@ -278,15 +278,41 @@ const onOrderCreatedTrigger = onDocumentCreated(
   }
 );
 
+// 7. Déclencheur Firestore : Envoi automatique de l'e-mail de bienvenue Brevo à la création de compte
+const onUserCreatedTrigger = onDocumentCreated(
+  {
+    document: "users/{userId}",
+    database: "ane-et-gorille-v2",
+    region: "europe-west9",
+  },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+
+    const userData = snap.data();
+    const email = userData.email;
+    const name = userData.companyName || userData.displayName || "Nouveau Membre";
+    const role = userData.role || "acheteur_prive";
+
+    if (email) {
+      console.log(`👤 Nouveau profil détecté [${email}] — Envoi de l'e-mail de bienvenue Brevo...`);
+      await sendWelcomeEmail(email, name, role);
+    } else {
+      console.warn(`⚠️ [WARN] Aucun e-mail trouvé pour le profil utilisateur ${event.params.userId}`);
+    }
+  }
+);
+
 // EXPORTATIONS OFFICIELLES DU CLOUD
 exports.checkGeoFenceServer = checkGeoFenceServer;
-exports.createPaymentIntentServer = createPaymentIntentServer;                     // 👈 Export Carte Bancaire
-exports.createSepaSetupIntentServer = createSepaSetupIntentServer;                   // 👈 Export SEPA
-exports.createStripeConnectAccountServer = createStripeConnectAccountServer;         // 👈 Export Stripe Connect
-exports.confirmBankTransferOrderServer = confirmBankTransferOrderServer;             // 👈 Export Virement
-exports.dispatchMultiProducerTransfersServer = dispatchMultiProducerTransfersServer; // 👈 Export Ventilation
-exports.scheduledSepaChargeServer = scheduledSepaChargeServer;                       // 👈 Export Cron SEPA
+exports.createPaymentIntentServer = createPaymentIntentServer;
+exports.createSepaSetupIntentServer = createSepaSetupIntentServer;
+exports.createStripeConnectAccountServer = createStripeConnectAccountServer;
+exports.confirmBankTransferOrderServer = confirmBankTransferOrderServer;
+exports.dispatchMultiProducerTransfersServer = dispatchMultiProducerTransfersServer;
+exports.scheduledSepaChargeServer = scheduledSepaChargeServer;
 exports.calculateDeliverySlotsServer = calculateDeliverySlotsServer;
 exports.getAdminDashboardStatsServer = getAdminDashboardStatsServer;
 exports.processCheckoutServer = processCheckoutServer;
 exports.onOrderCreatedTrigger = onOrderCreatedTrigger;
+exports.onUserCreatedTrigger = onUserCreatedTrigger;

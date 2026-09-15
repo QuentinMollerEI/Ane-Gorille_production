@@ -1,24 +1,27 @@
-const SENDER_EMAIL = process.env.SENDER_EMAIL || "contact@ane-et-gorille.fr";
-const SENDER_NAME = "Âne & Gorille";
-
 /**
- * 1. Envoi de la confirmation de commande à l'Acheteur avec son Bon de Commande (BC) PDF
+ * 📧 SERVICE D'ENVOI D'E-MAILS TRANSACTIONNELS BREVO
+ * Marketplace Âne & Gorille v2
  */
-async function sendOrderConfirmation(toEmail, orderId, pdfBuffer) {
+
+// 1. Confirmation de commande pour l'Acheteur (avec BC PDF facultatif)
+async function sendOrderConfirmation(toEmail, orderId, pdfBuffer = null) {
   const apiKey = process.env.BREVO_API_KEY;
-  if (!apiKey) throw new Error("BREVO_API_KEY absente dans .env");
+  if (!apiKey) {
+    console.warn("⚠️ [WARN] BREVO_API_KEY manquante, e-mail de confirmation ignoré.");
+    return;
+  }
 
   const payload = {
-    sender: { name: SENDER_NAME, email: SENDER_EMAIL },
+    sender: { name: "Âne & Gorille", email: "contact@ane-et-gorille.fr" },
     to: [{ email: toEmail }],
-    subject: `[Âne & Gorille] Confirmation de commande #${orderId}`,
+    subject: `Confirmation de votre commande #${orderId} — Âne & Gorille 🌿`,
     htmlContent: `
-      <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #047857;">Merci pour votre commande !</h2>
+      <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #2e7d32; text-align: center;">Merci pour votre commande ! 🌿</h2>
         <p>Votre commande <strong>#${orderId}</strong> a bien été enregistrée et transmise à nos producteurs locaux.</p>
-        <p>Vous trouverez votre <strong>Bon de Commande (BC)</strong> ci-joint au format PDF.</p>
-        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-        <p style="font-size: 11px; color: #64748b;">Plateforme d'alimentation locale & circuit court — Âne & Gorille</p>
+        <p>Vous trouverez votre Bon de Commande (BC) ci-joint si le service document est actif.</p>
+        <hr style="border: none; border-top: 1px solid #eee;" />
+        <p style="font-size: 12px; color: #777; text-align: center;">Âne & Gorille — Écosystème alimenté en circuit court</p>
       </div>
     `,
   };
@@ -26,49 +29,51 @@ async function sendOrderConfirmation(toEmail, orderId, pdfBuffer) {
   if (pdfBuffer) {
     payload.attachment = [
       {
-        name: `Bon_de_commande_${orderId}.pdf`,
+        name: `Bon_de_Commande_${orderId}.pdf`,
         content: pdfBuffer.toString("base64"),
       },
     ];
   }
 
-  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "api-key": apiKey,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erreur d'envoi Brevo");
+  try {
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      console.log(`✅ [BREVO] E-mail de confirmation envoyé à ${toEmail} pour #${orderId}`);
+    } else {
+      console.error(`❌ [BREVO ERROR] Échec d'envoi à ${toEmail} :`, await res.text());
+    }
+  } catch (err) {
+    console.error(`❌ [BREVO EXCEPTION] :`, err.message);
   }
-
-  console.log(`[BREVO SUCCESS] Confirmation acheteur #${orderId} envoyée à ${toEmail}`);
-  return { success: true, messageId: data.messageId };
 }
 
-/**
- * 2. Envoi de l'alerte de récolte au Maraîcher / Producteur avec son Bon de Préparation (BP) PDF
- */
-async function sendHarvestAlertToProducer(producerEmail, subOrderId, producerName, pdfBuffer) {
+// 2. Alerte de récolte pour le Maraîcher / Producteur (avec BP PDF facultatif)
+async function sendHarvestAlertToProducer(toEmail, subOrderId, producerName, pdfBuffer = null) {
   const apiKey = process.env.BREVO_API_KEY;
-  if (!apiKey) throw new Error("BREVO_API_KEY absente dans .env");
+  if (!apiKey) {
+    console.warn("⚠️ [WARN] BREVO_API_KEY manquante, alerte récolte ignorée.");
+    return;
+  }
 
   const payload = {
-    sender: { name: SENDER_NAME, email: SENDER_EMAIL },
-    to: [{ email: producerEmail }],
-    subject: `[Âne & Gorille] Alerte Récolte — Nouvelle commande #${subOrderId}`,
+    sender: { name: "Âne & Gorille Logistique", email: "logistique@ane-et-gorille.fr" },
+    to: [{ email: toEmail, name: producerName || "Maraîcher" }],
+    subject: `📦 Nouvelle sous-commande à préparer #${subOrderId} — Âne & Gorille`,
     htmlContent: `
-      <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #047857;">Bonjour ${producerName || "Producteur"},</h2>
-        <p>Une nouvelle commande de produits locaux (<strong>#${subOrderId}</strong>) nécessite votre préparation.</p>
-        <p>Merci de consulter votre <strong>Bon de Préparation (BP)</strong> ci-joint ou directement sur votre espace <em>Préparation</em>.</p>
-        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-        <p style="font-size: 11px; color: #64748b;">Plateforme d'alimentation locale & circuit court — Âne & Gorille</p>
+      <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #2e7d32; text-align: center;">Bonjour ${producerName || "Maraîcher"},</h2>
+        <p>Une nouvelle sous-commande <strong>#${subOrderId}</strong> nécessite votre préparation pour la prochaine tournée logistique.</p>
+        <p>Consultez votre espace ou le Bon de Préparation (BP) ci-joint pour organiser votre récolte.</p>
+        <hr style="border: none; border-top: 1px solid #eee;" />
+        <p style="font-size: 12px; color: #777; text-align: center;">Âne & Gorille — Logistique & Tournées mutualisées</p>
       </div>
     `,
   };
@@ -76,32 +81,92 @@ async function sendHarvestAlertToProducer(producerEmail, subOrderId, producerNam
   if (pdfBuffer) {
     payload.attachment = [
       {
-        name: `Bon_de_preparation_${subOrderId}.pdf`,
+        name: `Bon_de_Preparation_${subOrderId}.pdf`,
         content: pdfBuffer.toString("base64"),
       },
     ];
   }
 
-  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "api-key": apiKey,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  try {
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      console.log(`✅ [BREVO] Alerte récolte envoyée à ${toEmail} pour sub_order #${subOrderId}`);
+    } else {
+      console.error(`❌ [BREVO ERROR] Échec d'envoi à ${toEmail} :`, await res.text());
+    }
+  } catch (err) {
+    console.error(`❌ [BREVO EXCEPTION] :`, err.message);
+  }
+}
 
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "Erreur d'envoi Brevo Producteur");
+// 3. E-mail de bienvenue Brevo (Nouvelle fonction ajoutée)
+async function sendWelcomeEmail(toEmail, displayName, role) {
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey) {
+    console.warn("⚠️ [WARN] BREVO_API_KEY manquante, e-mail de bienvenue ignoré.");
+    return;
   }
 
-  console.log(`[BREVO SUCCESS] Alerte récolte #${subOrderId} envoyée à ${producerEmail}`);
-  return { success: true, messageId: data.messageId };
+  const roleLabels = {
+    admin: "Administrateur",
+    producteur: "Maraîcher / Producteur",
+    acheteur_public: "Acheteur Public (B2G)",
+    acheteur_prive: "Acheteur Privé (B2B)",
+  };
+
+  const roleText = roleLabels[role] || "Membre";
+
+  const payload = {
+    sender: { name: "Âne & Gorille", email: "contact@ane-et-gorille.fr" },
+    to: [{ email: toEmail, name: displayName || "Membre" }],
+    subject: "Bienvenue sur la plateforme Âne & Gorille ! 🌿",
+    htmlContent: `
+      <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #2e7d32; text-align: center;">Bienvenue chez Âne & Gorille 🌿</h2>
+        <p>Bonjour <strong>${displayName || "Cher membre"}</strong>,</p>
+        <p>Votre compte <strong>${roleText}</strong> a été créé avec succès sur notre plateforme d'alimentation en circuit court.</p>
+        <p>Vous pouvez dès à présent vous connecter à votre espace personnel pour accéder à votre tableau de bord et à vos outils dédiés.</p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="https://ane-et-gorille-v2.web.app/login" style="background-color: #2e7d32; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Accéder à mon espace</a>
+        </div>
+        <hr style="border: none; border-top: 1px solid #eee;" />
+        <p style="font-size: 12px; color: #777; text-align: center;">Âne & Gorille — Écosystème alimenté en circuit court</p>
+      </div>
+    `,
+  };
+
+  try {
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      console.log(`✅ [BREVO WELCOME] E-mail de bienvenue envoyé à ${toEmail}`);
+    } else {
+      const errText = await response.text();
+      console.error(`❌ [BREVO WELCOME ERROR] Erreur d'envoi à ${toEmail} :`, errText);
+    }
+  } catch (error) {
+    console.error(`❌ [BREVO WELCOME EXCEPTION] :`, error.message);
+  }
 }
 
 module.exports = {
   sendOrderConfirmation,
   sendHarvestAlertToProducer,
+  sendWelcomeEmail,
 };
