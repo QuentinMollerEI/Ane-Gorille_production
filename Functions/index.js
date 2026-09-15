@@ -15,25 +15,26 @@ if (!admin.apps.length) {
 
 const db = getFirestore(admin.app(), "ane-et-gorille-v2");
 
-// 1. Module Authentification & Contrôle Territorial
+// 1. Module Authentification & Territoire
 const { checkGeoFenceServer } = require("./src/auth/auth.functions");
 
-// 2. Module Paiements (5 fonctions réelles importées)
+// 2. Module Paiements (les 6 fonctions Stripe & SEPA)
 const {
   createSepaSetupIntentServer,
   createStripeConnectAccountServer,
   confirmBankTransferOrderServer,
   createPaymentIntentServer,
+  dispatchMultiProducerTransfersServer,
   scheduledSepaChargeServer,
 } = require("./src/payments/payments.functions");
 
-// 3. Module Logistique & Tournées Mutualisées
+// 3. Module Logistique
 const { calculateDeliverySlotsServer } = require("./src/logistics/logistics.functions");
 
-// 4. Module Administration & Surveillance
+// 4. Module Administration
 const { getAdminDashboardStatsServer } = require("./src/admin/admin.functions");
 
-// 5. Module Commandes & Checkout Sécurisé
+// 5. Module Checkout & Validation des Commandes
 const processCheckoutServer = onCall(async (request) => {
   const { data, auth } = request;
   const { buyerProfile, cartItems, checkoutOptions } = data || {};
@@ -167,20 +168,19 @@ const processCheckoutServer = onCall(async (request) => {
 
     return { success: true, orderId };
   } catch (error) {
-    console.error("Erreur critique lors de la transaction d'achat :", error);
-    if (error instanceof HttpsError) {
-      throw error;
-    }
-    throw new HttpsError("internal", error.message || "Échec interne lors de la sécurisation de la commande.");
+    console.error("Erreur transaction d'achat :", error);
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError("internal", error.message || "Échec interne lors du checkout.");
   }
 });
 
-// EXPORTATIONS OFFICIELLES (Les 9 Fonctions du Cloud)
+// EXPORTATIONS OFFICIELLES (Les 10 Fonctions V2)
 exports.checkGeoFenceServer = checkGeoFenceServer;
 exports.createSepaSetupIntentServer = createSepaSetupIntentServer;
 exports.createStripeConnectAccountServer = createStripeConnectAccountServer;
 exports.confirmBankTransferOrderServer = confirmBankTransferOrderServer;
 exports.createPaymentIntentServer = createPaymentIntentServer;
+exports.dispatchMultiProducerTransfersServer = dispatchMultiProducerTransfersServer;
 exports.scheduledSepaChargeServer = scheduledSepaChargeServer;
 exports.calculateDeliverySlotsServer = calculateDeliverySlotsServer;
 exports.getAdminDashboardStatsServer = getAdminDashboardStatsServer;

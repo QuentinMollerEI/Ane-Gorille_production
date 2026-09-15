@@ -18,6 +18,7 @@ import {
   CreditCard,
   Landmark,
   Building2,
+  AlertCircle,
 } from "lucide-react";
 
 const stripePromise = loadStripe(
@@ -44,6 +45,14 @@ function CheckoutForm(props) {
   const rawCart = cartItems.length ? cartItems : items.length ? items : cart;
   const cartList = Array.isArray(rawCart) ? rawCart : rawCart.items || [];
 
+  // 1. Calcul du montant Hors Taxes (HT) global
+  const computedTotalHT = cartList.reduce((sum, item) => {
+    const priceHT = Number(item.priceHT ?? item.price ?? item.unitPrice ?? 0);
+    const qty = Number(item.quantity || 1);
+    return sum + priceHT * qty;
+  }, 0);
+
+  // 2. Calcul du montant TTC global
   const computedTotalTTC = cartList.reduce((sum, item) => {
     const priceHT = Number(item.priceHT ?? item.price ?? item.unitPrice ?? 0);
     const vatRate = Number(item.vatRate ?? item.vat ?? 5.5) / 100;
@@ -60,6 +69,8 @@ function CheckoutForm(props) {
       ? Number(total)
       : computedTotalTTC;
 
+  const finalTotalHT = computedTotalHT;
+
   const handleSuccessCallback =
     onOrderSuccess ||
     onOrderValidated ||
@@ -71,8 +82,24 @@ function CheckoutForm(props) {
   const stripe = useStripe();
   const elements = useElements();
 
-  const userRole = profileData?.role || user?.role || "b2b";
-  const isB2G = userRole === "acheteur_public" || userRole === "b2g";
+  const buyerProfile = profileData || user || {};
+  const userRole = buyerProfile.role || "acheteur_prive";
+  const isB2G = userRole === "acheteur_public" || userRole === "client_public" || buyerProfile.buyerProfile === "B2G";
+
+  // Détection sécurisée du mandat SEPA ou de l'IBAN enregistré
+  const savedIban =
+    buyerProfile.iban ||
+    buyerProfile.sepaIban ||
+    buyerProfile.billingIban ||
+    buyerProfile.rib ||
+    "";
+
+  const hasSavedIban = Boolean(
+    buyerProfile.sepaMandateActive ||
+    buyerProfile.stripeCustomerId ||
+    buyerProfile.stripePaymentMethodId ||
+    savedIban
+  );
 
   const [paymentMethod, setPaymentMethod] = useState(
     isB2G ? "chorus_mandate" : "stripe_card"
@@ -84,21 +111,11 @@ function CheckoutForm(props) {
 
   useEffect(() => {
     const savedEngagement =
-      profileData?.refEngagement ||
-      profileData?.defaultEngagement ||
-      user?.refEngagement ||
+      buyerProfile.refEngagement ||
+      buyerProfile.defaultEngagement ||
       "";
     if (savedEngagement) setEngagementRef(savedEngagement);
-  }, [profileData, user]);
-
-  // Récupération sécurisée du libellé ou IBAN masqué issu du profil
-  const savedIban =
-    profileData?.iban ||
-    profileData?.sepaIban ||
-    profileData?.billingIban ||
-    profileData?.rib ||
-    user?.iban ||
-    "";
+  }, [buyerProfile]);
 
   const formatMaskedIban = (ibanStr) => {
     if (!ibanStr) return "Compte bancaire professionnel (Profil vérifié)";
@@ -129,19 +146,19 @@ function CheckoutForm(props) {
 
     try {
       if (!cartList || cartList.length === 0) {
-        throw new Error("Votre panier est actuellement vide.");
+        throw new Error("Votre panier d'approvisionnement est vide.");
       }
 
       if (finalTotalTTC <= 0) {
-        throw new Error("Le montant total du panier doit être supérieur à 0 €.");
+        throw new Error("Le montant total du panier doit être supérieur à 0,00 €.");
       }
 
       const functionsInstance = getFunctions(firebaseAuth.app, "europe-west9");
 
-      // 🏛️ 1. SECTEUR PUBLIC : Chorus Pro (B2G)
+      // 🏢 1. SECTEUR PUBLIC : Mandat Chorus Pro (B2G)
       if (paymentMethod === "chorus_mandate") {
         if (!engagementRef.trim()) {
-          throw new Error("Le N° d'Engagement Budgétaire est obligatoire pour les collectivités.");
+          throw new Error("Le N° d'Engagement Budgétaire est obligatoire pour les collectivités publiques (Chorus Pro).");
         }
         await callBackendCheckout({ paymentMethod: "chorus_mandate", engagementRef });
         return;
@@ -150,7 +167,7 @@ function CheckoutForm(props) {
       // 💳 2. CARTE BANCAIRE IMMÉDIATE (B2B)
       if (paymentMethod === "stripe_card") {
         if (!stripe || !elements) {
-          throw new Error("Le module Stripe est en cours d'initialisation.");
+          throw new Error("Le module de paiement sécurisé Stripe est en cours de chargement.");
         }
 
         const cardElement = elements.getElement(CardElement);
@@ -161,7 +178,7 @@ function CheckoutForm(props) {
         const producerIds = [
           ...new Set(
             cartList
-              .map((item) => item.producerId || item.sellerId || item.userId || item.producerCompany)
+              .map((item) => item.producerId || item.sellerId || item.userId)
               .filter(Boolean)
           ),
         ];
@@ -175,35 +192,38 @@ function CheckoutForm(props) {
           const firstItem =
             cartList.find(
               (i) => (i.producerId || i.sellerId || i.userId) === singleProducerId
-            ) || cartList || {};
+            ) || {};
           singleProducerStripeAccountId =
             firstItem.producerStripeAccountId || firstItem.stripeAccountId || null;
         }
 
-        const amountInCents = Math.round(finalTotalTTC * 100);
-        const feeInCents = Math.round(amountInCents * 0.18);
+        // ✅ CALCUL SÉPARÉ HT & TTC :
+        // Montant total TTC encaissé sur la carte bancaire
+        const amountTTCInCents = Math.round(finalTotalTTC * 100);
+        // Commission 18 % calculée STRICTEMENT sur la base HT du panier
+        const amountHTInCents = Math.round(finalTotalHT * 100);
+        const feeInCents = Math.round(amountHTInCents * 0.18);
 
         const createIntentFn = httpsCallable(functionsInstance, "createPaymentIntentServer");
         const intentRes = await createIntentFn({
-          amount: amountInCents,
-          currency: "eur",
+          amount: amountTTCInCents,            // Montant prélevé au client (ex: 10,55 €)
+          applicationFeeAmount: feeInCents,     // Commission 18 % retenue sur le HT (ex: 1,80 €)
           producerId: singleProducerId,
           producerStripeAccountId: singleProducerStripeAccountId,
           isMultiProducer: isMulti,
-          applicationFeeAmount: feeInCents,
         });
 
         const clientSecret = intentRes.data?.clientSecret;
         if (!clientSecret) {
-          throw new Error("Impossible de générer l'intention de paiement CB.");
+          throw new Error("Impossible d'initialiser l'intention de paiement CB auprès du serveur.");
         }
 
         const paymentResult = await stripe.confirmCardPayment(clientSecret, {
           payment_method: {
             card: cardElement,
             billing_details: {
-              name: profileData?.companyName || user?.displayName || "Acheteur B2B",
-              email: user?.email,
+              name: buyerProfile.companyName || buyerProfile.displayName || "Acheteur B2B",
+              email: buyerProfile.email,
             },
           },
         });
@@ -224,14 +244,14 @@ function CheckoutForm(props) {
         return;
       }
 
-      // 🏦 3. PRÉLÈVEMENT SEPA À 30 JOURS (B2B) - VALIDATION DIRECTE SANS AUCUN CHAMP STRIPE
+      // 🏛️ 3. PRÉLÈVEMENT SEPA À 30 JOURS (B2B)
       if (paymentMethod === "sepa_30d") {
         const dueDate = new Date();
         dueDate.setDate(dueDate.getDate() + 30);
 
         await callBackendCheckout({
           paymentMethod: "sepa_30d",
-          stripePaymentMethodId: profileData?.stripePaymentMethodId || "pm_sepa_profile_saved",
+          stripePaymentMethodId: buyerProfile.stripePaymentMethodId || "pm_sepa_profile_saved",
           sepaDueDate: dueDate.toISOString(),
           sepaStatus: "SCHEDULED_30D",
         });
@@ -239,14 +259,13 @@ function CheckoutForm(props) {
       }
     } catch (err) {
       console.error("[CHECKOUT ERROR] :", err);
-      setErrorMessage(err.message || "Une erreur est survenue lors de la validation.");
+      setErrorMessage(err.message || "Une erreur est survenue lors de la validation de la commande.");
     } finally {
       setLoading(false);
     }
   };
 
   const callBackendCheckout = async (extraOptions) => {
-    const buyerProfile = profileData || user || {};
     const normalizedCartItems = cartList.map((item) => ({
       ...item,
       producerId: item.producerId || item.sellerId || item.userId || "PRODUCER_UNKNOWN",
@@ -269,13 +288,26 @@ function CheckoutForm(props) {
     });
 
     if (res.data?.success) {
+      const createdOrderId = res.data.orderId;
+
+      // Ventilation automatique pour paniers multi-producteurs par CB
+      const uniqueProducers = [...new Set(normalizedCartItems.map((i) => i.producerId).filter(Boolean))];
+      if (uniqueProducers.length > 1 && extraOptions.paymentMethod === "stripe_card") {
+        try {
+          const dispatchTransfersFn = httpsCallable(functionsInstance, "dispatchMultiProducerTransfersServer");
+          await dispatchTransfersFn({ orderId: createdOrderId });
+        } catch (dispatchErr) {
+          console.error("⚠️ [STRIPE CONNECT] Ventilation multi-producteurs différée :", dispatchErr);
+        }
+      }
+
       setCompletedOrder({
-        orderId: res.data.orderId,
+        orderId: createdOrderId,
         paymentMethod: extraOptions.paymentMethod,
         totalTTC: finalTotalTTC,
       });
     } else {
-      throw new Error("La validation de la commande a échoué côté serveur.");
+      throw new Error("Le serveur a refusé la validation de la commande.");
     }
   };
 
@@ -288,16 +320,18 @@ function CheckoutForm(props) {
         <div className="space-y-1">
           <h2 className="text-xl font-black text-gray-900">Commande Validée avec Succès !</h2>
           <p className="text-xs text-gray-500">
-            N° de commande : <span className="font-mono font-bold text-emerald-800">{completedOrder.orderId}</span>
+            Référence unique : <span className="font-mono font-bold text-emerald-800">{completedOrder.orderId}</span>
           </p>
         </div>
         <div className="p-4 bg-emerald-50/70 border border-emerald-100 rounded-2xl text-xs space-y-1 text-emerald-900 font-medium">
           {completedOrder.paymentMethod === "sepa_30d" ? (
-            <p>Le mandat est enregistré. Le prélèvement automatique s'effectuera à l'échéance des 30 jours sur votre compte enregistré.</p>
+            <p>Le mandat SEPA est enregistré. Le prélèvement automatique s'effectuera à l'échéance des 30 jours.</p>
+          ) : completedOrder.paymentMethod === "chorus_mandate" ? (
+            <p>Le bon de commande public a été enregistré pour télétransmission Chorus Pro.</p>
           ) : (
-            <p>Les bons de préparation ont été transmis aux maraîchers partenaires.</p>
+            <p>Les bons de préparation ont été immédiatement transmis aux maraîchers partenaires.</p>
           )}
-          <p className="font-bold">Montant total : {completedOrder.totalTTC.toFixed(2)} € TTC</p>
+          <p className="font-bold text-sm">Montant Total : {completedOrder.totalTTC.toFixed(2)} € TTC</p>
         </div>
         <button
           type="button"
@@ -323,15 +357,16 @@ function CheckoutForm(props) {
 
       <form onSubmit={handleSubmitOrder} className="space-y-4">
         {errorMessage && (
-          <div className="p-3.5 bg-red-50 border border-red-200 text-red-800 rounded-xl font-bold text-xs">
-            {errorMessage}
+          <div className="p-3.5 bg-red-50 border border-red-200 text-red-800 rounded-xl font-bold text-xs flex items-center gap-2">
+            <AlertCircle size={16} className="shrink-0" />
+            <span>{errorMessage}</span>
           </div>
         )}
 
-        {/* 🎯 SÉLECTEUR DE MODE DE PAIEMENT */}
+        {/* SÉLECTEUR DE MODE DE RÈGLEMENT */}
         <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-xs space-y-3">
           <h3 className="font-black text-gray-900 text-xs uppercase tracking-wider">
-            Mode de Règlement Autorisé
+            Mode de Règlement
           </h3>
 
           <div className="grid grid-cols-1 gap-2.5">
@@ -359,7 +394,7 @@ function CheckoutForm(props) {
                         <span>Carte Bancaire (Paiement Immédiat)</span>
                       </p>
                       <p className="text-[10px] text-gray-500">
-                        Règlement instantané et sécurisé par carte.
+                        Règlement instantané et sécurisé par carte B2B.
                       </p>
                     </div>
                   </div>
@@ -387,7 +422,7 @@ function CheckoutForm(props) {
                         <span>Prélèvement SEPA (Échéance 30 Jours)</span>
                       </p>
                       <p className="text-[10px] text-gray-500">
-                        Prélèvement automatique à J+30.
+                        Prélèvement automatique à J+30 sur votre compte d'entreprise.
                       </p>
                     </div>
                   </div>
@@ -404,7 +439,7 @@ function CheckoutForm(props) {
                   <Building2 size={16} className="text-blue-700" />
                   <div>
                     <p className="font-bold text-blue-950">Mandat Administratif (Chorus Pro B2G)</p>
-                    <p className="text-[10px] text-blue-700">Facturation publique dématérialisée à 30 jours.</p>
+                    <p className="text-[10px] text-blue-700">Facturation publique dématérialisée sous 30 jours.</p>
                   </div>
                 </div>
               </label>
@@ -412,7 +447,7 @@ function CheckoutForm(props) {
           </div>
         </div>
 
-        {/* 💳 FORMULAIRE CARTE BANCAIRE */}
+        {/* FORMULAIRE CARTE BANCAIRE */}
         {paymentMethod === "stripe_card" && (
           <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between">
@@ -438,7 +473,7 @@ function CheckoutForm(props) {
           </div>
         )}
 
-        {/* 🏛️ CONFIRMATION STATIQUE DU MANDAT SEPA - AUCUN CHAMP DE SAISIE */}
+        {/* RÉCAPITULATIF MANDAT SEPA */}
         {paymentMethod === "sepa_30d" && (
           <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 space-y-2 animate-fade-in">
             <div className="flex items-center gap-3">
@@ -455,12 +490,12 @@ function CheckoutForm(props) {
               </div>
             </div>
             <p className="text-[10px] text-emerald-800 font-medium pt-1.5 border-t border-emerald-200/60">
-              En validant la commande, le prélèvement s'effectuera automatiquement à l'échéance des 30 jours sur le compte bancaire enregistré dans votre profil administratif.
+              En validant la commande, le prélèvement s'effectuera automatiquement à l'échéance des 30 jours sur le compte enregistré dans votre profil administratif.
             </p>
           </div>
         )}
 
-        {/* 🏢 CHAMP ENGAGEMENT CHORUS PRO (B2G) */}
+        {/* CHAMP ENGAGEMENT CHORUS PRO (B2G) */}
         {paymentMethod === "chorus_mandate" && (
           <div className="bg-blue-50/60 border border-blue-200 rounded-2xl p-4 space-y-2">
             <label className="block text-xs font-bold text-blue-900">
