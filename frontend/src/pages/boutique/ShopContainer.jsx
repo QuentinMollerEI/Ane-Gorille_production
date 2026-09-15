@@ -240,43 +240,66 @@ export default function ShopContainer({ products: propsProducts, usersMap: props
         </div>
       )}
 
-      {/* En-tête de la boutique */}
-      <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
-            <Store size={26} />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-gray-900">Boutique & Approvisionnement</h1>
-            <p className="text-xs text-gray-500 font-semibold">
-              Circuit court auprès des exploitations locales certifiées
-            </p>
-          </div>
-        </div>
+      {/* En-tête épuré et ultra-affiné avec touche Jaune Énergie */}
+<div className="bg-white border border-amber-200/60 rounded-2xl p-3.5 sm:p-4 shadow-2xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 relative overflow-hidden">
+  
+  {/* Liseré supérieur ultra-fin (2px) */}
+  <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-300" />
 
-        {/* Bouton d'action dynamique : Panier / Retour au catalogue */}
+  {/* Section Titre & Badge */}
+  <div className="flex items-center gap-3">
+    
+    {/* Icône au cerclage épuré et trait fin */}
+    <div className="w-9 h-9 bg-amber-400/15 border border-amber-300/50 text-amber-950 rounded-xl flex items-center justify-center shrink-0">
+      <Store size={18} className="stroke-[1.4]" />
+    </div>
+
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <h1 className="text-sm font-bold text-gray-900 tracking-tight">
+          Boutique &amp; Approvisionnement
+        </h1>
+        {/* Badge discret au contour délié */}
+        <span className="bg-amber-50 border border-amber-200/60 text-amber-900 font-medium text-[9px] px-2 py-0.5 rounded-full tracking-wide flex items-center gap-1">
+          <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" />
+          Énergie Locale
+        </span>
+      </div>
+      <p className="text-[11px] text-gray-500 font-normal">
+        Circuit court en direct des exploitations maraîchères certifiées
+      </p>
+    </div>
+  </div>
+
+  {/* Bouton d'Action Dynamique Haute Définition */}
 <button
   type="button"
   onClick={() => setActiveView(activeView === "cart" ? "grid" : "cart")}
-  className={`px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2.5 cursor-pointer shadow-sm ${
+  className={`relative group px-4 py-2 rounded-xl text-[11px] font-bold tracking-wider uppercase transition-all duration-300 flex items-center gap-2 cursor-pointer border active:scale-[0.97] ${
     activeView === "cart"
-      ? "bg-gray-900 hover:bg-black text-white"
-      : "bg-emerald-700 hover:bg-emerald-800 text-white"
+      ? "bg-gradient-to-r from-yellow-300 via-amber-300 to-yellow-400 text-amber-950 border-amber-300/70 shadow-[0_2px_12px_rgba(251,191,36,0.25)] hover:shadow-[0_4px_16px_rgba(251,191,36,0.4)] hover:border-yellow-200"
+      : "bg-emerald-950 hover:bg-emerald-900 text-emerald-100 border-emerald-800/60 shadow-2xs hover:shadow-md"
   }`}
 >
   {activeView === "cart" ? (
     <>
-      <Store size={18} />
-      <span>Continuer mes achats</span>
+      <Store size={14} className="stroke-[1.4] text-amber-950 transition-transform duration-300 group-hover:-translate-x-0.5" />
+      <span className="font-extrabold tracking-tight">Continuer mes achats</span>
     </>
   ) : (
     <>
-      <ShoppingCart size={18} />
-      <span>Mon Panier ({totalCartCount})</span>
+      <ShoppingCart size={14} className="stroke-[1.4] text-emerald-300 transition-transform duration-300 group-hover:scale-110" />
+      <span className="font-extrabold tracking-tight">Mon Panier</span>
+      {totalCartCount > 0 && (
+        <span className="ml-0.5 bg-gradient-to-r from-amber-400 to-yellow-400 text-amber-950 text-[9px] font-black px-1.5 py-0.5 rounded-md shadow-2xs border border-yellow-200/60">
+          {totalCartCount}
+        </span>
+      )}
     </>
   )}
 </button>
-      </div>
+
+</div>
 
       {/* VUE PANIER */}
       {activeView === "cart" && (
