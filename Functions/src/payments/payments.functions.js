@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const admin = require("firebase-admin");
 const { getFirestore } = require("firebase-admin/firestore");
 
@@ -6,19 +7,19 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-// 🎯 Connexion explicite à la base dédiée "ane-et-gorille-v2"
+// Connexion explicite à la base dédiée "ane-et-gorille-v2"
 const db = getFirestore(admin.app(), "ane-et-gorille-v2");
 
 function getStripe() {
   const secretKey = process.env.STRIPE_SECRET_KEY;
   if (!secretKey) {
-    throw new HttpsError("internal", "La clé secrète Stripe n'est pas configurée sur le serveur.");
+    throw new HttpsError("internal", "La clé secrète Stripe n'est pas configurée.");
   }
   return require("stripe")(secretKey);
 }
 
 /**
- * 1. Création d'un SetupIntent SEPA
+ * 1. Création d'un SetupIntent SEPA pour mandats
  */
 exports.createSepaSetupIntentServer = onCall(
   { secrets: ["STRIPE_SECRET_KEY"] },
@@ -121,7 +122,7 @@ exports.confirmBankTransferOrderServer = onCall(async (request) => {
 });
 
 /**
- * 3. Création du PaymentIntent Carte Bancaire avec Split Payment Stripe Connect (82% / 18%)
+ * 3. Création du PaymentIntent CB avec Split Payment Stripe Connect (82% / 18%)
  */
 exports.createPaymentIntentServer = onCall(
   { secrets: ["STRIPE_SECRET_KEY"] },
@@ -147,15 +148,13 @@ exports.createPaymentIntentServer = onCall(
     try {
       let targetStripeAccountId = producerStripeAccountId;
 
-      // 🔍 VERIFICATION STRICTE DU TYPE STRING AVANT REQUÊTE FIRESTORE
-      if (
-        !isMultiProducer &&
-        (!targetStripeAccountId || !targetStripeAccountId.startsWith("acct_")) &&
-        producerId &&
-        typeof producerId === "string" &&
-        producerId.trim() !== ""
-      ) {
-        const producerDoc = await db.collection("users").doc(producerId).get();
+      const validProducerId =
+        typeof producerId === "string" && producerId.trim() !== ""
+          ? producerId.trim()
+          : null;
+
+      if (!isMultiProducer && (!targetStripeAccountId || !targetStripeAccountId.startsWith("acct_")) && validProducerId) {
+        const producerDoc = await db.collection("users").doc(validProducerId).get();
         if (producerDoc.exists) {
           const pData = producerDoc.data();
           targetStripeAccountId = pData.stripeAccountId || pData.producerStripeAccountId || null;
@@ -168,7 +167,6 @@ exports.createPaymentIntentServer = onCall(
         payment_method_types: ["card"],
       };
 
-      // 🌿 SI MONO-PRODUCTEUR : SPLIT PAYMENT DIRECT VERS COMPTE CONNECT (82%)
       if (!isMultiProducer && targetStripeAccountId && targetStripeAccountId.startsWith("acct_")) {
         console.log(`✅ [STRIPE CONNECT TRANSFER] Destination : ${targetStripeAccountId}`);
         paymentIntentParams.transfer_data = {
@@ -178,7 +176,7 @@ exports.createPaymentIntentServer = onCall(
         const fee = applicationFeeAmount || Math.round(amount * 0.18);
         paymentIntentParams.application_fee_amount = Math.round(fee);
       } else {
-        console.log("ℹ️ [STRIPE CONNECT] Encaissement Hub Séquestre (Multi-producteurs ou mode standard)");
+        console.log("ℹ️ [STRIPE CONNECT] Encaissement Hub Séquestre (Multi-producteurs)");
       }
 
       const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
@@ -198,7 +196,7 @@ exports.createPaymentIntentServer = onCall(
 );
 
 /**
- * 4. Création d'un compte Stripe Connect Express pour l'onboarding des Maraîchers
+ * 4. Création d'un compte Stripe Connect Express
  */
 exports.createStripeConnectAccountServer = onCall(
   { secrets: ["STRIPE_SECRET_KEY"] },
@@ -253,6 +251,98 @@ exports.createStripeConnectAccountServer = onCall(
       console.error("Erreur createStripeConnectAccountServer :", error);
       if (error instanceof HttpsError) throw error;
       throw new HttpsError("internal", error.message || "Échec de la création du compte Stripe Connect.");
+    }
+  }
+);
+
+/**
+ * 5. Tâche planifiée : Prélèvements SEPA 30 jours (Chaque nuit à 02:00)
+ */
+exports.scheduledSepaChargeServer = onSchedule(
+  {
+    schedule: "0 2 * * *",
+    timeZone: "Europe/Paris",
+    secrets: ["STRIPE_SECRET_KEY"],
+  },
+  async () => {
+    const stripe = getStripe();
+    const now = new Date();
+
+    console.log("⏰ [CRON SEPA] Lancement de la vérification des prélèvements à 30 jours...");
+
+    try {
+      const pendingOrdersSnap = await db
+        .collection("orders")
+        .where("paymentMethod", "==", "sepa_30d")
+        .where("sepaStatus", "==", "SCHEDULED_30D")
+        .get();
+
+      if (pendingOrdersSnap.empty) {
+        console.log("✅ [CRON SEPA] Aucun prélèvement SEPA à exécuter cette nuit.");
+        return;
+      }
+
+      for (const orderDoc of pendingOrdersSnap.docs) {
+        const orderData = orderDoc.data();
+        const dueDate = orderData.sepaDueDate ? new Date(orderData.sepaDueDate) : null;
+
+        if (dueDate && dueDate <= now) {
+          console.log(`💳 [CRON SEPA] Exécution du prélèvement pour la commande ${orderDoc.id}`);
+
+          const totalAmountInCents = Math.round((orderData.totalAmount || 0) * 100);
+          const feeInCents = Math.round(totalAmountInCents * 0.18);
+
+          let targetStripeAccountId = null;
+          if (orderData.items && orderData.items.length > 0) {
+            const firstProducerId = orderData.items?.producerId;
+            if (firstProducerId) {
+              const producerDoc = await db.collection("users").doc(firstProducerId).get();
+              if (producerDoc.exists) {
+                targetStripeAccountId = producerDoc.data().stripeAccountId || null;
+              }
+            }
+          }
+
+          const paymentIntentParams = {
+            amount: totalAmountInCents,
+            currency: "eur",
+            customer: orderData.stripeCustomerId,
+            payment_method: orderData.stripePaymentMethodId,
+            payment_method_types: ["sepa_debit"],
+            confirm: true,
+            off_session: true,
+          };
+
+          if (targetStripeAccountId && targetStripeAccountId.startsWith("acct_")) {
+            paymentIntentParams.transfer_data = {
+              destination: targetStripeAccountId,
+            };
+            paymentIntentParams.application_fee_amount = feeInCents;
+          }
+
+          try {
+            const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+
+            await orderDoc.ref.update({
+              sepaStatus: "PAID",
+              stripePaymentIntentId: paymentIntent.id,
+              sepaPaidAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            console.log(`✅ [CRON SEPA] Prélèvement réussi pour la commande ${orderDoc.id}`);
+          } catch (stripeErr) {
+            console.error(`❌ [CRON SEPA] Échec du prélèvement sur ${orderDoc.id} :`, stripeErr);
+            await orderDoc.ref.update({
+              sepaStatus: "FAILED",
+              sepaLastError: stripeErr.message,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error("❌ [CRON SEPA ERROR] :", error);
     }
   }
 );
