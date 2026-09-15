@@ -1,8 +1,6 @@
 import React from "react";
 import {
-  ShoppingCart,
   Trash2,
-  ArrowLeft,
   Package,
   Minus,
   Plus,
@@ -56,7 +54,6 @@ export default function CartContainer({
   }, {});
 
   const producerGroups = Object.values(itemsByProducer);
-  const producerCount = producerGroups.length;
 
   const grandTotalHT = producerGroups.reduce((sum, p) => sum + p.subTotalHT, 0);
   const grandTotalTVA = producerGroups.reduce((sum, p) => sum + p.subTotalTVA, 0);
@@ -85,32 +82,8 @@ export default function CartContainer({
 
   return (
     <div className="space-y-6 animate-fade-in max-w-6xl mx-auto pb-12 text-xs">
-      <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
-            <ShoppingCart size={26} />
-          </div>
-          <div>
-            <h2 className="text-xl font-black text-gray-900">
-              Votre Panier d'Approvisionnement
-            </h2>
-            <p className="text-xs text-gray-500 font-semibold">
-              {producerCount > 1
-                ? `Commande multi-producteurs (${producerCount} sous-commandes distinctes)`
-                : "Commande auprès d'une exploitation locale"}
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={onBackToShop}
-          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-2xl transition-colors flex items-center gap-2 cursor-pointer"
-        >
-          <ArrowLeft size={16} />
-          <span>Continuer vos achats</span>
-        </button>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* COLONNE GAUCHE : RÉCAPITULATIF PAR PRODUCTEUR */}
         <div className="lg:col-span-7 bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-6">
           <div className="flex justify-between items-center border-b border-gray-150 pb-3">
             <h3 className="font-extrabold text-gray-900 text-sm">
@@ -252,6 +225,7 @@ export default function CartContainer({
           </div>
         </div>
 
+        {/* COLONNE DROITE : MODULE DE PAIEMENT & CALENDRIER */}
         <div className="lg:col-span-5 space-y-5">
           <CheckoutView
             cartItems={cart}

@@ -1,7 +1,6 @@
 import React from "react";
 import ProfileHeader from "../components/ProfileHeader";
 import GeneralInfoForm from "../components/GeneralInfoForm";
-import PrivateDeliveryForm from "./components/PrivateDeliveryForm";
 import PaymentForm from "./components/PaymentForm";
 import { useProfileCompletion } from "../../../hooks/useProfileCompletion";
 import { Store } from "lucide-react";
@@ -17,7 +16,6 @@ export default function AcheteurPriveContainer() {
         icon={Store}
       />
       <GeneralInfoForm onProfileUpdated={refetchProfile} />
-      <PrivateDeliveryForm onProfileUpdated={refetchProfile} />
       {/* Formulaire contenant la logique du mandat SEPA (ou Billie B2B) */}
       <PaymentForm onProfileUpdated={refetchProfile} />
     </div>

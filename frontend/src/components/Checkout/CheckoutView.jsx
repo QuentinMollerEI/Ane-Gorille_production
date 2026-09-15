@@ -344,14 +344,6 @@ function CheckoutForm(props) {
 
   return (
     <div className="max-w-4xl mx-auto space-y-5 animate-fade-in text-xs pb-12">
-      <button
-        type="button"
-        onClick={onBackToCart}
-        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl cursor-pointer"
-      >
-        <ArrowLeft size={14} className="stroke-[1.4]" />
-        <span>Modifier le panier</span>
-      </button>
 
       <form onSubmit={handleSubmitOrder} className="space-y-4">
         {errorMessage && (

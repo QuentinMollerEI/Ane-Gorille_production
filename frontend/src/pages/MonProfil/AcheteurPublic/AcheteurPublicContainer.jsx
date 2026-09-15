@@ -2,7 +2,6 @@ import React from "react";
 import ProfileHeader from "../components/ProfileHeader";
 import GeneralInfoForm from "../components/GeneralInfoForm";
 import ChorusProForm from "./components/ChorusProForm";
-import PublicDeliveryForm from "./components/PublicDeliveryForm";
 import { useProfileCompletion } from "../../../hooks/useProfileCompletion";
 import { Landmark } from "lucide-react";
 
@@ -20,7 +19,6 @@ export default function AcheteurPublicContainer() {
       {/* Passage du trigger de re-validation à tous les formulaires */}
       <GeneralInfoForm onProfileUpdated={refetchProfile} />
       <ChorusProForm onProfileUpdated={refetchProfile} />
-      <PublicDeliveryForm onProfileUpdated={refetchProfile} />
     </div>
   );
 }

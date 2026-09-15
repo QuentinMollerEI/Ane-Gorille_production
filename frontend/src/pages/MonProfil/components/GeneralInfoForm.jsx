@@ -4,13 +4,23 @@ import { useAuth } from "../../../context/AuthContext";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../../../config/firebase";
 import { checkGeoFence } from "../../../services/logisticsService";
-import { User, Save, Loader2, CheckCircle2, AlertTriangle, MapPin } from "lucide-react";
+import {
+  User,
+  Save,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+  MapPin,
+  Building2,
+  Lock,
+  Building,
+} from "lucide-react";
 
 /**
- * COMPOSANT HARMONISÉ : GeneralInfoForm.jsx
+ * COMPOSANT : GeneralInfoForm.jsx
  * Saisie des coordonnées de base, contrôle GeoFence (50 km / Saint-Rémy-sur-Avre)
  * en temps réel (onBlur) + à la soumission, et calcul dynamique de isProfileCompleted.
- * Ajout de l'auto-complétion BAN pour l'adresse de facturation.
+ * Champ SIRET verrouillé de manière immuable pour conformité réglementaire.
  */
 export default function GeneralInfoForm({ onProfileUpdated }) {
   const { user } = useAuth();
@@ -43,18 +53,12 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
   const [showBillingSuggestions, setShowBillingSuggestions] = useState(false);
 
   useEffect(() => {
-    if (!user?.uid) {
-      setLoading(false);
-      return;
-    }
-
     async function loadUserData() {
+      if (!user?.uid) return;
       try {
-        const userRef = doc(db, "users", user.uid);
-        const snap = await getDoc(userRef);
-
-        if (snap.exists()) {
-          const data = snap.data();
+        const userDoc = await getDoc(doc(db, "users", user.uid));
+        if (userDoc.exists()) {
+          const data = userDoc.data();
           setFormData({
             displayName: data.displayName || "",
             companyName: data.companyName || "",
@@ -68,24 +72,27 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
             billingPostalCode: data.billingPostalCode || "",
             billingCity: data.billingCity || "",
           });
+
           // Si une adresse existait déjà, on la considère valide jusqu'à modification
           if (data.postalCode && data.city) {
             setGeoStatus("valid");
           }
+
           if (data.billingAddress && !data.billingSameAsAddress) {
-             setBillingAddressQuery(`${data.billingAddress}, ${data.billingPostalCode} ${data.billingCity}`);
+            setBillingAddressQuery(
+              `${data.billingAddress}, ${data.billingPostalCode} ${data.billingCity}`
+            );
           }
         }
       } catch (error) {
         console.error(
           "Erreur lors du chargement des informations générales :",
-          error,
+          error
         );
       } finally {
         setLoading(false);
       }
     }
-
     loadUserData();
   }, [user?.uid]);
 
@@ -114,7 +121,9 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
     }
     try {
       const response = await fetch(
-        `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(queryText)}&limit=5`
+        `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(
+          queryText
+        )}&limit=5`
       );
       if (response.ok) {
         const data = await response.json();
@@ -143,13 +152,11 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
     setShowBillingSuggestions(false);
   };
 
-
   // Contrôle GeoFence en temps réel, déclenché à la perte de focus
   const runGeoCheck = async (nextFormData) => {
     const postalCode = nextFormData.postalCode.trim();
     const city = nextFormData.city.trim();
 
-    // On attend d'avoir les deux champs avant de vérifier
     if (!postalCode || !city) {
       setGeoStatus("idle");
       setGeoMessage(null);
@@ -165,7 +172,7 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
         setGeoStatus("invalid");
         setGeoMessage(
           geoResult.message ||
-            "Cette adresse se situe au-delà du périmètre de livraison/collecte autorisé (50 km autour de Saint-Rémy-sur-Avre).",
+            "Cette adresse se situe au-delà du périmètre de livraison/collecte autorisé (50 km autour de Saint-Rémy-sur-Avre)."
         );
       } else {
         setGeoStatus("valid");
@@ -173,9 +180,9 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
       }
     } catch (error) {
       console.error("Erreur lors du contrôle GeoFence :", error);
-      setGeoStatus("invalid"); // SECURITÉ RENFORCÉE : si échec, on considère invalide
+      setGeoStatus("invalid");
       setGeoMessage(
-        "Impossible de vérifier la zone de livraison pour le moment. Le contrôle sera refait à l'enregistrement.",
+        "Impossible de vérifier la zone de livraison pour le moment. Le contrôle sera refait à l'enregistrement."
       );
     }
   };
@@ -187,38 +194,37 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!user?.uid || isSubmitting || geoStatus === "checking") return;
-    
-    // BLOCAGE STRICT SI LE GEOFENCE N'EST PAS VALIDE
-    if (geoStatus !== "valid") {
-      setErrorMessage("Veuillez renseigner une adresse valide dans le périmètre autorisé (50 km).");
+
+    setErrorMessage(null);
+
+    // Contrôle GeoFence bloquant avant soumission
+    const postalCode = formData.postalCode.trim();
+    const city = formData.city.trim();
+
+    if (!postalCode || !city) {
+      const msg = "Veuillez renseigner un code postal et une ville valides.";
+      setGeoStatus("invalid");
+      setGeoMessage(msg);
+      setErrorMessage(msg);
       return;
     }
 
-    setIsSaved(false);
-    setErrorMessage(null);
-
     try {
-      // 0. Contrôle GeoFence obligatoire avant tout enregistrement (garde-fou final)
-      setGeoStatus("checking");
-      const geoResult = await checkGeoFence(
-        formData.postalCode.trim(),
-        formData.city.trim(),
-        50,
-      );
-
+      const geoResult = await checkGeoFence(postalCode, city, 50);
       if (geoResult && geoResult.isEligible === false) {
-        setGeoStatus("invalid");
         const message =
           geoResult.message ||
           "Cette adresse se situe au-delà du périmètre de livraison/collecte autorisé (50 km autour de Saint-Rémy-sur-Avre). Veuillez saisir une adresse valide.";
+        setGeoStatus("invalid");
         setGeoMessage(message);
         setErrorMessage(message);
         return;
       }
+
       setGeoStatus("valid");
       setGeoMessage(null);
-
       setIsSubmitting(true);
+
       const userRef = doc(db, "users", user.uid);
       const userSnap = await getDoc(userRef);
       const currentData = userSnap.exists() ? userSnap.data() : {};
@@ -226,12 +232,12 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
       // 1. Vérification des coordonnées de base
       const hasBaseInfo = Boolean(
         formData.displayName.trim() &&
-        formData.companyName.trim() &&
-        formData.siret.trim() &&
-        formData.phone.trim() &&
-        formData.address.trim() &&
-        formData.postalCode.trim() &&
-        formData.city.trim(),
+          formData.companyName.trim() &&
+          formData.siret.trim() &&
+          formData.phone.trim() &&
+          formData.address.trim() &&
+          formData.postalCode.trim() &&
+          formData.city.trim()
       );
 
       // 1bis. Vérification de l'adresse de facturation (si distincte)
@@ -239,28 +245,29 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
         ? true
         : Boolean(
             formData.billingAddress.trim() &&
-            formData.billingPostalCode.trim() &&
-            formData.billingCity.trim(),
+              formData.billingPostalCode.trim() &&
+              formData.billingCity.trim()
           );
 
       // 2. Vérification des spécificités selon le rôle
       const userRole = currentData.role || "acheteur_prive";
       let isRoleComplete = false;
 
-      if (userRole === "acheteur_public") {
-        isRoleComplete = Boolean(currentData.siret?.trim());
-      } else if (userRole === "acheteur_prive" || userRole === "acheteur") {
+      if (userRole === "acheteur_prive") {
         isRoleComplete = Boolean(
-          currentData.sepaMandateActive || currentData.iban,
+          currentData.preferredPayment ||
+            currentData.sepaMandateActive ||
+            currentData.billieApproved
         );
+      } else if (userRole === "acheteur_public") {
+        isRoleComplete = Boolean(currentData.siretChorus);
       } else if (userRole === "producteur") {
         isRoleComplete = Boolean(
-          currentData.stripeConnectCompleted || currentData.stripeAccountId,
+          currentData.stripeAccountId || currentData.harvestAddress
         );
       } else if (userRole === "livreur") {
         isRoleComplete = Boolean(
-          currentData.immatriculation?.trim() &&
-          currentData.permisValide === true,
+          currentData.vehicleType || currentData.tourZone
         );
       } else if (userRole === "admin") {
         isRoleComplete = true;
@@ -304,38 +311,40 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
 
   if (loading) {
     return (
-      <div className="bg-white border border-gray-200 rounded-3xl p-6 flex items-center justify-center">
-        <Loader2 className="animate-spin text-emerald-700" size={20} />
+      <div className="p-8 text-center flex items-center justify-center gap-2 text-emerald-800 font-bold text-xs bg-white border border-gray-200 rounded-3xl shadow-sm">
+        <Loader2 size={18} className="animate-spin text-emerald-600" />
+        <span>Chargement des coordonnées...</span>
       </div>
     );
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4 text-xs">
-      <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-6 text-xs">
+      <div className="flex items-center justify-between border-b pb-3">
         <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
-          <User size={16} className="text-emerald-700" />
-          Coordonnées Générales de l'Établissement / Entité
+          <User className="text-emerald-700" size={18} />
+          <span>Informations Générales & Coordonnées de l'Établissement</span>
         </h3>
         {isSaved && (
-          <span className="flex items-center gap-1 text-emerald-700 font-bold">
-            <CheckCircle2 size={14} /> Enregistré
+          <span className="text-emerald-700 font-bold flex items-center gap-1 animate-fade-in">
+            <CheckCircle2 size={14} /> Enregistré !
           </span>
         )}
       </div>
 
       {errorMessage && (
-        <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-2xl font-bold flex items-center gap-2">
-          <AlertTriangle size={16} className="shrink-0 text-red-600" />
+        <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl font-bold flex items-center gap-2">
+          <AlertTriangle size={15} className="shrink-0 text-red-600" />
           <span>{errorMessage}</span>
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block font-bold text-gray-700 mb-1">
-              Nom du Référent / Contact *
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Nom & Prénom du responsable */}
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700 block">
+              Nom & Prénom du Responsable *
             </label>
             <input
               type="text"
@@ -343,13 +352,15 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               required
               value={formData.displayName}
               onChange={handleChange}
-              placeholder="Nom Prénom"
-              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              placeholder="Ex: Martin Dupont"
+              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
-          <div>
-            <label className="block font-bold text-gray-700 mb-1">
-              Raison Sociale / Entité
+
+          {/* Raison Sociale */}
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700 block">
+              Raison Sociale / Nom de l'Établissement *
             </label>
             <input
               type="text"
@@ -357,27 +368,45 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               required
               value={formData.companyName}
               onChange={handleChange}
-              placeholder="Nom de l'entreprise / Exploitation"
-              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              placeholder="Ex: Ferme du Val / Cantine Municipale"
+              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
-          <div>
-            <label className="block font-bold text-gray-700 mb-1">
-              Numéro de SIRET *
-            </label>
-            <input
-              type="text"
-              name="siret"
-              required
-              maxLength="14"
-              value={formData.siret}
-              onChange={handleChange}
-              placeholder="14 chiffres sans espaces"
-              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-mono font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
+
+          {/* CHAMP SIRET — Strictement Verrouillé & Immuable */}
+          <div className="space-y-1 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-gray-700 flex items-center gap-1">
+                <Building2 size={13} className="text-gray-400" /> Numéro SIRET (14 chiffres) *
+              </label>
+              <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60 flex items-center gap-1">
+                <Lock size={10} /> Donnée certifiée (Non modifiable)
+              </span>
+            </div>
+
+            <div className="relative">
+              <input
+                type="text"
+                name="siret"
+                value={formData.siret || ""}
+                disabled={true}
+                readOnly={true}
+                placeholder="14 chiffres"
+                className="w-full p-2.5 bg-gray-100/80 border border-gray-200 rounded-xl font-mono text-xs text-gray-500 font-bold cursor-not-allowed outline-none select-none pr-9"
+              />
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                <Lock size={14} />
+              </div>
+            </div>
+
+            <p className="text-[10px] text-gray-400 font-medium">
+              Le SIRET est vérifié auprès du registre national lors de la création du compte. En cas d'erreur ou de changement de structure, veuillez contacter le support administrateur.
+            </p>
           </div>
-          <div>
-            <label className="block font-bold text-gray-700 mb-1">
+
+          {/* Téléphone */}
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700 block">
               Téléphone de Contact *
             </label>
             <input
@@ -386,62 +415,49 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               required
               value={formData.phone}
               onChange={handleChange}
-              placeholder="06 00 00 00 00"
-              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              placeholder="Ex: 06 12 34 56 78"
+              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
-        </div>
 
-        <div
-          className={`grid grid-cols-1 sm:grid-cols-3 gap-4 p-3 rounded-2xl border transition-colors ${
-            geoStatus === "invalid"
-              ? "bg-red-50/50 border-red-200"
-              : geoStatus === "valid"
-              ? "bg-emerald-50/40 border-emerald-100"
-              : "bg-gray-50/60 border-gray-100"
-          }`}
-        >
-          <div className="sm:col-span-2">
-            <label className="block font-bold text-gray-700 mb-1">
+          {/* Adresse Physique */}
+          <div className="space-y-1 md:col-span-2">
+            <label className="font-bold text-gray-700 block">
               Adresse Physique (Livraison / Collecte) *
             </label>
-            <div className="relative">
-              <MapPin
-                className={`absolute left-3 top-2.5 ${
-                  geoStatus === "invalid" ? "text-red-500" : "text-emerald-600"
-                }`}
-                size={16}
-              />
-              <input
-                type="text"
-                name="address"
-                required
-                value={formData.address}
-                onChange={handleChange}
-                onBlur={handleAddressBlur}
-                placeholder="Numéro et nom de rue"
-                className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-              />
-            </div>
+            <input
+              type="text"
+              name="address"
+              required
+              value={formData.address}
+              onChange={handleChange}
+              placeholder="Ex: 15 Rue des Maraîchers"
+              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+            />
           </div>
-          <div>
-            <label className="block font-bold text-gray-700 mb-1">
+
+          {/* Code Postal */}
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700 block">
               Code Postal *
             </label>
             <input
               type="text"
               name="postalCode"
               required
-              maxLength="5"
               value={formData.postalCode}
               onChange={handleChange}
               onBlur={handleAddressBlur}
-              placeholder="31000"
-              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+              placeholder="Ex: 28380"
+              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
           </div>
-          <div className="sm:col-span-3">
-            <label className="block font-bold text-gray-700 mb-1">Ville *</label>
+
+          {/* Ville */}
+          <div className="space-y-1">
+            <label className="font-bold text-gray-700 block">
+              Ville *
+            </label>
             <input
               type="text"
               name="city"
@@ -449,131 +465,137 @@ export default function GeneralInfoForm({ onProfileUpdated }) {
               value={formData.city}
               onChange={handleChange}
               onBlur={handleAddressBlur}
-              placeholder="Toulouse"
-              className="w-full p-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+              placeholder="Ex: Saint-Rémy-sur-Avre"
+              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
             />
-          </div>
-
-          {/* Feedback GeoFence temps réel */}
-          <div className="sm:col-span-3">
-            {geoStatus === "checking" && (
-              <p className="flex items-center gap-1.5 text-gray-500 font-bold">
-                <Loader2 size={13} className="animate-spin" />
-                Vérification de la zone de livraison...
-              </p>
-            )}
-            {geoStatus === "valid" && (
-              <p className="flex items-center gap-1.5 text-emerald-700 font-bold">
-                <CheckCircle2 size={13} />
-                Adresse dans le périmètre de livraison (50 km).
-              </p>
-            )}
-            {geoStatus === "invalid" && (
-              <p className="flex items-center gap-1.5 text-red-600 font-bold">
-                <AlertTriangle size={13} className="shrink-0" />
-                {geoMessage}
-              </p>
-            )}
-            {geoStatus === "idle" && (
-              <p className="text-[11px] text-gray-400 font-medium">
-                Cette adresse doit se situer à moins de 50 km de Saint-Rémy-sur-Avre.
-              </p>
-            )}
           </div>
         </div>
 
-        {/* --- Adresse de facturation --- */}
-        <div className="pt-2 border-t border-gray-100 space-y-4">
-          <div className="flex items-center justify-between">
-            <h4 className="font-extrabold text-gray-900 text-xs flex items-center gap-2">
-              <MapPin size={14} className="text-emerald-700" />
-              Adresse de Facturation
-            </h4>
-            <label className="flex items-center gap-2 font-bold text-gray-600 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                name="billingSameAsAddress"
-                checked={formData.billingSameAsAddress}
-                onChange={handleChange}
-                className="w-4 h-4 accent-emerald-700 cursor-pointer"
-              />
-              Identique à l'adresse physique
-            </label>
+        {/* Indication Périmètre GeoFence */}
+        {geoStatus === "checking" && (
+          <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 rounded-xl font-medium text-xs flex items-center gap-2">
+            <Loader2 size={14} className="animate-spin text-blue-600 shrink-0" />
+            <span>Vérification du périmètre de livraison (50 km autour de Saint-Rémy-sur-Avre)...</span>
           </div>
+        )}
+
+        {geoStatus === "valid" && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl font-medium text-xs flex items-center gap-2">
+            <MapPin size={14} className="text-emerald-600 shrink-0" />
+            <span>Adresse éligible à la collecte et livraison locale (Zone &lt; 50 km).</span>
+          </div>
+        )}
+
+        {geoStatus === "invalid" && geoMessage && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl font-bold text-xs flex items-center gap-2">
+            <AlertTriangle size={15} className="text-red-600 shrink-0" />
+            <span>{geoMessage}</span>
+          </div>
+        )}
+
+        {/* Gestion de l'Adresse de Facturation */}
+        <div className="pt-2 border-t space-y-3">
+          <label className="flex items-center gap-2 cursor-pointer font-bold text-gray-800 text-xs">
+            <input
+              type="checkbox"
+              name="billingSameAsAddress"
+              checked={formData.billingSameAsAddress}
+              onChange={handleChange}
+              className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+            />
+            <span>L'adresse de facturation est identique à l'adresse physique</span>
+          </label>
 
           {!formData.billingSameAsAddress && (
-            <div className="space-y-4">
-              <div className="relative">
-                <label className="block font-bold text-gray-700 mb-1">
-                  Rechercher l'adresse de facturation (BAN) *
+            <div className="space-y-3 p-4 bg-gray-50 border border-gray-200 rounded-2xl animate-fade-in">
+              <h4 className="font-bold text-gray-900 text-xs flex items-center gap-1.5">
+                <Building size={14} className="text-emerald-700" />
+                <span>Adresse de Facturation Spécifique</span>
+              </h4>
+
+              {/* Recherche BAN pour l'adresse de facturation */}
+              <div className="relative space-y-1">
+                <label className="font-bold text-gray-700 block">
+                  Rechercher l'adresse de facturation (API BAN)
                 </label>
-                <div className="relative">
-                   <MapPin className="absolute left-3 top-2.5 text-emerald-600" size={16}/>
-                  <input
-                    type="text"
-                    required={!formData.billingSameAsAddress}
-                    value={billingAddressQuery}
-                    onChange={(e) => handleBillingAddressSearch(e.target.value)}
-                    placeholder="Saisissez votre rue, code postal ou commune..."
-                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
+                <input
+                  type="text"
+                  value={billingAddressQuery}
+                  onChange={(e) => handleBillingAddressSearch(e.target.value)}
+                  placeholder="Tapez votre adresse..."
+                  className="w-full p-2.5 border border-gray-300 rounded-xl font-medium bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+
                 {showBillingSuggestions && billingSuggestions.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 max-h-48 overflow-y-auto">
-                    {billingSuggestions.map((s, idx) => (
-                      <div
+                  <ul className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-40 overflow-y-auto divide-y">
+                    {billingSuggestions.map((item, idx) => (
+                      <li
                         key={idx}
-                        onClick={() => handleSelectBillingAddress(s)}
-                        className={`p-3 text-xs cursor-pointer hover:bg-emerald-50 transition-colors ${idx < billingSuggestions.length - 1 ? 'border-b border-gray-100' : ''}`}
+                        onClick={() => handleSelectBillingAddress(item)}
+                        className="p-2.5 hover:bg-emerald-50 cursor-pointer font-medium text-gray-800 transition-colors"
                       >
-                        {s.label}
-                      </div>
+                        {item.label}
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 )}
               </div>
 
-               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
-                <div className="sm:col-span-2">
-                  <span className="text-[10px] font-bold text-gray-500 block">Rue / Établissement</span>
-                  <span className="text-xs text-gray-900 font-bold">{formData.billingAddress || 'Non spécifiée'}</span>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-2 space-y-1">
+                  <label className="font-bold text-gray-700 block">Voie / Rue *</label>
+                  <input
+                    type="text"
+                    name="billingAddress"
+                    value={formData.billingAddress}
+                    onChange={handleChange}
+                    placeholder="Ex: 10 Rue de la Paix"
+                    className="w-full p-2.5 border border-gray-300 rounded-xl font-medium bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
                 </div>
-                <div>
-                   <span className="text-[10px] font-bold text-gray-500 block">Code Postal</span>
-                   <span className="text-xs text-gray-900 font-bold">{formData.billingPostalCode || 'Non spécifié'}</span>
+                <div className="space-y-1">
+                  <label className="font-bold text-gray-700 block">Code Postal *</label>
+                  <input
+                    type="text"
+                    name="billingPostalCode"
+                    value={formData.billingPostalCode}
+                    onChange={handleChange}
+                    placeholder="Ex: 75001"
+                    className="w-full p-2.5 border border-gray-300 rounded-xl font-medium bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
                 </div>
-                <div className="sm:col-span-3">
-                   <span className="text-[10px] font-bold text-gray-500 block">Commune</span>
-                   <span className="text-xs text-gray-900 font-bold">{formData.billingCity || 'Non spécifiée'}</span>
+                <div className="md:col-span-3 space-y-1">
+                  <label className="font-bold text-gray-700 block">Ville *</label>
+                  <input
+                    type="text"
+                    name="billingCity"
+                    value={formData.billingCity}
+                    onChange={handleChange}
+                    placeholder="Ex: Paris"
+                    className="w-full p-2.5 border border-gray-300 rounded-xl font-medium bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
                 </div>
               </div>
-              <p className="text-[11px] text-gray-400 font-medium">
-                L'adresse de facturation n'est pas soumise au contrôle GeoFence (elle ne sert pas à la livraison/collecte).
-              </p>
             </div>
           )}
         </div>
 
-        <div className="flex justify-end pt-2">
+        {/* Bouton de Sauvegarde */}
+        <div className="pt-2 flex justify-end">
           <button
             type="submit"
-            disabled={isSubmitting || geoStatus !== "valid"} // DÉSACTIVÉ TANT QUE LE GEOFENCE N'EST PAS VALIDE
-            className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold rounded-xl transition-colors flex items-center gap-2 cursor-pointer disabled:bg-gray-300 disabled:cursor-not-allowed"
+            disabled={isSubmitting || geoStatus === "checking"}
+            className="py-3 px-6 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
-            {geoStatus === "checking" ? (
+            {isSubmitting ? (
               <>
-                <Loader2 size={14} className="animate-spin" />
-                <span>Vérification GeoFence (50 km)...</span>
-              </>
-            ) : isSubmitting ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
+                <Loader2 size={16} className="animate-spin" />
                 <span>Enregistrement...</span>
               </>
             ) : (
               <>
-                <Save size={14} />
-                <span>Enregistrer les coordonnées</span>
+                <Save size={16} />
+                <span>Enregistrer mes coordonnées</span>
               </>
             )}
           </button>
