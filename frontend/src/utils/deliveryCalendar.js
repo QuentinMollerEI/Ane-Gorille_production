@@ -4,7 +4,7 @@ export function calculateDeliveryWindow(orderDate = new Date()) {
 
   let leadDaysMin = 1;
 
-  if ([1, 2, 3].includes(day)) {
+  if ([1-3].includes(day)) {
     // Lundi, Mardi, Mercredi : Avant 12h -> J+1, Après 12h -> J+2
     leadDaysMin = hour < 12 ? 1 : 2;
   } else if (day === 4) {
@@ -35,7 +35,7 @@ export function calculateDeliveryWindow(orderDate = new Date()) {
   maxDate.setDate(maxDate.getDate() + 7);
   maxDate.setHours(23, 59, 59, 999);
 
-  // 3. Génération des dates disponibles (exclusion stricte du samedi et dimanche)
+  // 3. Génération des dates disponibles (exclusion du samedi et dimanche)
   const availableDates = [];
   let currentDate = new Date(minDate);
 

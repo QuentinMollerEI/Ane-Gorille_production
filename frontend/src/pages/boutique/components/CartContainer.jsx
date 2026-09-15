@@ -16,7 +16,6 @@ export default function CartContainer({
   onClearCart,
   onBackToShop,
 }) {
-  // 🌿 REGROUPEMENT DYNAMIQUE ET VENTILATION DE LA TVA PAR PRODUCTEUR
   const itemsByProducer = cart.reduce((acc, item) => {
     const pId = item.producerId || item.producerCompany || "PROD_INCONNU";
     if (!acc[pId]) {
@@ -35,7 +34,6 @@ export default function CartContainer({
 
     const qty = Number(item.quantity || 1);
     const priceHT = Number(item.priceHT ?? item.price ?? 0);
-    // Taux de TVA propre au produit/producteur (ex: 5.5%, 0% Art. 293 B, 20%, etc.)
     const vatRate = Number(item.vatRate ?? item.vat ?? 5.5) / 100;
 
     const lineHT = priceHT * qty;
@@ -60,7 +58,6 @@ export default function CartContainer({
   const producerGroups = Object.values(itemsByProducer);
   const producerCount = producerGroups.length;
 
-  // CUMUL GÉNÉRAL DU PANIER (Ventilé)
   const grandTotalHT = producerGroups.reduce((sum, p) => sum + p.subTotalHT, 0);
   const grandTotalTVA = producerGroups.reduce((sum, p) => sum + p.subTotalTVA, 0);
   const grandTotalTTC = grandTotalHT + grandTotalTVA;
@@ -88,7 +85,6 @@ export default function CartContainer({
 
   return (
     <div className="space-y-6 animate-fade-in max-w-6xl mx-auto pb-12 text-xs">
-      {/* En-tête de navigation du panier */}
       <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
@@ -115,7 +111,6 @@ export default function CartContainer({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* COLONNE GAUCHE : RÉCAPITULATIF PAR PRODUCTEUR */}
         <div className="lg:col-span-7 bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-6">
           <div className="flex justify-between items-center border-b border-gray-150 pb-3">
             <h3 className="font-extrabold text-gray-900 text-sm">
@@ -130,14 +125,12 @@ export default function CartContainer({
             </button>
           </div>
 
-          {/* BLOCS DÉCOUPÉS ET VENTILÉS PAR PRODUCTEUR / FERME */}
           <div className="space-y-6">
             {producerGroups.map((group, index) => (
               <div
                 key={group.producerId || index}
                 className="p-4 bg-gray-50/60 border border-gray-200 rounded-2xl space-y-3"
               >
-                {/* En-tête du producteur */}
                 <div className="flex items-center justify-between border-b border-gray-200 pb-2">
                   <div className="flex items-center gap-2">
                     <span className="w-6 h-6 bg-emerald-700 text-white rounded-full flex items-center justify-center font-bold text-xs">
@@ -162,7 +155,6 @@ export default function CartContainer({
                   </span>
                 </div>
 
-                {/* Produits du producteur */}
                 <div className="divide-y divide-gray-100 space-y-2">
                   {group.items.map((item) => (
                     <div
@@ -224,7 +216,6 @@ export default function CartContainer({
                   ))}
                 </div>
 
-                {/* Totaux de la sous-commande */}
                 <div className="pt-2 border-t border-gray-200/80 text-[11px] font-bold space-y-1 bg-white/70 p-2.5 rounded-xl">
                   <div className="flex justify-between text-gray-700">
                     <span>Sous-total HT ({group.producerName}) :</span>
@@ -243,7 +234,6 @@ export default function CartContainer({
             ))}
           </div>
 
-          {/* TOTAL GÉNÉRAL DU PANIER VENTILÉ */}
           <div className="pt-4 border border-emerald-200 space-y-1.5 text-xs font-bold bg-emerald-50/60 p-4 rounded-2xl">
             <div className="flex justify-between text-gray-700">
               <span>Total Général HT :</span>
@@ -262,7 +252,6 @@ export default function CartContainer({
           </div>
         </div>
 
-        {/* COLONNE DROITE : MODULE DE CHECKOUT ET PAIEMENT SÉCURISÉ */}
         <div className="lg:col-span-5 space-y-5">
           <CheckoutView
             cartItems={cart}

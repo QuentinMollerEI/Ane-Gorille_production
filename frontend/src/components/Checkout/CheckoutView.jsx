@@ -9,6 +9,7 @@ import {
 } from "@stripe/react-stripe-js";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { auth as firebaseAuth } from "../../config/firebase";
+import CheckoutDeliverySelector from "./CheckoutDeliverySelector";
 import {
   ShieldCheck,
   Loader2,
@@ -45,7 +46,7 @@ function CheckoutForm(props) {
   const rawCart = cartItems.length ? cartItems : items.length ? items : cart;
   const cartList = Array.isArray(rawCart) ? rawCart : rawCart.items || [];
 
-  // 1. Calcul du montant Hors Taxes (HT) global
+  // 1. Calcul du montant HT global
   const computedTotalHT = cartList.reduce((sum, item) => {
     const priceHT = Number(item.priceHT ?? item.price ?? item.unitPrice ?? 0);
     const qty = Number(item.quantity || 1);
@@ -86,7 +87,6 @@ function CheckoutForm(props) {
   const userRole = buyerProfile.role || "acheteur_prive";
   const isB2G = userRole === "acheteur_public" || userRole === "client_public" || buyerProfile.buyerProfile === "B2G";
 
-  // Détection sécurisée du mandat SEPA ou de l'IBAN enregistré
   const savedIban =
     buyerProfile.iban ||
     buyerProfile.sepaIban ||
@@ -94,17 +94,11 @@ function CheckoutForm(props) {
     buyerProfile.rib ||
     "";
 
-  const hasSavedIban = Boolean(
-    buyerProfile.sepaMandateActive ||
-    buyerProfile.stripeCustomerId ||
-    buyerProfile.stripePaymentMethodId ||
-    savedIban
-  );
-
   const [paymentMethod, setPaymentMethod] = useState(
     isB2G ? "chorus_mandate" : "stripe_card"
   );
   const [engagementRef, setEngagementRef] = useState("");
+  const [deliveryDetails, setDeliveryDetails] = useState(null);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [completedOrder, setCompletedOrder] = useState(null);
@@ -153,14 +147,19 @@ function CheckoutForm(props) {
         throw new Error("Le montant total du panier doit être supérieur à 0,00 €.");
       }
 
+      // VÉRIFICATION BLOQUANTE DU CALENDRIER
+      if (!deliveryDetails?.selectedDate) {
+        throw new Error("Veuillez sélectionner une date de livraison via le calendrier avant de valider.");
+      }
+
       const functionsInstance = getFunctions(firebaseAuth.app, "europe-west9");
 
-      // 🏢 1. SECTEUR PUBLIC : Mandat Chorus Pro (B2G)
+      // 🏢 1. SECTEUR PUBLIC : Chorus Pro (B2G)
       if (paymentMethod === "chorus_mandate") {
         if (!engagementRef.trim()) {
           throw new Error("Le N° d'Engagement Budgétaire est obligatoire pour les collectivités publiques (Chorus Pro).");
         }
-        await callBackendCheckout({ paymentMethod: "chorus_mandate", engagementRef });
+        await callBackendCheckout({ paymentMethod: "chorus_mandate", engagementRef, deliveryDetails });
         return;
       }
 
@@ -197,17 +196,14 @@ function CheckoutForm(props) {
             firstItem.producerStripeAccountId || firstItem.stripeAccountId || null;
         }
 
-        // ✅ CALCUL SÉPARÉ HT & TTC :
-        // Montant total TTC encaissé sur la carte bancaire
         const amountTTCInCents = Math.round(finalTotalTTC * 100);
-        // Commission 18 % calculée STRICTEMENT sur la base HT du panier
         const amountHTInCents = Math.round(finalTotalHT * 100);
         const feeInCents = Math.round(amountHTInCents * 0.18);
 
         const createIntentFn = httpsCallable(functionsInstance, "createPaymentIntentServer");
         const intentRes = await createIntentFn({
-          amount: amountTTCInCents,            // Montant prélevé au client (ex: 10,55 €)
-          applicationFeeAmount: feeInCents,     // Commission 18 % retenue sur le HT (ex: 1,80 €)
+          amount: amountTTCInCents,
+          applicationFeeAmount: feeInCents,
           producerId: singleProducerId,
           producerStripeAccountId: singleProducerStripeAccountId,
           isMultiProducer: isMulti,
@@ -239,6 +235,7 @@ function CheckoutForm(props) {
           await callBackendCheckout({
             paymentMethod: "stripe_card",
             paymentIntentId: paymentResult.paymentIntent.id,
+            deliveryDetails,
           });
         }
         return;
@@ -254,6 +251,7 @@ function CheckoutForm(props) {
           stripePaymentMethodId: buyerProfile.stripePaymentMethodId || "pm_sepa_profile_saved",
           sepaDueDate: dueDate.toISOString(),
           sepaStatus: "SCHEDULED_30D",
+          deliveryDetails,
         });
         return;
       }
@@ -275,6 +273,7 @@ function CheckoutForm(props) {
       refEngagement: engagementRef || "-",
       deliveryAddress: buyerProfile.address || "",
       paymentMethod: extraOptions.paymentMethod,
+      deliveryDetails: extraOptions.deliveryDetails || deliveryDetails,
       ...extraOptions,
     };
 
@@ -290,7 +289,6 @@ function CheckoutForm(props) {
     if (res.data?.success) {
       const createdOrderId = res.data.orderId;
 
-      // Ventilation automatique pour paniers multi-producteurs par CB
       const uniqueProducers = [...new Set(normalizedCartItems.map((i) => i.producerId).filter(Boolean))];
       if (uniqueProducers.length > 1 && extraOptions.paymentMethod === "stripe_card") {
         try {
@@ -358,12 +356,15 @@ function CheckoutForm(props) {
       <form onSubmit={handleSubmitOrder} className="space-y-4">
         {errorMessage && (
           <div className="p-3.5 bg-red-50 border border-red-200 text-red-800 rounded-xl font-bold text-xs flex items-center gap-2">
-            <AlertCircle size={16} className="shrink-0" />
+            <AlertCircle size={16} className="shrink-0 text-red-600" />
             <span>{errorMessage}</span>
           </div>
         )}
 
-        {/* SÉLECTEUR DE MODE DE RÈGLEMENT */}
+        {/* 1. PLANIFICATION LOGISTIQUE (SÉLECTEUR DE CALENDRIER) */}
+        <CheckoutDeliverySelector onDeliveryChange={(details) => setDeliveryDetails(details)} />
+
+        {/* 2. SÉLECTEUR DE MODE DE RÈGLEMENT */}
         <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-xs space-y-3">
           <h3 className="font-black text-gray-900 text-xs uppercase tracking-wider">
             Mode de Règlement
