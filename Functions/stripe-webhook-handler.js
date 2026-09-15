@@ -12,7 +12,7 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
   // 🚀 1. CHARGEMENT DIFFÉRÉ (Lazy Loading) : Résout les blocages au déploiement CLI
   const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
-  if (!admin.apps.length) {
+  if (!admin.apps || !admin.apps.length) {
     admin.initializeApp();
   }
   const db = admin.firestore();
