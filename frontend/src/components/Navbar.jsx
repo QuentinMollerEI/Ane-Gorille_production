@@ -1,135 +1,156 @@
 import React from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import {
-  LayoutDashboard,
-  LogOut,
-  UserCheck,
-  ShieldCheck,
-  ShieldAlert,
-} from "lucide-react";
+import { useCart } from "../context/CartContext";
+import { LogOut, ShoppingCart, Store, LayoutDashboard } from "lucide-react";
 
 export default function Navbar() {
-  const { user, logout } = useAuth();
+  const auth = useAuth() || {};
+  const user = auth.user;
+  const logout = auth.logout;
+
+  // Récupération dynamique du panier
+  const cartContext = useCart() || {};
+  const cartItems = cartContext.cartItems || [];
+
+  // Lecture du nombre d'articles dans le panier
+  const itemCount = cartContext.getTotalItems 
+    ? cartContext.getTotalItems() 
+    : (() => {
+        try {
+          const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
+          const savedCart = localStorage.getItem(cartKey) || localStorage.getItem("ane_gorille_cart");
+          const parsed = savedCart ? JSON.parse(savedCart) : [];
+          return parsed.reduce((acc, item) => acc + (item.quantity || 1), 0);
+        } catch (e) {
+          return 0;
+        }
+      })();
+
   const navigate = useNavigate();
   const location = useLocation();
 
+  // 🔍 Détection de l'emplacement de l'utilisateur
+  const searchParams = new URLSearchParams(location.search);
+  const isHomePage = location.pathname === "/";
+  const isCartView = searchParams.get("view") === "cart";
+
   const handleLogout = async () => {
     try {
-      await logout();
+      if (typeof logout === "function") {
+        await logout();
+      }
       navigate("/");
     } catch (err) {
       console.error("Erreur de déconnexion :", err);
     }
   };
 
-  // Vérifie quelle page est actuellement active pour appliquer un style visuel "actif"
-  const isActive = (path) => location.pathname === path;
+  // 🔄 Action multi-contexte (Espace Pro / Mon Panier / Voir la Boutique)
+  const handleButtonClick = () => {
+    if (isHomePage) {
+      navigate("/dashboard");
+    } else if (isCartView) {
+      navigate("/dashboard?module=boutique&view=grid");
+    } else {
+      navigate("/dashboard?module=boutique&view=cart");
+    }
+  };
 
   return (
-    <nav className="bg-white/95 backdrop-blur-md border-b border-gray-150 sticky top-0 z-40 shadow-sm transition-all duration-300">
-      <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-        {/* LOGO & NOM DE MARQUE */}
-        <Link to="/" className="flex items-center space-x-3.5 group">
-          {/* Logo officiel servi depuis le dossier public avec bordure jaune de marque */}
-          <div className="relative w-12 h-12 rounded-full overflow-hidden border-2 border-brand-gold bg-white flex items-center justify-center shadow-md transform group-hover:scale-105 transition-transform duration-300">
-            <img
-              src="/Logo.png"
-              alt="Logo Âne & Gorille"
-              className="w-10 h-10 object-contain"
-            />
-          </div>
-          <div className="flex flex-col">
-            <span className="font-black text-lg text-brand-green tracking-tight leading-tight group-hover:text-opacity-90 transition-opacity">
-              Âne et Gorille
-            </span>
-            {/* Slogan mis en valeur en jaune doré */}
-            <span className="text-[10px] text-brand-gold font-extrabold uppercase tracking-widest leading-none mt-0.5">
-              L'énergie alimentaire
-            </span>
-          </div>
-        </Link>
-
-        {/* CONTROLES DE NAVIGATION & AUTHENTIFICATION */}
-        <div className="flex items-center space-x-6">
-          {user ? (
-            <>
-              {/* Bouton Tableau de Bord connecté */}
-              <Link
-                to="/dashboard"
-                className={`text-sm font-bold flex items-center space-x-2 transition-all py-2 px-3.5 rounded-xl border ${
-                  isActive("/dashboard")
-                    ? "bg-brand-green text-white border-brand-green shadow-sm"
-                    : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                }`}
-              >
-                <LayoutDashboard size={16} />
-                <span>Espace Connecté</span>
-              </Link>
-
-              <div className="h-6 w-[1px] bg-gray-200 hidden md:block" />
-
-              {/* COMPOSANT D'IDENTITÉ UTILISATEUR */}
-              <div className="flex items-center space-x-4">
-                {/* Bloc Informations Profil */}
-                <div className="text-right hidden md:block">
-                  <div className="flex items-center justify-end space-x-1.5">
-                    <p className="text-xs font-bold text-brand-dark">
-                      {user.displayName}
-                    </p>
-
-                    {/* Indicateur visuel de conformité réglementaire (Étape 2) */}
-                    {user.profileComplete ? (
-                      <ShieldCheck
-                        size={14}
-                        className="text-emerald-500"
-                        title="Compte certifié conforme aux réglementations"
-                      />
-                    ) : (
-                      <ShieldAlert
-                        size={14}
-                        className="text-amber-500 animate-pulse"
-                        title="Action requise : Complétez vos justificatifs dans l'onglet Mon Profil"
-                      />
-                    )}
-                  </div>
-
-                  {/* Badge de Rôle Métier de l'utilisateur */}
-                  <span className="text-[8px] font-extrabold text-brand-green uppercase tracking-widest bg-green-50 px-2 py-0.5 rounded-md border border-green-100 inline-block mt-1">
-                    {user.role}
-                  </span>
-                </div>
-
-                {/* Bouton de Déconnexion Épuré */}
-                <button
-                  onClick={handleLogout}
-                  className="text-xs font-bold text-red-650 hover:text-red-700 bg-red-50 hover:bg-red-100/75 px-3 py-2.5 rounded-xl transition-all border border-red-100 flex items-center space-x-1.5"
-                  title="Se déconnecter"
-                >
-                  <LogOut size={14} />
-                  <span className="hidden sm:inline">Déconnexion</span>
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              {/* LIENS HORS CONNEXION */}
-              <Link
-                to="/login"
-                className="text-sm font-bold text-brand-green hover:text-opacity-80 transition-colors"
-              >
-                Connexion
-              </Link>
-
-              <Link
-                to="/register"
-                className="text-sm font-extrabold text-white bg-brand-green hover:bg-opacity-95 px-5 py-2.5 rounded-xl shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all"
-              >
-                S'inscrire
-              </Link>
-            </>
-          )}
+    <nav className="bg-white border-b border-gray-100 py-3 px-6 flex items-center justify-between shadow-xs sticky top-0 z-50">
+      
+      {/* 1. LOGO & MARQUE */}
+      <Link to="/" className="flex items-center gap-3 group">
+        <img
+          src="/logo-ecusson-transparent.png"
+          alt="Logo Âne & Gorille"
+          className="h-10 w-10 object-contain bg-transparent rounded-full"
+          onError={(e) => {
+            e.target.onerror = null;
+            e.target.src = "/Logo.png";
+          }}
+        />
+        <div className="flex flex-col">
+          <span className="font-black text-base text-gray-900 tracking-tight uppercase group-hover:text-emerald-700 transition-colors">
+            Âne & Gorille
+          </span>
+          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+            L'énergie alimentaire
+          </span>
         </div>
+      </Link>
+
+      {/* 2. ACTIONS & BOUTON INTELLIGENT */}
+      <div className="flex items-center gap-3">
+        
+        {/* 🚀 BOUTON DYNAMIQUE : MASQUÉ SI UTILISATEUR NON CONNECTÉ */}
+        {user && (
+          <button
+            type="button"
+            onClick={handleButtonClick}
+            className="relative group px-4 py-2 rounded-xl text-[11px] font-bold tracking-wider uppercase transition-all duration-300 flex items-center gap-2 cursor-pointer border active:scale-[0.97] bg-emerald-950 hover:bg-emerald-900 text-emerald-100 border-emerald-800/60 shadow-2xs hover:shadow-md"
+          >
+            {isHomePage ? (
+              <>
+                <LayoutDashboard
+                  size={14}
+                  className="stroke-[1.4] text-emerald-300 transition-transform duration-300 group-hover:scale-110"
+                />
+                <span className="font-extrabold tracking-tight">Espace Pro</span>
+              </>
+            ) : isCartView ? (
+              <>
+                <Store
+                  size={14}
+                  className="stroke-[1.4] text-amber-300 transition-transform duration-300 group-hover:scale-110"
+                />
+                <span className="font-extrabold tracking-tight">Voir la Boutique</span>
+              </>
+            ) : (
+              <>
+                <ShoppingCart
+                  size={14}
+                  className="stroke-[1.4] text-emerald-300 transition-transform duration-300 group-hover:scale-110"
+                />
+                <span className="font-extrabold tracking-tight">Mon Panier</span>
+              </>
+            )}
+
+            {/* BADGE COMPTEUR D'ARTICLES */}
+            <span className="ml-0.5 bg-gradient-to-r from-amber-400 to-yellow-400 text-amber-950 text-[9px] font-black px-1.5 py-0.5 rounded-md shadow-2xs border border-yellow-200/60">
+              {itemCount}
+            </span>
+          </button>
+        )}
+
+        {/* CONTROLES ESPACE CONNECTÉ / VISITEUR */}
+        {user ? (
+          <div className="flex items-center gap-2 ml-2">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-all cursor-pointer"
+            >
+              <LogOut size={16} />
+              <span>Déconnexion</span>
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 ml-2">
+            <Link
+              to="/login"
+              className="px-4 py-2 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-100 transition-all"
+            >
+              Se connecter
+            </Link>
+            <Link
+              to="/register"
+              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 transition-all shadow-sm"
+            >
+              Créer un compte
+            </Link>
+          </div>
+        )}
       </div>
     </nav>
   );
