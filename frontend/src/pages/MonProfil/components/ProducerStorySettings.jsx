@@ -1,115 +1,49 @@
-import React, { useState, useEffect } from "react";
-import { BookOpen, Save, Loader2, CheckCircle } from "lucide-react";
-import { db } from "../../../services/firestore.service";
-import { useAuth } from "../../../context/AuthContext";
-import { doc, updateDoc } from "firebase/firestore";
+import React from "react";
+import { Info, CheckCircle, Leaf } from "lucide-react";
 
-export default function ProducerStorySettings({ profileData, setProfileData, onProfileUpdated }) {
-  const { user } = useAuth();
-  const [description, setDescription] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [successMessage, setSuccessMessage] = useState(null);
-
-  // Synchronisation avec les données existantes du profil
-  useEffect(() => {
-    if (profileData?.description || profileData?.bio) {
-      setDescription(profileData.description || profileData.bio || "");
-    }
-  }, [profileData]);
-
-  // Sauvegarde dans Firestore
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (!user?.uid) return;
-
-    try {
-      setSaving(true);
-      const userDocRef = doc(db, "users", user.uid);
-
-      await updateDoc(userDocRef, {
-        description: description,
-        bio: description, // Synchronisation rétrocompatible
-      });
-
-      if (setProfileData) {
-        setProfileData((prev) => ({
-          ...prev,
-          description: description,
-          bio: description,
-        }));
-      }
-
-      if (onProfileUpdated) {
-        onProfileUpdated();
-      }
-
-      setSuccessMessage("Présentation enregistrée avec succès !");
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (error) {
-      console.error("Erreur lors de la sauvegarde de la présentation :", error);
-      alert("Erreur lors de l'enregistrement. Veuillez réessayer.");
-    } finally {
-      setSaving(false);
-    }
-  };
+export default function ProducerStorySettings({ profile = {} }) {
+  const description =
+    profile.description ||
+    profile.bio ||
+    profile.presentation ||
+    profile.story ||
+    "Exploitant agricole partenaire engagé dans la distribution alimentaire en circuit court et la traçabilité sanitaire.";
 
   return (
-    <form onSubmit={handleSave} className="bg-white border border-gray-200 rounded-3xl p-6 space-y-4 shadow-xs">
-      {/* En-tête de section */}
+    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4 text-xs">
       <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-        <div className="flex items-center gap-2">
-          <BookOpen size={18} className="text-emerald-700" />
-          <h2 className="text-sm font-black text-gray-900">
-            Présentation & Récit de l'exploitation
-          </h2>
-        </div>
+        <h3 className="font-extrabold text-gray-900 text-xs uppercase tracking-wider flex items-center gap-2">
+          <Info size={16} className="text-emerald-700" />
+          <span>Histoire & Présentation de l'exploitation</span>
+        </h3>
+        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg flex items-center gap-1">
+          <Leaf size={12} className="text-emerald-600" />
+          <span>Circuit Court Certifié</span>
+        </span>
       </div>
 
-      {/* Notification de succès */}
-      {successMessage && (
-        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl flex items-center gap-2 text-xs font-bold animate-fade-in">
-          <CheckCircle size={16} />
-          <span>{successMessage}</span>
-        </div>
-      )}
-
-      {/* Zone de texte du récit */}
-      <div className="space-y-2">
-        <label className="text-xs font-bold text-gray-700 block">
-          Racontez l'histoire de votre ferme, vos méthodes de culture et vos engagements
-        </label>
-        <textarea
-          rows={5}
-          placeholder="Exemple : Notre exploitation familiale située en région maraîchère cultive des fruits et légumes de saison dans le respect du cahier des charges de l'Agriculture Biologique. Nous favorisons le circuit court et le ramassage à maturité..."
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="w-full p-3.5 border border-gray-300 rounded-2xl text-xs font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none transition-all bg-gray-50/50 resize-y"
-        />
-        <p className="text-[10px] text-gray-400 font-medium italic">
-          Ce texte sera affiché sur l'onglet "Récit & Présentation" (`ProducerStoryTab`) de votre vitrine producteur auprès des acheteurs.
+      {/* TEXTE DE PRÉSENTATION DE L'EXPLOITATION */}
+      <div className="bg-gray-50 border border-gray-200/80 rounded-2xl p-4">
+        <p className="text-gray-700 font-medium leading-relaxed text-xs whitespace-pre-line">
+          {description}
         </p>
       </div>
 
-      {/* Bouton Enregistrer */}
-      <div className="flex justify-end pt-2">
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-black text-xs rounded-2xl transition-all shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-50"
-        >
-          {saving ? (
-            <>
-              <Loader2 size={16} className="animate-spin" />
-              <span>Enregistrement...</span>
-            </>
-          ) : (
-            <>
-              <Save size={16} />
-              <span>Enregistrer la présentation</span>
-            </>
-          )}
-        </button>
+      {/* ENGAGEMENTS SÉCURITÉ ALIMENTAIRE ET QUALITÉ */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+        <div className="p-3 bg-emerald-50/60 border border-emerald-100 rounded-xl flex items-center gap-2">
+          <CheckCircle size={15} className="text-emerald-600 shrink-0" />
+          <span className="font-bold text-gray-800 text-[11px]">Récolte fraîche sur commande</span>
+        </div>
+        <div className="p-3 bg-emerald-50/60 border border-emerald-100 rounded-xl flex items-center gap-2">
+          <CheckCircle size={15} className="text-emerald-600 shrink-0" />
+          <span className="font-bold text-gray-800 text-[11px]">Normes HACCP & Hygiène</span>
+        </div>
+        <div className="p-3 bg-emerald-50/60 border border-emerald-100 rounded-xl flex items-center gap-2">
+          <CheckCircle size={15} className="text-emerald-600 shrink-0" />
+          <span className="font-bold text-gray-800 text-[11px]">Livraison chaîne du froid</span>
+        </div>
       </div>
-    </form>
+    </div>
   );
 }

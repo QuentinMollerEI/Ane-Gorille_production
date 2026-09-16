@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { calculateDeliveryWindow } from "../../utils/deliveryCalendar";
-import { Truck, Calendar, Info } from "lucide-react";
+import { Truck, Calendar, Info, Clock } from "lucide-react";
 
 export default function CheckoutDeliverySelector({ onDeliveryChange }) {
   const [availableDates, setAvailableDates] = useState([]);
@@ -8,69 +8,93 @@ export default function CheckoutDeliverySelector({ onDeliveryChange }) {
   const [deliveryDetails, setDeliveryDetails] = useState({
     selectedDate: "",
     deliveryWindow: "Matin",
-    instructions: "",
+    instructions: ""
   });
 
+  // 1. Initialisation des dates au montage du composant
   useEffect(() => {
     const windowData = calculateDeliveryWindow(new Date());
-    const datesArray = windowData.availableDates || [];
-    setAvailableDates(datesArray);
+    const dates = windowData.availableDates || [];
+    setAvailableDates(dates);
 
-    // ✅ CORRECTION DU TYPEERROR :
-    // Vérification de la présence du tableau et accès explicite au premier élément 
-    if (datesArray.length > 0 && datesArray instanceof Date) {
-      const initialDateStr = datesArray.toISOString().slice(0, 10);
-      handleUpdate({ selectedDate: initialDateStr });
+    if (dates.length > 0) {
+      const firstDateString = dates[0].toISOString().slice(0, 10);
+      setDeliveryDetails((prev) => ({
+        ...prev,
+        selectedDate: firstDateString
+      }));
     }
   }, []);
 
-  const handleUpdate = (updates) => {
-    const nextState = { ...deliveryDetails, ...updates };
-    setDeliveryDetails(nextState);
-    if (onDeliveryChange) onDeliveryChange(nextState);
+  // 2. Notification sécurisée du composant parent (CheckoutForm) après le rendu
+  useEffect(() => {
+    if (deliveryDetails.selectedDate && typeof onDeliveryChange === "function") {
+      onDeliveryChange(deliveryDetails);
+    }
+  }, [deliveryDetails, onDeliveryChange]);
+
+  // 3. Gestionnaires d'événements pour les saisies utilisateur
+  const handleDateChange = (e) => {
+    const newDate = e.target.value;
+    setDeliveryDetails((prev) => ({ ...prev, selectedDate: newDate }));
+  };
+
+  const handleInstructionsChange = (e) => {
+    const newInstructions = e.target.value;
+    setDeliveryDetails((prev) => ({ ...prev, instructions: newInstructions }));
   };
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
-      <h3 className="font-black text-gray-900 text-xs flex items-center gap-2 border-b border-gray-200 pb-2">
+    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 space-y-4">
+      <h3 className="font-extrabold text-gray-900 text-xs flex items-center gap-2 border-b border-gray-200 pb-2">
         <Truck className="text-emerald-700" size={16} />
-        <span>Planification de la Livraison</span>
+        Planification Logistique
       </h3>
 
+      {/* BANNIÈRE D'INFORMATION DE DÉLAI DE LIVRAISON */}
+      <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2 text-emerald-900 text-[11px]">
+        <Clock size={15} className="text-emerald-700 shrink-0 mt-0.5" />
+        <div>
+          <p className="font-bold">Information Délais de Livraison :</p>
+          <p className="text-emerald-800 font-medium mt-0.5">
+            Commande passée <strong>avant 12h</strong> ➔ Livraison dès <strong>J+1</strong>.<br />
+            Commande passée <strong>après 12h</strong> ➔ Livraison dès <strong>J+2</strong> (hors week-ends).
+          </p>
+        </div>
+      </div>
+
+      {/* SÉLECTEUR DE DATE */}
       <div className="space-y-1.5">
         <label className="font-bold text-gray-700 text-[11px] flex items-center gap-1.5 uppercase tracking-wider">
-          <Calendar size={12} className="text-emerald-700" />
-          <span>Date de livraison souhaitée *</span>
+          <Calendar size={12} className="text-emerald-700" /> Date de livraison souhaitée *
         </label>
         <select
           required
           value={deliveryDetails.selectedDate}
-          onChange={(e) => handleUpdate({ selectedDate: e.target.value })}
+          onChange={handleDateChange}
           className="w-full p-2.5 border border-gray-300 rounded-xl bg-white text-xs font-bold focus:ring-2 focus:ring-emerald-500"
         >
           <option value="" disabled>Choisir une date</option>
           {availableDates.map((date, idx) => (
             <option key={idx} value={date.toISOString().slice(0, 10)}>
-              {date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+              {date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
             </option>
           ))}
         </select>
-        <p className="text-[10px] text-gray-500 font-semibold">
-          Toutes nos livraisons s'effectuent exclusivement le matin.
-        </p>
+        <p className="text-[10px] text-gray-500 mt-1 font-semibold">Toutes nos livraisons s'effectuent exclusivement le matin.</p>
       </div>
 
+      {/* CONSIGNES LIVREUR */}
       <div className="space-y-1.5 pt-1">
         <label className="font-bold text-gray-700 text-[11px] flex items-center gap-1.5 uppercase tracking-wider">
-          <Info size={12} className="text-emerald-700" />
-          <span>Consignes Livreur (Optionnel)</span>
+          <Info size={12} className="text-emerald-700" /> Consignes Livreur (Optionnel)
         </label>
         <input
           type="text"
           maxLength={150}
-          placeholder="Ex: Code portail 1234, quai de déchargement..."
+          placeholder="Ex: Code portail 1234, accès par le quai arrière..."
           value={deliveryDetails.instructions}
-          onChange={(e) => handleUpdate({ instructions: e.target.value })}
+          onChange={handleInstructionsChange}
           className="w-full p-2.5 border border-gray-300 rounded-xl bg-white text-xs font-medium focus:ring-2 focus:ring-emerald-500"
         />
       </div>
