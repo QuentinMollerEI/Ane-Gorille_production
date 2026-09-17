@@ -11,9 +11,8 @@ export default function Navbar() {
 
   // Récupération dynamique du panier
   const cartContext = useCart() || {};
-  const cartItems = cartContext.cartItems || [];
 
-  // Lecture du nombre d'articles dans le panier
+  // Calcul du nombre d'articles dans le panier
   const itemCount = cartContext.getTotalItems 
     ? cartContext.getTotalItems() 
     : (() => {
@@ -30,7 +29,7 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // 🔍 Détection de l'emplacement de l'utilisateur
+  // 🔍 Détection de la page active
   const searchParams = new URLSearchParams(location.search);
   const isHomePage = location.pathname === "/";
   const isCartView = searchParams.get("view") === "cart";
@@ -46,7 +45,7 @@ export default function Navbar() {
     }
   };
 
-  // 🔄 Action multi-contexte (Espace Pro / Mon Panier / Voir la Boutique)
+  // 🔄 Navigation multi-contexte (Espace Pro / Mon Panier / Voir la Boutique)
   const handleButtonClick = () => {
     if (isHomePage) {
       navigate("/dashboard");
@@ -54,6 +53,44 @@ export default function Navbar() {
       navigate("/dashboard?module=boutique&view=grid");
     } else {
       navigate("/dashboard?module=boutique&view=cart");
+    }
+  };
+
+  // 👤 Redirection au clic vers la page Mon Profil
+  const handleProfileClick = () => {
+    navigate("/dashboard?module=profil");
+  };
+
+  // 👤 Formattage du nom d'affichage de l'utilisateur
+  const getUserDisplayName = () => {
+    if (!user) return "";
+    return (
+      user.companyName ||
+      user.displayName ||
+      (user.email ? user.email.split("@")[0] : "Utilisateur")
+    );
+  };
+
+  const getUserInitial = () => {
+    const name = getUserDisplayName();
+    return name ? name.charAt(0).toUpperCase() : "U";
+  };
+
+  const getRoleLabel = () => {
+    if (!user?.role) return null;
+    switch (user.role) {
+      case "producer":
+        return "Producteur";
+      case "buyer_public":
+        return "Acheteur Public";
+      case "buyer_private":
+        return "Acheteur Privé";
+      case "carrier":
+        return "Livreur";
+      case "admin":
+        return "Admin";
+      default:
+        return user.role;
     }
   };
 
@@ -81,10 +118,10 @@ export default function Navbar() {
         </div>
       </Link>
 
-      {/* 2. ACTIONS & BOUTON INTELLIGENT */}
+      {/* 2. ACTIONS & IDENTIFICATION UTILISATEUR */}
       <div className="flex items-center gap-3">
         
-        {/* 🚀 BOUTON DYNAMIQUE : MASQUÉ SI UTILISATEUR NON CONNECTÉ */}
+        {/* 🚀 BOUTON DYNAMIQUE (Affiché uniquement si connecté) */}
         {user && (
           <button
             type="button"
@@ -127,12 +164,38 @@ export default function Navbar() {
         {/* CONTROLES ESPACE CONNECTÉ / VISITEUR */}
         {user ? (
           <div className="flex items-center gap-2 ml-2">
+            
+            {/* 👤 BADGE UTILISATEUR CLIQUABLE (Vers Mon Profil) */}
             <button
+              type="button"
+              onClick={handleProfileClick}
+              className="flex items-center gap-2.5 px-3 py-1.5 bg-gray-50 hover:bg-emerald-50/70 border border-gray-200 hover:border-emerald-300 rounded-xl shadow-2xs transition-all cursor-pointer group text-left focus:outline-none"
+              title="Accéder à mon profil"
+            >
+              <div className="w-7 h-7 rounded-lg bg-emerald-100 group-hover:bg-emerald-200 text-emerald-800 flex items-center justify-center font-black text-xs shrink-0 border border-emerald-200 transition-colors">
+                {getUserInitial()}
+              </div>
+              <div className="flex flex-col max-w-[140px] truncate">
+                <span className="text-[11px] font-extrabold text-gray-900 group-hover:text-emerald-900 truncate leading-tight transition-colors">
+                  {getUserDisplayName()}
+                </span>
+                {getRoleLabel() && (
+                  <span className="text-[9px] font-extrabold text-emerald-700 uppercase tracking-wider truncate leading-tight">
+                    {getRoleLabel()}
+                  </span>
+                )}
+              </div>
+            </button>
+
+            {/* BOUTON DÉCONNEXION */}
+            <button
+              type="button"
               onClick={handleLogout}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-all cursor-pointer"
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-all cursor-pointer border border-transparent hover:border-red-200"
+              title="Se déconnecter"
             >
               <LogOut size={16} />
-              <span>Déconnexion</span>
+              <span className="hidden sm:inline">Déconnexion</span>
             </button>
           </div>
         ) : (

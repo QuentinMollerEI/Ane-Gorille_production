@@ -5,16 +5,16 @@ export function calculateDeliveryWindow(orderDate = new Date()) {
   let leadDaysMin = 1;
 
   if ([1, 2, 3, 4].includes(day)) {
-    // Lundi, Mardi, Mercredi, Jeudi : Avant 12h -> J+1, Après 12h -> J+2
+    // Lundi au Jeudi : Avant 12h -> J+1 | Après 12h -> J+2
     leadDaysMin = hour < 12 ? 1 : 2;
   } else if (day === 5) {
-    // Vendredi : J+3 (Lundi)
-    leadDaysMin = 3;
+    // Vendredi : Avant 12h -> Lundi (J+1 décalé) | Après 12h -> Mardi (J+4)
+    leadDaysMin = hour < 12 ? 1 : 4;
   } else if (day === 6) {
-    // Samedi : J+3 (Mardi)
+    // Samedi : Livraison à partir du Mardi (J+3)
     leadDaysMin = 3;
   } else if (day === 0) {
-    // Dimanche : J+2 (Mardi)
+    // Dimanche : Livraison à partir du Mardi (J+2)
     leadDaysMin = 2;
   }
 
@@ -23,16 +23,16 @@ export function calculateDeliveryWindow(orderDate = new Date()) {
   minDate.setDate(minDate.getDate() + leadDaysMin);
   minDate.setHours(0, 0, 0, 0);
 
-  // Sécurité anti-weekend : Si la date min tombe un samedi ou dimanche, on repousse au lundi
-  if (minDate.getDay() === 6) minDate.setDate(minDate.getDate() + 2);
-  if (minDate.getDay() === 0) minDate.setDate(minDate.getDate() + 1);
+  // Sécurité anti-weekend : Si la date min tombe un samedi ou dimanche, repousser au lundi
+  if (minDate.getDay() === 6) minDate.setDate(minDate.getDate() + 2); // Samedi -> Lundi
+  if (minDate.getDay() === 0) minDate.setDate(minDate.getDate() + 1); // Dimanche -> Lundi
 
   // 2. Définition de la date maximum (J+7)
   const maxDate = new Date(orderDate);
   maxDate.setDate(maxDate.getDate() + 7);
   maxDate.setHours(23, 59, 59, 999);
 
-  // 3. Génération des dates disponibles (exclusion du samedi et dimanche)
+  // 3. Génération des dates disponibles (exclusion stricte du samedi et du dimanche)
   const availableDates = [];
   let currentDate = new Date(minDate);
 
