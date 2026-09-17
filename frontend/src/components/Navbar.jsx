@@ -113,7 +113,7 @@ export default function Navbar() {
             Âne & Gorille
           </span>
           <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-            L'énergie alimentaire
+            Plateforme et Transport
           </span>
         </div>
       </Link>

@@ -23,39 +23,42 @@ export default function FilterBar({
   categories = [],
   departments = [],
 }) {
-  // 1. Normalisation de la recherche textuelle
+  // 1. Normalisation de la recherche textuelle (compatibilité ascendante)
   const currentSearch = searchTerm !== undefined ? searchTerm : searchQuery || "";
+
   const handleSearchChange = (e) => {
     const val = e.target.value;
     if (setSearchTerm) setSearchTerm(val);
     if (setSearchQuery) setSearchQuery(val);
   };
 
-  // 2. Normalisation du label sélectionné
-  const currentLabel =
-    selectedLabel !== undefined
-      ? selectedLabel
-      : (isBioOnly || onlyBio)
-      ? "isBio"
-      : "all";
+  // 2. Normalisation du filtre Bio (EGAlim)
+  const isBioActive = Boolean(isBioOnly || onlyBio || selectedLabel === "isBio");
 
-  const handleLabelChange = (e) => {
-    const val = e.target.value;
-    if (setSelectedLabel) setSelectedLabel(val);
-    if (setIsBioOnly) setIsBioOnly(val === "isBio");
-    if (setOnlyBio) setOnlyBio(val === "isBio");
+  const handleToggleBio = () => {
+    const nextBio = !isBioActive;
+    if (setIsBioOnly) setIsBioOnly(nextBio);
+    if (setOnlyBio) setOnlyBio(nextBio);
+    if (setSelectedLabel) setSelectedLabel(nextBio ? "isBio" : "all");
   };
 
-  // 3. Détection des filtres actifs
+  // 3. Bascule dynamique du filtre Favoris
+  const handleToggleFavorites = () => {
+    if (setFavoritesOnly) {
+      setFavoritesOnly(!favoritesOnly);
+    }
+  };
+
+  // 4. Détection dynamique des filtres actifs
   const hasActiveFilters =
     Boolean(currentSearch.trim()) ||
     (selectedCategory && selectedCategory !== "all" && selectedCategory !== "") ||
-    currentLabel !== "all" ||
+    isBioActive ||
     Boolean(favoritesOnly) ||
     (selectedDept && selectedDept !== "all" && selectedDept !== "") ||
     (sortBy && sortBy !== "default" && sortBy !== "relevance");
 
-  // 4. Réinitialisation complète
+  // 5. Réinitialisation globale de tous les filtres
   const handleReset = () => {
     if (setSearchTerm) setSearchTerm("");
     if (setSearchQuery) setSearchQuery("");
@@ -69,150 +72,124 @@ export default function FilterBar({
   };
 
   return (
-    <div className="bg-white border border-gray-200/90 rounded-2xl p-2 shadow-xs transition-all">
-      {/* BARRE MONO-LIGNE COMPACTE ET ERGONOMIQUE */}
-      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar scrollbar-none py-0.5">
-        
-        {/* 🔍 1. Champ de Recherche Textuelle (S'agrandit pour occuper l'espace disponible) */}
-        <div className="relative flex-1 min-w-[200px] h-9">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Rechercher une culture, un maraîcher, un légume..."
-            value={currentSearch}
-            onChange={handleSearchChange}
-            className="w-full h-full pl-9 pr-3 bg-gray-50/80 border border-gray-200/80 rounded-xl text-xs font-bold text-gray-800 placeholder-gray-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
-          />
-        </div>
-
-        {/* 🗂️ 2. Sélecteur de Catégorie */}
-        <div className="relative shrink-0 h-9">
-          <Filter size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-          <select
-            value={selectedCategory || "all"}
-            onChange={(e) => setSelectedCategory && setSelectedCategory(e.target.value)}
-            className="h-full pl-8 pr-7 bg-gray-50/80 border border-gray-200/80 text-gray-700 font-extrabold text-[11px] rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-all appearance-none"
-          >
-            <option value="all">Toutes catégories</option>
-            {categories.length > 0 ? (
-              categories.map((cat) => {
-                const catId = typeof cat === "object" ? cat.id || cat.value || cat.label : cat;
-                const catLabel = typeof cat === "object" ? cat.label || cat.name || cat.id : cat;
-                return (
-                  <option key={catId} value={catId}>
-                    {catLabel}
-                  </option>
-                );
-              })
-            ) : (
-              <>
-                <option value="Légumes">Légumes</option>
-                <option value="Fruits">Fruits</option>
-                <option value="Aromates">Aromates</option>
-                <option value="Miel & Apiculture">Miel & Apiculture</option>
-                <option value="Œufs & Élevage">Œufs & Élevage</option>
-                <option value="Épicerie">Épicerie</option>
-              </>
-            )}
-          </select>
-        </div>
-
-        {/* 📍 3. Sélecteur / Input de Département */}
-        <div className="relative shrink-0 h-9">
-          <MapPin size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-emerald-600 pointer-events-none" />
-          {departments && departments.length > 0 ? (
-            <select
-              value={selectedDept || "all"}
-              onChange={(e) => setSelectedDept && setSelectedDept(e.target.value)}
-              className="h-full pl-8 pr-7 bg-gray-50/80 border border-gray-200/80 text-gray-700 font-extrabold text-[11px] rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-all appearance-none"
-            >
-              <option value="all">Tous dépts</option>
-              {departments.map((dept) => {
-                const val = typeof dept === "object" ? dept.value || dept.id : dept;
-                const label = typeof dept === "object" ? dept.label || dept.name : dept;
-                return (
-                  <option key={val} value={val}>
-                    {label}
-                  </option>
-                );
-              })}
-            </select>
-          ) : (
-            <input
-              type="text"
-              placeholder="Dépt (ex: 31)"
-              value={selectedDept && selectedDept !== "all" ? selectedDept : ""}
-              onChange={(e) => setSelectedDept && setSelectedDept(e.target.value)}
-              className="h-full w-24 pl-8 pr-2.5 bg-gray-50/80 border border-gray-200/80 text-gray-800 font-bold text-[11px] rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
-            />
-          )}
-        </div>
-
-        {/* 🏅 4. Sélecteur Déroulant des Labels SIQO / EGAlim */}
-        <div className="relative shrink-0 h-9">
-          <Award size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-600 pointer-events-none" />
-          <select
-            value={currentLabel}
-            onChange={handleLabelChange}
-            className="h-full pl-8 pr-7 bg-gray-50/80 border border-gray-200/80 text-gray-700 font-extrabold text-[11px] rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-all appearance-none"
-          >
-            <option value="all">Tous les labels</option>
-            <option value="isBio">🌿 Bio (AB)</option>
-            <option value="isHve">🍃 HVE</option>
-            <option value="isAop">🍷 AOP</option>
-            <option value="isAoc">🍇 AOC</option>
-            <option value="isIgp">🗺️ IGP</option>
-            <option value="isLabelRouge">🔴 Label Rouge</option>
-          </select>
-        </div>
-
-        {/* ↕️ 5. Sélecteur de Tri */}
-        {setSortBy && (
-          <div className="relative shrink-0 h-9">
-            <ArrowUpDown size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            <select
-              value={sortBy || "default"}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="h-full pl-8 pr-7 bg-gray-50/80 border border-gray-200/80 text-gray-700 font-extrabold text-[11px] rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-all appearance-none"
-            >
-              <option value="default">Pertinence</option>
-              <option value="priceAsc">Prix : + bas au + haut</option>
-              <option value="priceDesc">Prix : + haut au + bas</option>
-              <option value="stockDesc">Stock disponible</option>
-            </select>
-          </div>
-        )}
-
-        {/* ❤️ 6. Toggle Favoris */}
-        {setFavoritesOnly && (
-          <button
-            type="button"
-            onClick={() => setFavoritesOnly(!favoritesOnly)}
-            title={favoritesOnly ? "Afficher tous les produits" : "Favoris uniquement"}
-            className={`h-9 w-9 shrink-0 rounded-xl border flex items-center justify-center transition-all cursor-pointer ${
-              favoritesOnly
-                ? "bg-red-50 text-red-600 border-red-200 shadow-xs"
-                : "bg-gray-50/80 text-gray-400 border-gray-200/80 hover:bg-gray-100 hover:text-gray-600"
-            }`}
-          >
-            <Heart size={14} className={favoritesOnly ? "fill-red-500 text-red-500" : ""} />
-          </button>
-        )}
-
-        {/* ❌ 7. Bouton de Réinitialisation dynamique */}
-        {hasActiveFilters && (
-          <button
-            type="button"
-            onClick={handleReset}
-            title="Réinitialiser tous les filtres"
-            className="h-9 px-2.5 shrink-0 bg-red-50 hover:bg-red-100 text-red-700 font-extrabold text-[11px] border border-red-200 rounded-xl transition-all flex items-center gap-1 cursor-pointer animate-fade-in"
-          >
-            <X size={13} />
-            <span className="hidden sm:inline">Effacer</span>
-          </button>
-        )}
-
+    <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm space-y-3 lg:space-y-0 lg:flex lg:items-center lg:gap-3 text-xs font-semibold">
+      
+      {/* 🔍 1. Champ de Recherche Textuelle */}
+      <div className="relative flex-1">
+        <Search size={16} className="absolute left-3.5 top-3 text-gray-400" />
+        <input
+          type="text"
+          placeholder="Rechercher une culture, un maraîcher, un légume..."
+          value={currentSearch}
+          onChange={handleSearchChange}
+          className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-gray-800 placeholder-gray-400"
+        />
       </div>
+
+      {/* 🗂️ 2. Sélecteur de Catégorie */}
+      <div className="flex items-center gap-2">
+        <Filter size={15} className="text-gray-400 shrink-0" />
+        <select
+          value={selectedCategory || "all"}
+          onChange={(e) => setSelectedCategory && setSelectedCategory(e.target.value)}
+          className="border border-gray-200 rounded-2xl px-3 py-2.5 font-bold text-gray-700 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white cursor-pointer"
+        >
+          <option value="all">Toutes catégories</option>
+          {categories.length > 0 ? (
+            categories.map((cat) => (
+              <option key={cat.id || cat} value={cat.id || cat}>
+                {cat.label || cat}
+              </option>
+            ))
+          ) : (
+            <>
+              <option value="Légumes">Légumes</option>
+              <option value="Fruits">Fruits</option>
+              <option value="Aromates">Aromates</option>
+              <option value="Épicerie">Épicerie</option>
+            </>
+          )}
+        </select>
+      </div>
+
+      {/* 📍 3. Sélecteur de Département (Optionnel) */}
+      {setSelectedDept && (
+        <div className="flex items-center gap-1.5">
+          <MapPin size={15} className="text-gray-400 shrink-0" />
+          <select
+            value={selectedDept || "all"}
+            onChange={(e) => setSelectedDept(e.target.value)}
+            className="border border-gray-200 rounded-2xl px-3 py-2.5 font-bold text-gray-700 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white cursor-pointer"
+          >
+            <option value="all">Tous dépts</option>
+            {departments.map((dept) => (
+              <option key={dept} value={dept}>
+                Dépt {dept}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* 🏅 4. Bouton Filtre Bio (EGAlim) */}
+      <button
+        type="button"
+        onClick={handleToggleBio}
+        className={`px-4 py-2.5 rounded-2xl border transition-all flex items-center gap-1.5 cursor-pointer font-bold shrink-0 ${
+          isBioActive
+            ? "bg-amber-100 text-amber-900 border-amber-300 shadow-xs"
+            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+        }`}
+      >
+        <Award size={15} className={isBioActive ? "text-amber-800" : "text-gray-400"} />
+        <span>Certifié Bio (EGAlim)</span>
+      </button>
+
+      {/* ❤️ 5. Bouton Mes Favoris */}
+      <button
+        type="button"
+        onClick={handleToggleFavorites}
+        className={`px-4 py-2.5 rounded-2xl border transition-all flex items-center gap-1.5 cursor-pointer font-bold shrink-0 ${
+          favoritesOnly
+            ? "bg-red-50 text-red-700 border-red-200 shadow-xs"
+            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+        }`}
+      >
+        <Heart
+          size={15}
+          className={favoritesOnly ? "text-red-500 fill-red-500" : "text-gray-400"}
+        />
+        <span>Mes Favoris</span>
+      </button>
+
+      {/* ↕️ 6. LISTE DÉROULANTE : ORDRE D'AFFICHAGE ET TRI */}
+      <div className="flex items-center gap-1.5">
+        <ArrowUpDown size={15} className="text-gray-400 shrink-0" />
+        <select
+          value={sortBy || "default"}
+          onChange={(e) => setSortBy && setSortBy(e.target.value)}
+          className="border border-gray-200 rounded-2xl px-3 py-2.5 font-bold text-gray-700 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white cursor-pointer"
+          title="Ordre d'affichage du catalogue"
+        >
+          <option value="default">Ordre d'affichage : Pertinence</option>
+          <option value="priceAsc">Prix : du - cher au + cher</option>
+          <option value="priceDesc">Prix : du + cher au - cher</option>
+          <option value="titleAsc">Nom : De A à Z</option>
+          <option value="stockDesc">Stock disponible (décroissant)</option>
+        </select>
+      </div>
+
+      {/* ❌ 7. Bouton Réinitialisation générale */}
+      {hasActiveFilters && (
+        <button
+          type="button"
+          onClick={handleReset}
+          className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-200 rounded-2xl transition-all cursor-pointer shrink-0"
+          title="Réinitialiser tous les filtres"
+        >
+          <X size={15} />
+        </button>
+      )}
     </div>
   );
 }
