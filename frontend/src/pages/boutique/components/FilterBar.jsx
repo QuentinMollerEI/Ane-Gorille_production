@@ -1,12 +1,23 @@
 import React from "react";
 import { Search, Filter, MapPin, Award, Heart, ArrowUpDown, X } from "lucide-react";
 
+// Liste officielle des 7 catégories d'ajout de produit
+const OFFICIAL_CATEGORIES = [
+  "Légumes",
+  "Fruits",
+  "Herbes",
+  "Miel & Apiculture",
+  "Œufs & Élevage",
+  "Produits Secs & Épicerie",
+  "Produits Transformés & Conserves"
+];
+
 export default function FilterBar({
   searchTerm,
   setSearchTerm,
   searchQuery,
   setSearchQuery,
-  selectedCategory,
+  selectedCategory = "all",
   setSelectedCategory,
   isBioOnly,
   setIsBioOnly,
@@ -16,15 +27,15 @@ export default function FilterBar({
   setSelectedLabel,
   favoritesOnly,
   setFavoritesOnly,
-  selectedDept,
+  selectedDept = "all",
   setSelectedDept,
-  sortBy,
+  sortBy = "default",
   setSortBy,
   categories = [],
   departments = [],
 }) {
-  // 1. Normalisation de la recherche textuelle (compatibilité ascendante)
-  const currentSearch = searchTerm !== undefined ? searchTerm : searchQuery || "";
+  // Normalisation de la recherche textuelle
+  const searchValue = searchTerm !== undefined ? searchTerm : searchQuery || "";
 
   const handleSearchChange = (e) => {
     const val = e.target.value;
@@ -32,33 +43,38 @@ export default function FilterBar({
     if (setSearchQuery) setSearchQuery(val);
   };
 
-  // 2. Normalisation du filtre Bio (EGAlim)
+  // Normalisation du filtre Bio
   const isBioActive = Boolean(isBioOnly || onlyBio || selectedLabel === "isBio");
 
-  const handleToggleBio = () => {
+  const handleBioToggle = () => {
     const nextBio = !isBioActive;
     if (setIsBioOnly) setIsBioOnly(nextBio);
     if (setOnlyBio) setOnlyBio(nextBio);
     if (setSelectedLabel) setSelectedLabel(nextBio ? "isBio" : "all");
   };
 
-  // 3. Bascule dynamique du filtre Favoris
-  const handleToggleFavorites = () => {
-    if (setFavoritesOnly) {
-      setFavoritesOnly(!favoritesOnly);
-    }
-  };
+  // Fusion dynamique des catégories avec les 7 catégories officielles
+  const displayCategories = Array.from(
+    new Set([...OFFICIAL_CATEGORIES, ...(categories || [])])
+  );
 
-  // 4. Détection dynamique des filtres actifs
+  // Filtrage strict des départements pour ne conserver QUE les numéros à 2 chiffres
+  const validDepartments = Array.from(
+    new Set(
+      (departments || [])
+        .map((d) => String(d).trim().replace(/\D/g, "").substring(0, 2))
+        .filter((d) => d.length === 2)
+    )
+  ).sort();
+
   const hasActiveFilters =
-    Boolean(currentSearch.trim()) ||
+    Boolean(searchValue.trim()) ||
     (selectedCategory && selectedCategory !== "all" && selectedCategory !== "") ||
     isBioActive ||
     Boolean(favoritesOnly) ||
     (selectedDept && selectedDept !== "all" && selectedDept !== "") ||
     (sortBy && sortBy !== "default" && sortBy !== "relevance");
 
-  // 5. Réinitialisation globale de tous les filtres
   const handleReset = () => {
     if (setSearchTerm) setSearchTerm("");
     if (setSearchQuery) setSearchQuery("");
@@ -72,124 +88,132 @@ export default function FilterBar({
   };
 
   return (
-    <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm space-y-3 lg:space-y-0 lg:flex lg:items-center lg:gap-3 text-xs font-semibold">
-      
-      {/* 🔍 1. Champ de Recherche Textuelle */}
-      <div className="relative flex-1">
-        <Search size={16} className="absolute left-3.5 top-3 text-gray-400" />
+    <div className="w-full bg-white border border-gray-200/80 rounded-2xl p-3 shadow-xs flex flex-wrap items-center gap-2.5 text-xs">
+      {/* 🔍 1. Zone de Recherche Adaptative */}
+      <div className="relative flex-1 min-w-[220px] sm:min-w-[280px]">
+        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
         <input
           type="text"
           placeholder="Rechercher une culture, un maraîcher, un légume..."
-          value={currentSearch}
+          value={searchValue}
           onChange={handleSearchChange}
-          className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-gray-800 placeholder-gray-400"
+          className="w-full pl-9 pr-8 py-2 bg-gray-50/60 border border-gray-200 rounded-xl font-medium text-gray-800 placeholder-gray-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 focus:outline-none transition-all text-xs"
         />
-      </div>
-
-      {/* 🗂️ 2. Sélecteur de Catégorie */}
-      <div className="flex items-center gap-2">
-        <Filter size={15} className="text-gray-400 shrink-0" />
-        <select
-          value={selectedCategory || "all"}
-          onChange={(e) => setSelectedCategory && setSelectedCategory(e.target.value)}
-          className="border border-gray-200 rounded-2xl px-3 py-2.5 font-bold text-gray-700 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white cursor-pointer"
-        >
-          <option value="all">Toutes catégories</option>
-          {categories.length > 0 ? (
-            categories.map((cat) => (
-              <option key={cat.id || cat} value={cat.id || cat}>
-                {cat.label || cat}
-              </option>
-            ))
-          ) : (
-            <>
-              <option value="Légumes">Légumes</option>
-              <option value="Fruits">Fruits</option>
-              <option value="Aromates">Aromates</option>
-              <option value="Épicerie">Épicerie</option>
-            </>
-          )}
-        </select>
-      </div>
-
-      {/* 📍 3. Sélecteur de Département (Optionnel) */}
-      {setSelectedDept && (
-        <div className="flex items-center gap-1.5">
-          <MapPin size={15} className="text-gray-400 shrink-0" />
-          <select
-            value={selectedDept || "all"}
-            onChange={(e) => setSelectedDept(e.target.value)}
-            className="border border-gray-200 rounded-2xl px-3 py-2.5 font-bold text-gray-700 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white cursor-pointer"
+        {searchValue && (
+          <button
+            type="button"
+            onClick={() => {
+              if (setSearchTerm) setSearchTerm("");
+              if (setSearchQuery) setSearchQuery("");
+            }}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 cursor-pointer"
+            title="Effacer la recherche"
           >
-            <option value="all">Tous dépts</option>
-            {departments.map((dept) => (
-              <option key={dept} value={dept}>
-                Dépt {dept}
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      {/* 🗂️ 2. Filtres & Tri (Flex-wrap pour s'ajuster parfaitement sans décaler l'écran) */}
+      <div className="flex flex-wrap items-center gap-2 shrink-0 max-w-full">
+        {/* Catégories */}
+        <div className="relative max-w-[170px] sm:max-w-[200px]">
+          <select
+            value={selectedCategory || "all"}
+            onChange={(e) => setSelectedCategory && setSelectedCategory(e.target.value)}
+            className="w-full appearance-none bg-gray-50/60 hover:bg-gray-100/80 border border-gray-200 rounded-xl pl-8 pr-7 py-2 font-bold text-gray-700 cursor-pointer focus:ring-2 focus:ring-emerald-500/20 focus:outline-none transition-all text-xs truncate"
+          >
+            <option value="all">Toutes catégories</option>
+            {displayCategories.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
               </option>
             ))}
           </select>
+          <Filter size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
         </div>
-      )}
 
-      {/* 🏅 4. Bouton Filtre Bio (EGAlim) */}
-      <button
-        type="button"
-        onClick={handleToggleBio}
-        className={`px-4 py-2.5 rounded-2xl border transition-all flex items-center gap-1.5 cursor-pointer font-bold shrink-0 ${
-          isBioActive
-            ? "bg-amber-100 text-amber-900 border-amber-300 shadow-xs"
-            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-        }`}
-      >
-        <Award size={15} className={isBioActive ? "text-amber-800" : "text-gray-400"} />
-        <span>Certifié Bio (EGAlim)</span>
-      </button>
+        {/* Département */}
+        {setSelectedDept && (
+          <div className="relative">
+            <select
+              value={selectedDept || "all"}
+              onChange={(e) => setSelectedDept(e.target.value)}
+              className="appearance-none bg-gray-50/60 hover:bg-gray-100/80 border border-gray-200 rounded-xl pl-8 pr-7 py-2 font-bold text-gray-700 cursor-pointer focus:ring-2 focus:ring-emerald-500/20 focus:outline-none transition-all text-xs"
+            >
+              <option value="all">Tous dépts</option>
+              {validDepartments.map((dept) => (
+                <option key={dept} value={dept}>
+                  Dépt {dept}
+                </option>
+              ))}
+            </select>
+            <MapPin size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-emerald-600 pointer-events-none" />
+          </div>
+        )}
 
-      {/* ❤️ 5. Bouton Mes Favoris */}
-      <button
-        type="button"
-        onClick={handleToggleFavorites}
-        className={`px-4 py-2.5 rounded-2xl border transition-all flex items-center gap-1.5 cursor-pointer font-bold shrink-0 ${
-          favoritesOnly
-            ? "bg-red-50 text-red-700 border-red-200 shadow-xs"
-            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-        }`}
-      >
-        <Heart
-          size={15}
-          className={favoritesOnly ? "text-red-500 fill-red-500" : "text-gray-400"}
-        />
-        <span>Mes Favoris</span>
-      </button>
-
-      {/* ↕️ 6. LISTE DÉROULANTE : ORDRE D'AFFICHAGE ET TRI */}
-      <div className="flex items-center gap-1.5">
-        <ArrowUpDown size={15} className="text-gray-400 shrink-0" />
-        <select
-          value={sortBy || "default"}
-          onChange={(e) => setSortBy && setSortBy(e.target.value)}
-          className="border border-gray-200 rounded-2xl px-3 py-2.5 font-bold text-gray-700 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white cursor-pointer"
-          title="Ordre d'affichage du catalogue"
-        >
-          <option value="default">Ordre d'affichage : Pertinence</option>
-          <option value="priceAsc">Prix : du - cher au + cher</option>
-          <option value="priceDesc">Prix : du + cher au - cher</option>
-          <option value="titleAsc">Nom : De A à Z</option>
-          <option value="stockDesc">Stock disponible (décroissant)</option>
-        </select>
-      </div>
-
-      {/* ❌ 7. Bouton Réinitialisation générale */}
-      {hasActiveFilters && (
+        {/* Bouton Bio */}
         <button
           type="button"
-          onClick={handleReset}
-          className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-200 rounded-2xl transition-all cursor-pointer shrink-0"
-          title="Réinitialiser tous les filtres"
+          onClick={handleBioToggle}
+          className={`px-3 py-2 rounded-xl border font-bold transition-all flex items-center gap-1.5 cursor-pointer text-xs ${
+            isBioActive
+              ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs"
+              : "bg-gray-50/60 text-gray-600 border-gray-200 hover:bg-gray-100/80"
+          }`}
         >
-          <X size={15} />
+          <Award size={14} className={isBioActive ? "text-emerald-600" : "text-gray-400"} />
+          <span>Bio</span>
         </button>
-      )}
+
+        {/* Bouton Fournisseurs Favoris */}
+        {setFavoritesOnly && (
+          <button
+            type="button"
+            onClick={() => setFavoritesOnly(!favoritesOnly)}
+            className={`px-3 py-2 rounded-xl border font-bold transition-all flex items-center gap-1.5 cursor-pointer text-xs ${
+              favoritesOnly
+                ? "bg-rose-50 text-rose-700 border-rose-200 shadow-2xs"
+                : "bg-gray-50/60 text-gray-600 border-gray-200 hover:bg-gray-100/80"
+            }`}
+          >
+            <Heart size={14} className={favoritesOnly ? "text-rose-600 fill-rose-600" : "text-gray-400"} />
+            <span>Favoris</span>
+          </button>
+        )}
+
+        {/* ↕️ Tri (Pertinence / Stock / Prix) - Protégé contre le débordement */}
+        {setSortBy && (
+          <div className="relative max-w-[180px] sm:max-w-[210px]">
+            <select
+              value={sortBy || "default"}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="w-full appearance-none bg-gray-50/60 hover:bg-gray-100/80 border border-gray-200 rounded-xl pl-8 pr-7 py-2 font-bold text-gray-700 cursor-pointer focus:ring-2 focus:ring-emerald-500/20 focus:outline-none transition-all text-xs truncate"
+            >
+              <option value="default">Ordre d'affichage</option>
+              <option value="stock-desc">Stock : Du + au - dispo</option>
+              <option value="stock-asc">Stock : Du - au + dispo</option>
+              <option value="price-asc">Prix HT : Croissant</option>
+              <option value="price-desc">Prix HT : Décroissant</option>
+              <option value="name-asc">Nom (A-Z)</option>
+              <option value="date-desc">Plus récents</option>
+            </select>
+            <ArrowUpDown size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          </div>
+        )}
+
+        {/* Bouton Réinitialiser */}
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={handleReset}
+            className="px-2.5 py-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl border border-gray-200 transition-all cursor-pointer flex items-center gap-1 text-xs"
+            title="Effacer tous les filtres"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
