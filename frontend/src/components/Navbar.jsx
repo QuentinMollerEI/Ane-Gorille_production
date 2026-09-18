@@ -13,8 +13,8 @@ export default function Navbar() {
   const cartContext = useCart() || {};
 
   // Calcul du nombre d'articles dans le panier
-  const itemCount = cartContext.getTotalItems 
-    ? cartContext.getTotalItems() 
+  const itemCount = cartContext.getTotalItems
+    ? cartContext.getTotalItems()
     : (() => {
         try {
           const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
@@ -45,14 +45,32 @@ export default function Navbar() {
     }
   };
 
-  // 🔄 Navigation multi-contexte (Espace Pro / Mon Panier / Voir la Boutique)
+  // 🔄 Navigation multi-contexte adaptative (Acheteurs & Fournisseurs/Producteurs)
   const handleButtonClick = () => {
+    const role = user?.role;
+    const isSupplier = role === "producer" || role === "producteur" || role === "fournisseur";
+    const isCarrier = role === "carrier" || role === "livreur";
+
     if (isHomePage) {
-      navigate("/dashboard");
+      if (isSupplier) {
+        navigate("/dashboard?module=rayon");
+      } else if (isCarrier) {
+        navigate("/dashboard?module=route");
+      } else {
+        navigate("/dashboard?module=boutique");
+      }
     } else if (isCartView) {
-      navigate("/dashboard?module=boutique&view=grid");
+      if (isSupplier) {
+        navigate("/dashboard?module=rayon");
+      } else {
+        navigate("/dashboard?module=boutique&view=grid");
+      }
     } else {
-      navigate("/dashboard?module=boutique&view=cart");
+      if (isSupplier) {
+        navigate("/dashboard?module=rayon");
+      } else {
+        navigate("/dashboard?module=boutique&view=cart");
+      }
     }
   };
 
@@ -80,12 +98,19 @@ export default function Navbar() {
     if (!user?.role) return null;
     switch (user.role) {
       case "producer":
+      case "producteur":
+      case "fournisseur":
         return "Producteur";
       case "buyer_public":
+      case "acheteur_public":
+      case "client_public":
         return "Acheteur Public";
       case "buyer_private":
+      case "acheteur_prive":
+      case "client_pro":
         return "Acheteur Privé";
       case "carrier":
+      case "livreur":
         return "Livreur";
       case "admin":
         return "Admin";
@@ -94,127 +119,120 @@ export default function Navbar() {
     }
   };
 
+  const role = user?.role;
+  const isSupplier = role === "producer" || role === "producteur" || role === "fournisseur";
+
   return (
-    <nav className="bg-white border-b border-gray-100 py-3 px-6 flex items-center justify-between shadow-xs sticky top-0 z-50">
-      
-      {/* 1. LOGO & MARQUE */}
-      <Link to="/" className="flex items-center gap-3 group">
-        <img
-          src="/logo-ecusson-transparent.png"
-          alt="Logo Âne & Gorille"
-          className="h-10 w-10 object-contain bg-transparent rounded-full"
-          onError={(e) => {
-            e.target.onerror = null;
-            e.target.src = "/Logo.png";
-          }}
-        />
-        <div className="flex flex-col">
-          <span className="font-black text-base text-gray-900 tracking-tight uppercase group-hover:text-emerald-700 transition-colors">
-            Âne & Gorille
-          </span>
-          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-            Plateforme et Transport
-          </span>
-        </div>
-      </Link>
-
-      {/* 2. ACTIONS & IDENTIFICATION UTILISATEUR */}
-      <div className="flex items-center gap-3">
-        
-        {/* 🚀 BOUTON DYNAMIQUE (Affiché uniquement si connecté) */}
-        {user && (
-          <button
-            type="button"
-            onClick={handleButtonClick}
-            className="relative group px-4 py-2 rounded-xl text-[11px] font-bold tracking-wider uppercase transition-all duration-300 flex items-center gap-2 cursor-pointer border active:scale-[0.97] bg-emerald-950 hover:bg-emerald-900 text-emerald-100 border-emerald-800/60 shadow-2xs hover:shadow-md"
-          >
-            {isHomePage ? (
-              <>
-                <LayoutDashboard
-                  size={14}
-                  className="stroke-[1.4] text-emerald-300 transition-transform duration-300 group-hover:scale-110"
-                />
-                <span className="font-extrabold tracking-tight">Espace Pro</span>
-              </>
-            ) : isCartView ? (
-              <>
-                <Store
-                  size={14}
-                  className="stroke-[1.4] text-amber-300 transition-transform duration-300 group-hover:scale-110"
-                />
-                <span className="font-extrabold tracking-tight">Voir la Boutique</span>
-              </>
-            ) : (
-              <>
-                <ShoppingCart
-                  size={14}
-                  className="stroke-[1.4] text-emerald-300 transition-transform duration-300 group-hover:scale-110"
-                />
-                <span className="font-extrabold tracking-tight">Mon Panier</span>
-              </>
-            )}
-
-            {/* BADGE COMPTEUR D'ARTICLES */}
-            <span className="ml-0.5 bg-gradient-to-r from-amber-400 to-yellow-400 text-amber-950 text-[9px] font-black px-1.5 py-0.5 rounded-md shadow-2xs border border-yellow-200/60">
-              {itemCount}
+    <header className="bg-white border-b border-gray-100 sticky top-0 z-50 shadow-xs">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        {/* 1. LOGO & MARQUE */}
+        <Link to="/" className="flex items-center gap-3 group">
+          <div className="w-10 h-10 rounded-xl overflow-hidden bg-emerald-50 border border-emerald-100 flex items-center justify-center p-0.5 group-hover:scale-105 transition-transform">
+            <img
+              src="/logo.png"
+              alt="Logo Âne & Gorille"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                e.target.onerror = null;
+                e.target.src = "/Logo.png";
+              }}
+            />
+          </div>
+          <div className="flex flex-col">
+            <span className="font-extrabold text-gray-900 text-base leading-tight tracking-tight">
+              Âne & Gorille
             </span>
-          </button>
-        )}
+            <span className="text-[10px] text-gray-400 font-semibold tracking-wider uppercase">
+              Plateforme et Transport
+            </span>
+          </div>
+        </Link>
 
-        {/* CONTROLES ESPACE CONNECTÉ / VISITEUR */}
-        {user ? (
-          <div className="flex items-center gap-2 ml-2">
-            
-            {/* 👤 BADGE UTILISATEUR CLIQUABLE (Vers Mon Profil) */}
-            <button
-              type="button"
-              onClick={handleProfileClick}
-              className="flex items-center gap-2.5 px-3 py-1.5 bg-gray-50 hover:bg-emerald-50/70 border border-gray-200 hover:border-emerald-300 rounded-xl shadow-2xs transition-all cursor-pointer group text-left focus:outline-none"
-              title="Accéder à mon profil"
-            >
-              <div className="w-7 h-7 rounded-lg bg-emerald-100 group-hover:bg-emerald-200 text-emerald-800 flex items-center justify-center font-black text-xs shrink-0 border border-emerald-200 transition-colors">
-                {getUserInitial()}
-              </div>
-              <div className="flex flex-col max-w-[140px] truncate">
-                <span className="text-[11px] font-extrabold text-gray-900 group-hover:text-emerald-900 truncate leading-tight transition-colors">
-                  {getUserDisplayName()}
-                </span>
-                {getRoleLabel() && (
-                  <span className="text-[9px] font-extrabold text-emerald-700 uppercase tracking-wider truncate leading-tight">
-                    {getRoleLabel()}
-                  </span>
+        {/* 2. ACTIONS & IDENTIFICATION UTILISATEUR */}
+        <div className="flex items-center gap-3">
+          {user ? (
+            <>
+              {/* 🚀 BOUTON DYNAMIQUE (Affiché uniquement si connecté) */}
+              <button
+                onClick={handleButtonClick}
+                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+              >
+                {isHomePage ? (
+                  <>
+                    <LayoutDashboard size={16} />
+                    <span>Espace Pro</span>
+                  </>
+                ) : isCartView ? (
+                  <>
+                    <Store size={16} />
+                    <span>{isSupplier ? "Gestion des Stocks" : "Voir la Boutique"}</span>
+                  </>
+                ) : (
+                  <>
+                    {isSupplier ? (
+                      <>
+                        <Store size={16} />
+                        <span>Mise en Rayon</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShoppingCart size={16} />
+                        <span>Mon Panier ({itemCount})</span>
+                      </>
+                    )}
+                  </>
                 )}
-              </div>
-            </button>
+              </button>
 
-            {/* BOUTON DÉCONNEXION */}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-all cursor-pointer border border-transparent hover:border-red-200"
-              title="Se déconnecter"
-            >
-              <LogOut size={16} />
-              <span className="hidden sm:inline">Déconnexion</span>
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 ml-2">
-            <Link
-              to="/login"
-              className="px-4 py-2 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-100 transition-all"
-            >
-              Se connecter
-            </Link>
-            <Link
-              to="/register"
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 transition-all shadow-sm"
-            >
-              Créer un compte
-            </Link>
-          </div>
-        )}
+              {/* BLOC PROFIL & DÉCONNEXION */}
+              <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
+                <button
+                  onClick={handleProfileClick}
+                  className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded-xl transition-colors text-left cursor-pointer"
+                  title="Accéder à Mon Profil"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 font-black text-xs flex items-center justify-center border border-emerald-200">
+                    {getUserInitial()}
+                  </div>
+                  <div className="hidden sm:flex flex-col">
+                    <span className="text-xs font-bold text-gray-900 leading-tight">
+                      {getUserDisplayName()}
+                    </span>
+                    {getRoleLabel() && (
+                      <span className="text-[10px] text-emerald-700 font-semibold">
+                        {getRoleLabel()}
+                      </span>
+                    )}
+                  </div>
+                </button>
+
+                <button
+                  onClick={handleLogout}
+                  className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
+                  title="Déconnexion"
+                >
+                  <LogOut size={18} />
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Link
+                to="/login"
+                className="px-4 py-2 text-xs font-bold text-gray-700 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-colors"
+              >
+                Connexion
+              </Link>
+              <Link
+                to="/register"
+                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-colors shadow-xs"
+              >
+                Inscription
+              </Link>
+            </div>
+          )}
+        </div>
       </div>
-    </nav>
+    </header>
   );
 }
