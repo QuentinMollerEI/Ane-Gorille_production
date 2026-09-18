@@ -139,14 +139,6 @@ export default function Login() {
                 <label htmlFor="password" className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
                   Mot de passe
                 </label>
-                <button
-                  type="button"
-                  onClick={handleForgotPassword}
-                  disabled={resetLoading}
-                  className="text-xs font-bold text-emerald-700 hover:text-emerald-800 hover:underline focus:outline-none disabled:opacity-50"
-                >
-                  {resetLoading ? "Envoi..." : "Mot de passe oublié ?"}
-                </button>
               </div>
               <input
                 id="password"
@@ -183,8 +175,8 @@ export default function Login() {
           </div>
         </form>
 
-        {/* LIEN INSCRIPTION */}
-        <div className="text-center pt-2">
+        {/* LIEN INSCRIPTION & MOT DE PASSE OUBLIÉ */}
+        <div className="flex flex-col items-center gap-2 pt-2">
           <p className="text-xs font-semibold text-gray-600">
             Pas encore de compte ?{" "}
             <Link
@@ -194,7 +186,17 @@ export default function Login() {
               Créer un compte
             </Link>
           </p>
+
+          <button
+            type="button"
+            onClick={handleForgotPassword}
+            disabled={resetLoading}
+            className="text-xs font-bold text-emerald-700 hover:text-emerald-800 hover:underline focus:outline-none disabled:opacity-50"
+          >
+            {resetLoading ? "Envoi..." : "Mot de passe oublié ?"}
+          </button>
         </div>
+
       </div>
     </div>
   );

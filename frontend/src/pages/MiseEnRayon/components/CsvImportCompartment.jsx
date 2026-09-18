@@ -1,325 +1,512 @@
 import React, { useState } from "react";
 import { useAuth } from "../../../context/AuthContext";
-import { ProductService } from "../../../services/ProductService";
-import { 
-  FileSpreadsheet, 
-  Upload, 
-  Download, 
-  CheckCircle, 
-  AlertCircle, 
-  RefreshCw, 
+import { db } from "../../../services/firestore.service";
+import { collection, doc, writeBatch, serverTimestamp } from "firebase/firestore";
+import {
+  FileSpreadsheet,
+  Upload,
+  Download,
+  CheckCircle,
+  AlertCircle,
+  RefreshCw,
   Trash2,
-  PackageCheck
+  ShieldCheck,
+  PackageCheck,
+  Tag,
+  Calendar,
+  Award
 } from "lucide-react";
 
-// ==========================================
-// 1. HELPER PUR : Parsing & Normalisation CSV
-// ==========================================
-function parseBool(val) {
-  if (!val) return false;
-  const clean = String(val).trim().toLowerCase();
-  return ["oui", "vrai", "1", "true", "x"].includes(clean);
-}
+/**
+ * 🌾 COMPOSANT : CsvImportCompartment.jsx
+ * Responsabilité unique : Importation en masse de produits via fichier CSV.
+ * 
+ * Supporte la totalité des catégories et unités B2B / B2G :
+ * - Catégories : Légumes, Fruits, Herbes & Aromates, Miel & Apiculture, Œufs & Élevage, Produits Transformés & Conserves, Produits Secs & Épicerie.
+ * - Unités : kg, pièce, botte, barquette, cagette, bocal, pot, sachet.
+ */
+export default function CsvImportCompartment({ onProductsImported }) {
+  const { user } = useAuth();
+  const [csvFile, setCsvFile] = useState(null);
+  const [parsedRows, setParsedRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState({ type: "", text: "" });
 
-function parseCsvText(text) {
-  const lines = text.split(/\r\n|\n/).filter((line) => line.trim() !== "");
-  if (lines.length < 2) {
-    throw new Error("Le fichier CSV doit contenir au moins un en-tête et une ligne de produit.");
-  }
+  const producerName =
+    user?.companyName ||
+    user?.displayName ||
+    user?.name ||
+    user?.producerName ||
+    "Maraîcher Exploitant";
 
-  const separator = lines[0].includes(";") ? ";" : ",";
-  const headers = lines[0].split(separator).map((h) => 
-    h.trim().toLowerCase().replace(/[^a-z0-9]/g, "")
-  );
+  const producerDept =
+    user?.department ||
+    user?.departmentCode ||
+    (user?.postalCode ? user.postalCode.substring(0, 2) : "") ||
+    "Local";
 
-  const parsedProducts = [];
+  const harvestLocation =
+    user?.address || user?.city || user?.companyName || "Exploitation locale";
 
-  for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(separator).map((v) => v.trim());
-    if (values.length < 2) continue;
+  // Helper de sanitization de la catégorie
+  const sanitizeCategory = (cat) => {
+    const clean = (cat || "").toLowerCase().trim();
+    if (clean.includes("fruit")) return "Fruits";
+    if (clean.includes("herb") || clean.includes("aromat")) return "Herbes & Aromates";
+    if (clean.includes("miel") || clean.includes("apicult")) return "Miel & Apiculture";
+    if (clean.includes("œuf") || clean.includes("oeuf") || clean.includes("élevag") || clean.includes("elevag")) return "Œufs & Élevage";
+    if (clean.includes("transfor") || clean.includes("conserv")) return "Produits Transformés & Conserves";
+    if (clean.includes("sec") || clean.includes("épicer") || clean.includes("epicer")) return "Produits Secs & Épicerie";
+    return "Légumes";
+  };
 
-    const row = {};
-    headers.forEach((header, index) => {
-      row[header] = values[index] || "";
-    });
+  // Helper de sanitization de l'unité
+  const sanitizeUnit = (u) => {
+    const clean = (u || "").toLowerCase().trim();
+    if (clean.includes("bot")) return "botte";
+    if (clean.includes("barq")) return "barquette";
+    if (clean.includes("cag")) return "cagette";
+    if (clean.includes("bocal")) return "bocal";
+    if (clean.includes("pot")) return "pot";
+    if (clean.includes("sachet")) return "sachet";
+    if (clean.includes("p") && !clean.includes("pot")) return "pièce";
+    return "kg";
+  };
 
-    // Cartographie vers le schéma Firestore avec extraction des 6 labels distincts
-    parsedProducts.push({
-      title: row.title || row.designation || row.nom || "Produit sans nom",
-      category: row.category || row.categorie || "Légumes",
-      priceHT: parseFloat(row.priceht || row.prixht || row.prix || 1.0),
-      vatRate: row.vatrate || row.tva || "5.5",
-      unit: row.unit || row.unite || "kg",
-      stock: parseInt(row.stock || row.quantite || 0, 10),
-      harvestDate: row.harvestdate || row.daterecolte || new Date().toISOString().slice(0, 10),
-      batchNumber: row.batchnumber || row.numerolot || row.lot || "",
-      
-      // Extraction indépendante des 6 labels de qualité (SIQO / EGAlim)
-      isBio: parseBool(row.isbio || row.bio || row.ab),
-      isHve: parseBool(row.ishve || row.hve),
-      isAop: parseBool(row.isaop || row.aop),
-      isAoc: parseBool(row.isaoc || row.aoc),
-      isIgp: parseBool(row.isigp || row.igp),
-      isLabelRouge: parseBool(row.islabelrouge || row.labelrouge),
-
-      // Attributs filières facultatifs (Miel, Œufs, INCO)
-      floralOrigin: row.floralorigin || row.origineflorale || "",
-      honeyNetWeight: row.honeynetweight || row.poidsnet || "",
-      eggRearingMode: row.eggrearingmode || row.modeelevage || "",
-      eggCaliber: row.eggcaliber || row.calibre || "",
-      dcrDate: row.dcrdate || row.dcr || "",
-      eggSanitaryApproval: row.eggsanitaryapproval || row.agrementsanitaire || "",
-      ddmDate: row.ddmdate || row.ddm || "",
-      dlcDate: row.dlcdate || row.dlc || "",
-      storageInstructions: row.storageinstructions || row.conservation || ""
-    });
-  }
-
-  return parsedProducts;
-}
-
-// ==========================================
-// 2. SOUS-COMPOSANT : Modèle CSV Téléchargeable
-// ==========================================
-function CsvTemplateButton() {
-  const handleDownload = () => {
+  // 1. 📥 Téléchargement du modèle CSV d'exemple (UTF-8 BOM pour Excel)
+  const handleDownloadTemplate = () => {
     const csvContent =
-      "title;category;priceHT;vatRate;unit;stock;harvestDate;batchNumber;isBio;isHve;isAop;isAoc;isIgp;isLabelRouge\n" +
-      "Miel d'Acacia 500g;Miel & Apiculture;6.50;5.5;pot;40;2026-08-15;LOT-MIEL-01;oui;non;non;non;oui;non\n" +
-      "Carottes Bio de Saison;Légumes;2.20;5.5;kg;150;2026-09-01;LOT-CAR-02;oui;oui;non;non;non;non\n" +
-      "Huile d'Olive AOP;Produits Transformés & Conserves;12.00;5.5;bouteille;25;2026-07-10;LOT-HUI-03;non;oui;oui;non;non;oui\n" +
-      "Poulet Fermier Label Rouge;Transformés;14.50;5.5;kg;15;2026-09-10;LOT-POU-04;non;non;non;non;non;oui";
+      "\uFEFF" +
+      "Désignation;Catégorie;Prix HT;TVA;Unité;Stock;Date de Récolte;N° de Lot;Bio\n" +
+      "Carottes de Sable;Légumes;2.50;5.5;kg;100;2026-09-18;LOT-2026-CAR01;Oui\n" +
+      "Pommes Gala du Verger;Fruits;2.80;5.5;kg;200;2026-09-17;LOT-2026-POM01;Non\n" +
+      "Persil Plat Bio;Herbes & Aromates;1.20;5.5;botte;60;2026-09-18;LOT-2026-PER01;Oui\n" +
+      "Miel de Fleurs Sauvages;Miel & Apiculture;7.50;5.5;pot;30;2026-09-15;LOT-2026-MIE01;Non\n" +
+      "Œufs Frais de Plein Air;Œufs & Élevage;3.20;5.5;pièce;120;2026-09-18;LOT-2026-OEU01;Oui\n" +
+      "Ratatouille Artisanale 500g;Produits Transformés & Conserves;6.00;5.5;bocal;40;2026-09-10;LOT-2026-RAT01;Oui";
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", "modele_mise_en_rayon_multi_labels.csv");
+    link.setAttribute("download", "modele_import_catalogue_ane_et_gorille.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  return (
-    <button
-      type="button"
-      onClick={handleDownload}
-      className="px-3 py-1.5 bg-gray-50 border border-gray-200 hover:bg-gray-100 text-gray-700 font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer text-[11px]"
-    >
-      <Download size={14} className="text-emerald-600" />
-      <span>Modèle CSV (6 Labels)</span>
-    </button>
-  );
-}
-
-// ==========================================
-// 3. SOUS-COMPOSANT : Zone de Sélecteur de Fichier
-// ==========================================
-function CsvDropZone({ onFileSelected, loading }) {
-  const handleChange = (e) => {
+  // 2. 🔍 Analyse et nettoyage du fichier CSV (Parsing)
+  const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
-    if (file) {
-      onFileSelected(file);
-    }
-  };
+    if (!file) return;
 
-  return (
-    <div className="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center hover:border-emerald-500 transition-colors bg-gray-50/50">
-      <label className="cursor-pointer flex flex-col items-center gap-2">
-        <Upload size={28} className="text-emerald-600" />
-        <span className="font-extrabold text-gray-800 text-xs">Cliquez pour sélectionner votre fichier CSV</span>
-        <span className="text-[10px] text-gray-500">Formats supportés : .csv (Séparateur point-virgule ou virgule)</span>
-        <input 
-          type="file" 
-          accept=".csv" 
-          className="hidden" 
-          onChange={handleChange} 
-          disabled={loading} 
-        />
-      </label>
-      {loading && (
-        <div className="mt-3 flex items-center justify-center gap-2 text-emerald-800 font-bold">
-          <RefreshCw size={14} className="animate-spin" />
-          <span>Analyse du fichier CSV en cours...</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ==========================================
-// 4. SOUS-COMPOSANT : Tableau de Prévisualisation
-// ==========================================
-function CsvPreviewTable({ products, onClear, onConfirm, loading }) {
-  if (!products || products.length === 0) return null;
-
-  return (
-    <div className="space-y-3 pt-2 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <h3 className="font-black text-gray-900 text-xs flex items-center gap-2">
-          <PackageCheck size={16} className="text-emerald-600" />
-          <span>Aperçu des récoltes ({products.length} produits détectés)</span>
-        </h3>
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-red-600 hover:text-red-800 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-        >
-          <Trash2 size={12} />
-          <span>Annuler l'import</span>
-        </button>
-      </div>
-
-      <div className="overflow-x-auto border border-gray-200 rounded-xl bg-white max-h-64 shadow-xs">
-        <table className="w-full text-left text-[11px] border-collapse">
-          <thead className="bg-gray-50 border-b border-gray-200 text-gray-700 uppercase font-black tracking-wider">
-            <tr>
-              <th className="p-2.5">Désignation</th>
-              <th className="p-2.5">Catégorie</th>
-              <th className="p-2.5">Prix HT</th>
-              <th className="p-2.5">TVA</th>
-              <th className="p-2.5">Stock</th>
-              <th className="p-2.5">Labels SIQO / EGAlim</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100 font-semibold text-gray-800">
-            {products.map((p, idx) => (
-              <tr key={idx} className="hover:bg-gray-50/80">
-                <td className="p-2.5 font-bold text-gray-900">{p.title}</td>
-                <td className="p-2.5">{p.category}</td>
-                <td className="p-2.5 font-bold">{p.priceHT.toFixed(2)} €</td>
-                <td className="p-2.5">{p.vatRate} %</td>
-                <td className="p-2.5">{p.stock} {p.unit}</td>
-                <td className="p-2.5">
-                  <div className="flex flex-wrap items-center gap-1">
-                    {p.isBio && <span className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded text-[9px] font-black">Bio</span>}
-                    {p.isHve && <span className="bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded text-[9px] font-black">HVE</span>}
-                    {p.isAop && <span className="bg-blue-100 text-blue-900 px-1.5 py-0.5 rounded text-[9px] font-black">AOP</span>}
-                    {p.isAoc && <span className="bg-indigo-100 text-indigo-900 px-1.5 py-0.5 rounded text-[9px] font-black">AOC</span>}
-                    {p.isIgp && <span className="bg-purple-100 text-purple-900 px-1.5 py-0.5 rounded text-[9px] font-black">IGP</span>}
-                    {p.isLabelRouge && <span className="bg-red-100 text-red-900 px-1.5 py-0.5 rounded text-[9px] font-black">Label Rouge</span>}
-                    {!p.isBio && !p.isHve && !p.isAop && !p.isAoc && !p.isIgp && !p.isLabelRouge && (
-                      <span className="text-gray-400 italic text-[10px]">Aucun</span>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="flex justify-end pt-1">
-        <button
-          type="button"
-          onClick={onConfirm}
-          disabled={loading}
-          className="bg-emerald-700 hover:bg-emerald-800 text-white font-black py-2.5 px-6 rounded-xl uppercase tracking-wider transition-all shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50 text-xs"
-        >
-          {loading ? (
-            <>
-              <RefreshCw size={14} className="animate-spin" />
-              <span>Importation en cours...</span>
-            </>
-          ) : (
-            <>
-              <CheckCircle size={14} />
-              <span>Valider et Mettre les {products.length} Produits en Rayon</span>
-            </>
-          )}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ==========================================
-// 5. COMPOSANT PRINCIPAL ORCHESTRATEUR
-// ==========================================
-export default function CsvImportCompartment({ onProductAdded }) {
-  const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
-  const [statusMsg, setStatusMsg] = useState({ type: "", text: "" });
-  const [parsedProducts, setParsedProducts] = useState([]);
-
-  const handleFileSelected = (file) => {
-    setLoading(true);
+    setCsvFile(file);
     setStatusMsg({ type: "", text: "" });
 
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const text = event.target.result;
-        const products = parseCsvText(text);
-        setParsedProducts(products);
+        const text = event.target?.result;
+        if (typeof text !== "string") return;
+
+        const lines = text.split(/\r\n|\n/);
+        if (lines.length < 2) {
+          setStatusMsg({
+            type: "error",
+            text: "Le fichier CSV est vide ou ne contient aucune ligne de données.",
+          });
+          return;
+        }
+
+        const firstLine = lines[0];
+        const separator = firstLine.includes(";") ? ";" : firstLine.includes("\t") ? "\t" : ",";
+
+        const headers = firstLine
+          .split(separator)
+          .map((h) => h.replace(/^["\uFEFF]/, "").replace(/["\r]/g, "").trim().toLowerCase());
+
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+
+          const values = line.split(separator).map((v) => v.replace(/^"/, "").replace(/["\r]/g, "").trim());
+          const rowObj = {};
+          headers.forEach((h, idx) => {
+            rowObj[h] = values[idx] || "";
+          });
+
+          const rawTitle =
+            rowObj["désignation"] ||
+            rowObj["designation"] ||
+            rowObj["title"] ||
+            rowObj["nom"] ||
+            rowObj["produit"] ||
+            "";
+
+          const rawCategory =
+            rowObj["catégorie"] ||
+            rowObj["categorie"] ||
+            rowObj["category"] ||
+            "Légumes";
+
+          const rawPriceHT =
+            rowObj["prix ht"] ||
+            rowObj["priceht"] ||
+            rowObj["prix"] ||
+            rowObj["price"] ||
+            "0";
+
+          const rawVatRate =
+            rowObj["tva"] ||
+            rowObj["vatrate"] ||
+            rowObj["taux tva"] ||
+            rowObj["vat"] ||
+            "5.5";
+
+          const rawUnit = rowObj["unité"] || rowObj["unite"] || rowObj["unit"] || "kg";
+          const rawStock = rowObj["stock"] || rowObj["quantité"] || rowObj["quantite"] || "0";
+          const rawHarvestDate = rowObj["date de récolte"] || rowObj["date de recolte"] || rowObj["harvestdate"] || "";
+          const rawBatchNumber = rowObj["n° de lot"] || rowObj["num de lot"] || rowObj["batchnumber"] || "";
+          const rawBio = rowObj["bio"] || rowObj["isbio"] || rowObj["ab"] || "";
+
+          const title = rawTitle.trim();
+          const priceHT = parseFloat(rawPriceHT.replace(",", ".")) || 0;
+          const vatRate = parseFloat(rawVatRate.replace(",", ".")) || 5.5;
+          const stock = parseInt(rawStock, 10) || 0;
+          const unit = sanitizeUnit(rawUnit);
+          const category = sanitizeCategory(rawCategory);
+          const isBio =
+            Boolean(rawBio) &&
+            ["oui", "true", "1", "yes", "ab", "bio"].includes(
+              rawBio.toString().toLowerCase().trim()
+            );
+
+          const isValid = title.length > 0 && priceHT > 0 && stock >= 0;
+
+          rows.push({
+            id: `row-${i}`,
+            title,
+            category,
+            priceHT: Number(priceHT.toFixed(2)),
+            vatRate,
+            unit,
+            stock,
+            harvestDate: rawHarvestDate || new Date().toISOString().slice(0, 10),
+            batchNumber:
+              rawBatchNumber ||
+              `LOT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+            isBio,
+            isValid,
+            error: !title
+              ? "Désignation manquante"
+              : priceHT <= 0
+              ? "Prix HT invalide (> 0)"
+              : null,
+          });
+        }
+
+        setParsedRows(rows);
+        const validCount = rows.filter((r) => r.isValid).length;
+        if (rows.length === 0) {
+          setStatusMsg({
+            type: "error",
+            text: "Aucune ligne de produit exploitable trouvée dans le fichier.",
+          });
+        } else {
+          setStatusMsg({
+            type: "info",
+            text: `${validCount} produit(s) valide(s) sur ${rows.length} extrait(s) du CSV.`,
+          });
+        }
       } catch (err) {
-        console.error(err);
-        setStatusMsg({ type: "error", text: err.message || "Erreur de syntaxe dans le fichier CSV." });
-        setParsedProducts([]);
-      } finally {
-        setLoading(false);
+        console.error("Erreur de lecture CSV :", err);
+        setStatusMsg({
+          type: "error",
+          text: "Format de fichier non reconnu. Veuillez utiliser le modèle CSV fourni.",
+        });
       }
     };
-
-    reader.readAsText(file);
+    reader.readAsText(file, "UTF-8");
   };
 
+  const handleRemoveRow = (id) => {
+    setParsedRows((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  // 3. 🚀 ÉCRITURE EN MASSE DANS FIRESTORE (writeBatch)
   const handleConfirmImport = async () => {
-    if (parsedProducts.length === 0) return;
+    const validRows = parsedRows.filter((r) => r.isValid);
+    if (validRows.length === 0) {
+      setStatusMsg({
+        type: "error",
+        text: "Aucun produit valide à importer.",
+      });
+      return;
+    }
+
+    if (!user?.uid) {
+      setStatusMsg({
+        type: "error",
+        text: "Accès refusé : Producteur non connecté.",
+      });
+      return;
+    }
 
     setLoading(true);
     setStatusMsg({ type: "", text: "" });
 
     try {
-      await ProductService.addBulkProducts(parsedProducts, user);
+      const batchSize = 450;
+      let importedCount = 0;
+
+      for (let i = 0; i < validRows.length; i += batchSize) {
+        const chunk = validRows.slice(i, i + batchSize);
+        const batch = writeBatch(db);
+
+        chunk.forEach((row) => {
+          const productRef = doc(collection(db, "products"));
+          const productPayload = {
+            title: row.title,
+            name: row.title,
+            category: row.category,
+            priceHT: row.priceHT,
+            price: row.priceHT,
+            vatRate: row.vatRate,
+            unit: row.unit,
+            stock: row.stock,
+            quantity: row.stock,
+            harvestDate: row.harvestDate,
+            batchNumber: row.batchNumber,
+            isBio: row.isBio,
+
+            producerId: user.uid,
+            producer: producerName,
+            producerName: producerName,
+            companyName: producerName,
+            department: producerDept,
+            origin: producerDept,
+            harvestLocation: harvestLocation,
+
+            packagingType: "Caisses & Cagettes Réutilisables (Consignées)",
+            isReusableCrate: true,
+
+            imageUrl: null,
+            image: null,
+            labelImageUrl: null,
+
+            isAvailable: row.stock > 0,
+            isHidden: false,
+            status: "published",
+
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          };
+
+          batch.set(productRef, productPayload);
+        });
+
+        await batch.commit();
+        importedCount += chunk.length;
+      }
 
       setStatusMsg({
         type: "success",
-        text: `${parsedProducts.length} produits mis en rayon avec succès !`,
+        text: `Félicitations ! ${importedCount} produit(s) ont été importés et mis en rayon avec succès.`,
       });
 
-      setParsedProducts([]);
-      if (onProductAdded) onProductAdded();
+      setCsvFile(null);
+      setParsedRows([]);
+      if (onProductsImported) onProductsImported();
     } catch (err) {
-      console.error(err);
-      setStatusMsg({ type: "error", text: err.message || "Erreur lors de l'enregistrement." });
+      console.error("Erreur d'importation CSV :", err);
+      setStatusMsg({
+        type: "error",
+        text: err.message || "Erreur lors de l'enregistrement dans la base de données.",
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-4 text-xs">
-      <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-        <div>
-          <h2 className="text-base font-black text-gray-900 flex items-center gap-2">
-            <FileSpreadsheet className="text-emerald-600" size={18} />
-            Importation de Masse CSV Multi-Labels
-          </h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Importation rapide du stock avec prise en charge des 6 cases de labels (Bio, HVE, AOP, AOC, IGP, Label Rouge).
-          </p>
+    <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-4 shadow-sm text-xs">
+      {/* En-tête */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-gray-150 pb-3 gap-2">
+        <div className="flex items-center gap-2">
+          <div className="p-2 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-200">
+            <FileSpreadsheet size={18} />
+          </div>
+          <div>
+            <h2 className="text-base font-black text-gray-900">
+              Importation CSV en Masse
+            </h2>
+            <p className="text-gray-500 text-[11px]">
+              Téléversez votre catalogue d'un seul coup. Origine ({producerDept}) et traçabilité sont attribuées à votre exploitation.
+            </p>
+          </div>
         </div>
-        <CsvTemplateButton />
+
+        <button
+          type="button"
+          onClick={handleDownloadTemplate}
+          className="px-3.5 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-700 font-extrabold rounded-xl border border-gray-300 transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+        >
+          <Download size={14} className="text-emerald-700" />
+          <span>Télécharger le Modèle CSV</span>
+        </button>
       </div>
 
+      {/* Message de statut */}
       {statusMsg.text && (
-        <div className={`p-3 rounded-xl font-bold flex items-center gap-2 animate-fade-in ${statusMsg.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
-          {statusMsg.type === 'error' ? <AlertCircle size={16} className="shrink-0" /> : <CheckCircle size={16} className="shrink-0" />}
+        <div
+          className={`p-3 rounded-xl font-bold flex items-center gap-2 text-xs animate-fade-in ${
+            statusMsg.type === "error"
+              ? "bg-red-50 border border-red-200 text-red-800"
+              : statusMsg.type === "success"
+              ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+              : "bg-blue-50 border border-blue-200 text-blue-800"
+          }`}
+        >
+          {statusMsg.type === "error" ? (
+            <AlertCircle size={16} className="shrink-0" />
+          ) : statusMsg.type === "success" ? (
+            <CheckCircle size={16} className="shrink-0" />
+          ) : (
+            <FileSpreadsheet size={16} className="shrink-0" />
+          )}
           <span>{statusMsg.text}</span>
         </div>
       )}
 
-      {parsedProducts.length === 0 && (
-        <CsvDropZone onFileSelected={handleFileSelected} loading={loading} />
-      )}
+      {/* Zone d'importation */}
+      <div className="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center bg-gray-50/50 hover:bg-emerald-50/20 transition-colors">
+        <Upload size={28} className="mx-auto text-emerald-700 mb-2" />
+        <p className="font-extrabold text-gray-800 text-xs">
+          Glissez-déposez votre fichier CSV ici ou
+        </p>
+        <label className="mt-2 inline-flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-black rounded-xl cursor-pointer transition-colors shadow-xs">
+          <span>Sélectionner un fichier CSV</span>
+          <input
+            type="file"
+            accept=".csv"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+        </label>
+        <p className="text-[10px] text-gray-400 mt-2 font-bold">
+          Fichiers .CSV encodés en UTF-8 (Séparateurs : Point-virgule ou Virgule)
+        </p>
+      </div>
 
-      <CsvPreviewTable
-        products={parsedProducts}
-        onClear={() => setParsedProducts([])}
-        onConfirm={handleConfirmImport}
-        loading={loading}
-      />
+      {/* Tableau d'aperçu */}
+      {parsedRows.length > 0 && (
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center justify-between">
+            <h3 className="font-extrabold text-gray-900 text-xs flex items-center gap-2">
+              <CheckCircle size={15} className="text-emerald-700" />
+              <span>Aperçu des produits à importer ({parsedRows.length})</span>
+            </h3>
+            <span className="text-[10px] font-bold text-gray-500">
+              Vérifiez vos données avant de valider l'importation.
+            </span>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 font-black uppercase text-[9px] tracking-wider">
+                    <th className="p-2.5">Désignation</th>
+                    <th className="p-2.5">Catégorie</th>
+                    <th className="p-2.5">Prix HT</th>
+                    <th className="p-2.5">Unité</th>
+                    <th className="p-2.5">Stock</th>
+                    <th className="p-2.5">N° Lot</th>
+                    <th className="p-2.5">Date Récolte</th>
+                    <th className="p-2.5 text-center">Bio</th>
+                    <th className="p-2.5 text-center">Statut</th>
+                    <th className="p-2.5 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-[11px] font-semibold text-gray-800">
+                  {parsedRows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className={!row.isValid ? "bg-red-50/50" : "hover:bg-gray-50"}
+                    >
+                      <td className="p-2.5 font-bold text-gray-900">
+                        {row.title || <span className="text-red-500 italic">Manquant</span>}
+                      </td>
+                      <td className="p-2.5 text-gray-600">{row.category}</td>
+                      <td className="p-2.5 font-black text-gray-900">
+                        {row.priceHT.toFixed(2)} €
+                      </td>
+                      <td className="p-2.5 text-gray-600">{row.unit}</td>
+                      <td className="p-2.5 font-black text-emerald-800">{row.stock}</td>
+                      <td className="p-2.5 text-gray-500 font-bold">{row.batchNumber}</td>
+                      <td className="p-2.5 text-gray-500">{row.harvestDate}</td>
+                      <td className="p-2.5 text-center">
+                        {row.isBio ? (
+                          <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1.5 py-0.5 rounded">
+                            BIO
+                          </span>
+                        ) : (
+                          <span className="text-gray-300">-</span>
+                        )}
+                      </td>
+                      <td className="p-2.5 text-center font-bold">
+                        {row.isValid ? (
+                          <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 text-[9px]">
+                            Valide
+                          </span>
+                        ) : (
+                          <span className="text-red-700 bg-red-50 px-2 py-0.5 rounded-full border border-red-200 text-[9px]">
+                            {row.error}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-2.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveRow(row.id)}
+                          className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                          title="Supprimer cette ligne"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={handleConfirmImport}
+              disabled={loading || parsedRows.filter((r) => r.isValid).length === 0}
+              className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-black rounded-xl text-xs uppercase tracking-wider transition-all shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw size={15} className="animate-spin" />
+                  <span>Importation en cours...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={15} />
+                  <span>
+                    Valider et Importer ({parsedRows.filter((r) => r.isValid).length}) Produits
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
