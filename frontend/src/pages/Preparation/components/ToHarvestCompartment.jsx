@@ -1,211 +1,280 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
+import { db } from "../../../services/firestore.service";
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import {
-  ChevronUp,
-  ChevronDown,
-  Package,
-  Printer,
-  ArrowRight,
+  Sprout,
+  PackageCheck,
+  CheckCircle,
+  Tag,
   Calendar,
+  Building,
+  RefreshCw,
+  AlertCircle,
+  FileText,
   Clock,
-  User,
-  MapPin,
-  CheckCircle2,
+  Layers
 } from "lucide-react";
 
 /**
- * 🥬 COMPARTIMENT : ToHarvestCompartment.jsx
- * Gère les bons de préparation au statut 'A_PREPARER'.
- * Intègre la saisie obligatoire de traçabilité HACCP et la validation.
+ * 🌾 COMPOSANT : ToHarvestCompartment.jsx
+ * Onglet "À Récolter / À Préparer" pour les maraîchers et producteurs.
+ * 
+ * Fonctionnalités :
+ * 1. Synthèse globale de récolte cumulée par produit (Quantités totales à cueillir aux champs).
+ * 2. Liste détaillée des sous-commandes par acheteur (B2B / B2G).
+ * 3. Saisie du N° de lot sanitaire HACCP et validation de la préparation.
  */
-export default function ToHarvestCompartment({
-  subOrders,
-  onValidate,
-  onPrint,
-}) {
-  const [isRetracted, setIsRetracted] = useState(true);
-  const [batchInputs, setBatchInputs] = useState({});
+export default function ToHarvestCompartment({ subOrders = [], onRefresh }) {
+  const [loadingId, setLoadingId] = useState(null);
+  const [lotNumbers, setLotNumbers] = useState({});
 
-  const handleInputChange = (id, val) => {
-    setBatchInputs((prev) => ({ ...prev, [id]: val }));
+  // 1. Calcul de la synthèse globale des récoltes (Cumul des quantités par produit)
+  const harvestSummary = useMemo(() => {
+    const summaryMap = {};
+
+    subOrders.forEach((sub) => {
+      const items = Array.isArray(sub.items) ? sub.items : [];
+      items.forEach((item) => {
+        const key = item.title || item.name || "Produit sans nom";
+        const qty = Number(item.quantity || item.qty || 1);
+        const unit = item.unit || "kg";
+        const category = item.category || "Légumes";
+
+        if (!summaryMap[key]) {
+          summaryMap[key] = {
+            title: key,
+            totalQuantity: 0,
+            unit,
+            category,
+            isBio: Boolean(item.isBio)
+          };
+        }
+        summaryMap[key].totalQuantity += qty;
+      });
+    });
+
+    return Object.values(summaryMap);
+  }, [subOrders]);
+
+  // Gestionnaire de saisie locale du N° de lot sanitaire par sous-commande
+  const handleLotChange = (subId, val) => {
+    setLotNumbers((prev) => ({ ...prev, [subId]: val }));
   };
 
-  const handleValidationSubmit = (orderId, items) => {
-    const lotNumbers = batchInputs[orderId] || "";
-    onValidate(orderId, lotNumbers, items);
+  // Action : Valider la préparation d'une sous-commande
+  const handleValidatePreparation = async (subOrder) => {
+    const defaultLot =
+      `LOT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const finalLot = (lotNumbers[subOrder.id] || subOrder.lotNumber || subOrder.batchNumber || defaultLot).trim();
+
+    setLoadingId(subOrder.id);
+
+    try {
+      const subRef = doc(db, "sub_orders", subOrder.id);
+      await updateDoc(subRef, {
+        status: "A_RAMASSER",
+        lotNumber: finalLot,
+        batchNumber: finalLot,
+        preparedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      console.error("Erreur lors de la validation de la récolte :", err);
+      alert("Erreur lors de la mise à jour de la commande.");
+    } finally {
+      setLoadingId(null);
+    }
   };
 
   return (
-    <div className="bg-white border border-gray-200 rounded-3xl shadow-xs overflow-hidden">
-      {/* En-tête du compartiment repliable */}
-      <div
-        onClick={() => setIsRetracted(!isRetracted)}
-        className="bg-gray-50 border-b border-gray-150 px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-100/70 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center bg-amber-50 border border-amber-200 text-amber-800 text-xs font-black px-2.5 py-1 rounded-xl">
-            🥬 À Récolter / Préparer ({subOrders.length})
-          </span>
-          <span className="text-[11px] text-gray-500 font-medium hidden sm:inline">
-            Produits fraîchement commandés nécessitant récolte et étiquetage
-            HACCP.
+    <div className="space-y-5 text-xs">
+      {/* 📋 1. SYNTHÈSE CUMULÉE DE CUEILLETTE (LISTE POUR LES CHAMPS) */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-gray-150 pb-2.5 gap-2">
+          <div>
+            <h3 className="text-sm font-black text-gray-900 flex items-center gap-2">
+              <Sprout size={16} className="text-emerald-700" />
+              <span>Synthèse Globale de Cueillette du Jour</span>
+            </h3>
+            <p className="text-[11px] text-gray-500 font-medium">
+              Quantités totales cumulées à récolter sur l'exploitation pour l'ensemble des commandes actives.
+            </p>
+          </div>
+          <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+            {harvestSummary.length} référence(s) à cueillir
           </span>
         </div>
-        <button className="text-gray-400 hover:text-gray-600">
-          {isRetracted ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
-        </button>
+
+        {harvestSummary.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+            {harvestSummary.map((item, idx) => (
+              <div
+                key={idx}
+                className="p-3 bg-emerald-50/50 border border-emerald-200 rounded-md flex items-center justify-between gap-2"
+              >
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-extrabold text-gray-900 text-xs">{item.title}</span>
+                    {item.isBio && (
+                      <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1 py-0.2 rounded uppercase">
+                        BIO
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-gray-500 font-medium">{item.category}</span>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-sm font-black text-emerald-900 block">
+                    {item.totalQuantity} {item.unit}
+                  </span>
+                  <span className="text-[9px] text-emerald-700 font-bold uppercase">À Récolter</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="p-6 text-center bg-gray-50 rounded-md border border-dashed border-gray-200 text-gray-400 font-bold italic">
+            Aucun produit à récolter actuellement.
+          </div>
+        )}
       </div>
 
-      {/* Contenu rétractable */}
-      {!isRetracted && (
-        <div className="p-6 space-y-6">
-          {subOrders.length === 0 ? (
-            <div className="text-center py-12 border-2 border-dashed border-gray-100 rounded-2xl bg-gray-50/30">
-              <Package
-                className="mx-auto text-gray-300 mb-3 stroke-1"
-                size={40}
-              />
-              <p className="text-gray-500 font-extrabold text-sm">
-                Aucun bon à récolter pour le moment.
-              </p>
-              <p className="text-[10px] text-gray-400 mt-1">
-                Les nouvelles commandes apparaîtront automatiquement en temps
-                réel.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-6">
-              {subOrders.map((order) => (
+      {/* 📦 2. LISTE DÉTAILLÉE DES BONS DE PRÉPARATION PAR ACHETEUR */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between border-b border-gray-150 pb-2.5">
+          <h3 className="text-sm font-black text-gray-900 flex items-center gap-2">
+            <Layers size={16} className="text-emerald-700" />
+            <span>Bons de Préparation par Commande Client ({subOrders.length})</span>
+          </h3>
+          <span className="text-[10px] text-gray-400 font-bold uppercase">Traçabilité HACCP CE 178/2002</span>
+        </div>
+
+        {subOrders.length > 0 ? (
+          <div className="space-y-3 pt-1">
+            {subOrders.map((sub) => {
+              const items = Array.isArray(sub.items) ? sub.items : [];
+              const totalAmount = Number(sub.amount || sub.totalAmount || 0);
+              const isLoading = loadingId === sub.id;
+              const currentLot =
+                lotNumbers[sub.id] !== undefined
+                  ? lotNumbers[sub.id]
+                  : sub.lotNumber || sub.batchNumber || "";
+
+              const createdDateStr = sub.createdAt?.toDate
+                ? sub.createdAt.toDate().toLocaleDateString("fr-FR")
+                : new Date().toLocaleDateString("fr-FR");
+
+              return (
                 <div
-                  key={order.id}
-                  className="border border-gray-200 rounded-2xl p-5 hover:border-gray-300 transition-colors bg-white"
+                  key={sub.id}
+                  className="border border-gray-200 rounded-lg p-3.5 bg-white space-y-3 shadow-2xs hover:border-gray-300 transition-colors"
                 >
-                  {/* Métadonnées de commande */}
-                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-150 pb-3 gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono bg-gray-100 border border-gray-200 text-gray-700 px-2.5 py-0.5 rounded-lg font-black">
-                          #{order.subOrderId || order.id.substring(0, 8)}
-                        </span>
-                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 animate-pulse">
-                          À récolter
-                        </span>
-                      </div>
-                      <h4 className="text-xs font-bold text-gray-800 flex items-center gap-1.5 pt-1">
-                        <User size={13} className="text-gray-400" />
-                        {order.buyerName}
-                      </h4>
-                      <div className="flex items-center gap-3 text-[10px] text-gray-400 font-medium">
-                        <span className="flex items-center gap-1">
-                          <Calendar size={11} />
-                          {order.createdAt
-                            ? new Date(
-                                order.createdAt.seconds * 1000,
-                              ).toLocaleDateString()
-                            : "N/A"}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock size={11} />
-                          {order.createdAt
-                            ? new Date(
-                                order.createdAt.seconds * 1000,
-                              ).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
-                            : "N/A"}
-                        </span>
-                      </div>
+                  {/* En-tête de la sous-commande */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-200">
+                        À Préparer
+                      </span>
+                      <span className="font-extrabold text-gray-900 text-xs">
+                        Réf : #{sub.id.substring(0, 8).toUpperCase()}
+                      </span>
                     </div>
 
-                    {/* Destination de livraison */}
-                    <div className="text-left md:text-right max-w-xs space-y-1">
-                      <p className="text-[9px] text-gray-400 uppercase font-black tracking-wider flex items-center md:justify-end gap-1">
-                        <MapPin size={11} /> Lieu de livraison
-                      </p>
-                      <p className="text-xs font-semibold text-gray-600 leading-tight">
-                        {order.deliveryAddress ||
-                          "Point de distribution central"}
-                      </p>
+                    <div className="flex items-center gap-3 text-[11px] font-bold text-gray-600">
+                      <span className="flex items-center gap-1 text-gray-800 font-extrabold">
+                        <Building size={13} className="text-emerald-700" />
+                        <span>{sub.buyerName || "Acheteur Client"}</span>
+                      </span>
+                      <span className="flex items-center gap-1 text-gray-400">
+                        <Calendar size={13} />
+                        <span>{createdDateStr}</span>
+                      </span>
                     </div>
                   </div>
 
-                  {/* Tableau des articles */}
-                  <div className="py-3">
-                    <div className="bg-gray-50 border border-gray-150 rounded-xl p-3">
-                      <table className="w-full text-left text-xs font-medium text-gray-600">
-                        <thead>
-                          <tr className="border-b border-gray-200 text-[9px] uppercase text-gray-400 font-black">
-                            <th className="pb-1.5">Légume / Produit</th>
-                            <th className="pb-1.5 text-center">
-                              Quantité à peser
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {order.items.map((item, idx) => (
-                            <tr
-                              key={idx}
-                              className="hover:bg-white/40 transition-colors"
-                            >
-                              <td className="py-2.5 font-bold text-gray-900">
-                                {item.name || item.title}
+                  {/* Tableau des articles inclus dans ce bon de préparation */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 font-black uppercase text-[9px] tracking-wider">
+                          <th className="p-2">Désignation</th>
+                          <th className="p-2">Quantité à Conditionner</th>
+                          <th className="p-2">Prix HT</th>
+                          <th className="p-2 text-right">Montant HT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 text-xs font-semibold text-gray-800">
+                        {items.map((item, idx) => {
+                          const pHT = Number(item.priceHT ?? item.price ?? 0);
+                          const qty = Number(item.quantity ?? item.qty ?? 1);
+                          return (
+                            <tr key={idx} className="hover:bg-gray-50/60">
+                              <td className="p-2 font-extrabold text-gray-900">
+                                {item.title || item.name}
+                                {item.isBio && (
+                                  <span className="ml-1 bg-amber-100 text-amber-900 font-black text-[8px] px-1 py-0.2 rounded uppercase">
+                                    BIO
+                                  </span>
+                                )}
                               </td>
-                              <td className="py-2.5 text-center font-extrabold text-green-700">
-                                {item.quantity || item.qty} {item.unit || "kg"}
+                              <td className="p-2 font-black text-emerald-900">
+                                {qty} {item.unit || "kg"}
+                              </td>
+                              <td className="p-2 text-gray-600">{pHT.toFixed(2)} € HT</td>
+                              <td className="p-2 text-right font-black text-gray-900">
+                                {(pHT * qty).toFixed(2)} € HT
                               </td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
 
-                  {/* Saisie HACCP & Actions */}
-                  <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-end gap-4 pt-3 border-t border-gray-150">
-                    <div className="flex-grow max-w-md space-y-1">
-                      <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider">
-                        Saisie de traçabilité HACCP *
-                      </label>
-                      <input
-                        type="text"
-                        value={batchInputs[order.id] || ""}
-                        onChange={(e) =>
-                          handleInputChange(order.id, e.target.value)
-                        }
-                        placeholder="Ex: LOT-2026-REC-01, ou Heure de récolte"
-                        className="w-full border border-gray-200 rounded-xl p-2 text-xs font-mono bg-white focus:ring-1 focus:ring-green-500"
-                      />
-                      <p className="text-[9px] text-gray-400">
-                        Mention obligatoire pour garantir l'origine saine et la
-                        traçabilité des circuits courts.
-                      </p>
+                  {/* Zone de scellement du N° de Lot Sanitaire & Validation */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-gray-50 p-2.5 rounded-md border border-gray-200 pt-3">
+                    <div className="flex items-center gap-2 w-full sm:w-auto flex-1">
+                      <Tag size={14} className="text-emerald-700 shrink-0" />
+                      <div className="w-full sm:w-64">
+                        <label className="text-[9px] font-extrabold uppercase text-gray-600 block mb-0.5">
+                          N° de Lot Sanitaire HACCP *
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="ex: LOT-2026-TOM01"
+                          value={currentLot}
+                          onChange={(e) => handleLotChange(sub.id, e.target.value)}
+                          className="w-full border border-gray-300 rounded p-1.5 font-bold text-gray-900 focus:ring-2 focus:ring-emerald-500 text-xs bg-white"
+                        />
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5 justify-end">
-                      <button
-                        onClick={() => onPrint(order)}
-                        className="flex items-center justify-center gap-1.5 border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold py-2 px-3.5 rounded-xl text-xs transition-colors cursor-pointer bg-white"
-                      >
-                        <Printer size={13} />
-                        <span>Imprimer</span>
-                      </button>
-                      <button
-                        onClick={() =>
-                          handleValidationSubmit(order.id, order.items)
-                        }
-                        className="flex items-center justify-center gap-1.5 bg-green-700 hover:bg-green-800 text-white font-black py-2 px-4 rounded-xl text-xs uppercase tracking-wider transition-colors cursor-pointer shadow-xs"
-                      >
-                        <span>Prêt</span>
-                        <ArrowRight size={13} />
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleValidatePreparation(sub)}
+                      disabled={isLoading}
+                      className="w-full sm:w-auto px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold rounded-md text-xs uppercase tracking-wider transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {isLoading ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <CheckCircle size={14} />
+                      )}
+                      <span>Valider & Marquer Prêt à Expédier</span>
+                    </button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        ) : (
+          <div className="p-8 text-center bg-gray-50 rounded-md border border-dashed border-gray-200 text-gray-400 font-bold italic">
+            Aucun bon de préparation en attente.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

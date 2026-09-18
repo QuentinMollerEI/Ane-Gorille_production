@@ -1,111 +1,99 @@
 import React from "react";
-import { ClipboardList, Truck, CheckCircle2, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Clock, PackageCheck, Truck, CheckCheck, XCircle } from "lucide-react";
 
 /**
- * 🗺️ COMPOSANT : TrackingStepper.jsx
- * Stepper visuel de progression logistique à 3 étapes
+ * 🌾 COMPOSANT : TrackingStepper.jsx
+ * Progression visuelle par étapes de la commande (Commandé -> Récolté -> Enlevé -> En Livraison -> Livré).
  */
-export default function TrackingStepper({ status, tempHaccp, signature }) {
-  let currentStep = 1;
-  if (status === "EN_COURS_DE_LIVRAISON" || status === "EXPEDIE") {
-    currentStep = 2;
-  } else if (status === "LIVRE" || status === "TERMINE") {
-    currentStep = 3;
+export default function TrackingStepper({ status = "paid" }) {
+  if (status === "cancelled") {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-2 text-red-800 font-bold text-xs">
+        <XCircle size={18} className="shrink-0 text-red-600" />
+        <span>Commande annulée</span>
+      </div>
+    );
   }
 
   const steps = [
-    {
-      id: 1,
-      label: "1. Récolte & Préparation",
-      desc: "Récolte en ferme & conditionnement",
-      icon: ClipboardList,
-    },
-    {
-      id: 2,
-      label: "2. Tournée Frigorifique",
-      desc: "Transport sous température contrôlée",
-      icon: Truck,
-    },
-    {
-      id: 3,
-      label: "3. Livré & Conforme HACCP",
-      desc: "Remis en main propre & émargé",
-      icon: CheckCircle2,
-    },
+    { key: "paid", label: "Payée", icon: CheckCircle2, desc: "Paiement Stripe valide" },
+    { key: "preparing", label: "Récolte & Préparation", icon: Clock, desc: "Cueillette & Lot HACCP" },
+    { key: "ready_for_pickup", label: "Colis Scellé", icon: PackageCheck, desc: "Caisse consignée prête" },
+    { key: "in_transit", label: "En Livraison", icon: Truck, desc: "Livreur Âne & Gorille" },
+    { key: "delivered", label: "Livrée", icon: CheckCheck, desc: "Réception confirmée" },
   ];
 
-  return (
-    <div className="space-y-4 pt-1">
-      {/* LIGNE DE PROGRESSION */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {steps.map((step) => {
-          const Icon = step.icon;
-          const isCompleted = currentStep > step.id;
-          const isActive = currentStep === step.id;
+  const getStepIndex = (st) => {
+    switch (st) {
+      case "pending":
+      case "paid":
+        return 0;
+      case "preparing":
+      case "harvesting":
+        return 1;
+      case "ready_for_pickup":
+      case "ready_to_ship":
+        return 2;
+      case "in_transit":
+      case "shipping":
+        return 3;
+      case "delivered":
+        return 4;
+      default:
+        return 0;
+    }
+  };
 
-          let colorClasses = "bg-gray-50 border-gray-200 text-gray-400";
-          if (isCompleted || isActive) {
-            if (step.id === 1)
-              colorClasses =
-                "bg-amber-50 border-amber-300 text-amber-950 font-bold";
-            if (step.id === 2)
-              colorClasses =
-                "bg-blue-50 border-blue-300 text-blue-950 font-bold";
-            if (step.id === 3)
-              colorClasses =
-                "bg-emerald-100 border-emerald-400 text-emerald-950 font-black";
+  const currentIndex = getStepIndex(status);
+
+  return (
+    <div className="w-full py-2">
+      <div className="grid grid-cols-5 gap-1 relative">
+        {steps.map((step, idx) => {
+          const isCompleted = idx < currentIndex;
+          const isCurrent = idx === currentIndex;
+          const StepIcon = step.icon;
+
+          let circleStyle = "bg-gray-100 text-gray-400 border-gray-200";
+          let textColor = "text-gray-400 font-semibold";
+
+          if (isCompleted) {
+            circleStyle = "bg-emerald-700 text-white border-emerald-700 shadow-xs";
+            textColor = "text-emerald-900 font-bold";
+          } else if (isCurrent) {
+            circleStyle = "bg-amber-500 text-white border-amber-500 ring-4 ring-amber-100 animate-pulse";
+            textColor = "text-amber-900 font-extrabold";
           }
 
           return (
-            <div
-              key={step.id}
-              className={`p-3.5 rounded-2xl border flex items-center gap-3 transition-all ${colorClasses}`}
-            >
+            <div key={step.key} className="flex flex-col items-center text-center relative z-10">
+              {/* Ligne de connexion entre cercles */}
+              {idx < steps.length - 1 && (
+                <div
+                  className={`absolute top-4 left-1/2 w-full h-1 -z-10 transition-colors ${
+                    idx < currentIndex ? "bg-emerald-600" : "bg-gray-200"
+                  }`}
+                />
+              )}
+
+              {/* Cercle d'étape */}
               <div
-                className={`p-2 rounded-xl shrink-0 ${
-                  isCompleted || isActive
-                    ? "bg-white/80 shadow-sm"
-                    : "bg-gray-100"
-                }`}
+                className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${circleStyle}`}
               >
-                <Icon size={18} />
+                <StepIcon size={16} />
               </div>
-              <div>
-                <p className="text-xs font-black">{step.label}</p>
-                <p className="text-[10px] text-gray-500 font-medium leading-tight">
-                  {step.desc}
-                </p>
-              </div>
+
+              {/* Titre & Description */}
+              <span className={`text-[10px] mt-1.5 leading-tight ${textColor}`}>
+                {step.label}
+              </span>
+              <span className="hidden md:block text-[8px] text-gray-400 mt-0.5">
+                {step.desc}
+              </span>
             </div>
           );
         })}
       </div>
-
-      {/* SCEAU DE CONFORMITÉ HACCP (AFFICHÉ SI LIVRÉ) */}
-      {(status === "LIVRE" || status === "TERMINE") && (
-        <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-emerald-950 text-xs">
-          <div className="flex items-center gap-2">
-            <ShieldCheck size={20} className="text-emerald-700 shrink-0" />
-            <div>
-              <p className="font-extrabold">
-                Chaîne du Froid & Contrôle HACCP Validés
-              </p>
-              <p className="text-[11px] text-emerald-800">
-                Température de déchargement enregistrée :{" "}
-                <span className="font-black">
-                  {tempHaccp ? `${tempHaccp}°C` : "4.2°C (Cible: 2°C à 6°C)"}
-                </span>
-              </p>
-            </div>
-          </div>
-
-          {signature && (
-            <span className="bg-emerald-200/60 text-emerald-900 font-bold text-[10px] px-2.5 py-1 rounded-lg">
-              ✍️ Émargé
-            </span>
-          )}
-        </div>
-      )}
     </div>
   );
 }

@@ -433,47 +433,6 @@ export default function ProductDetailPage({
         )}
       </div>
 
-      {/* HACCP & LOGISTIQUE */}
-      <div className="bg-gray-50/80 border border-gray-200 rounded-2xl p-3.5 space-y-2">
-        <div className="flex items-center justify-between border-b border-gray-200 pb-2">
-          <h3 className="font-extrabold text-gray-900 text-xs flex items-center gap-1.5">
-            <ShieldCheck size={15} className="text-emerald-700" />
-            <span>Traçabilité Sanitaire HACCP & Logistique</span>
-          </h3>
-          <span className="text-[9px] text-gray-400 font-bold uppercase">Règlement CE 178/2002</span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-[10px]">
-          <div className="flex items-start gap-2 bg-white p-2 rounded-xl border border-gray-200/80">
-            <Tag size={14} className="text-emerald-600 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold text-gray-400 block uppercase text-[8px]">N° de Lot Sanitaire</span>
-              <span className="font-black text-gray-800">
-                {batchNumber || `LOT-${new Date().getFullYear()}-${producerDepartment}`}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 bg-white p-2 rounded-xl border border-gray-200/80">
-            <Calendar size={14} className="text-emerald-600 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold text-gray-400 block uppercase text-[8px]">{dateLabel}</span>
-              <span className="font-black text-gray-800">
-                {displayDate || "Récolte / Préparation fraîche"}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 bg-white p-2 rounded-xl border border-gray-200/80">
-            <Package size={14} className="text-emerald-600 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold text-gray-400 block uppercase text-[8px]">Conditionnement</span>
-              <span className="font-black text-gray-800 truncate block">{packagingType}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* MODALE ZOOM */}
       {showLabelModal && labelImage && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">

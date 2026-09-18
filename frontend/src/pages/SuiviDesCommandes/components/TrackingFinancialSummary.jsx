@@ -1,106 +1,75 @@
 import React from "react";
-import { MapPin, Building, FileText, Download } from "lucide-react";
+import { Receipt, CreditCard, ShieldCheck, Truck, Percent, FileText } from "lucide-react";
 
 /**
- * 💳 COMPOSANT : TrackingFinancialSummary.jsx
- * Détail des adresses, identifiants de facturation B2B/B2G et téléchargements PDF
+ * 🌾 COMPOSANT : TrackingFinancialSummary.jsx
+ * Récapitulatif financier, TVA ventilée, frais de livraison degressifs et statut Chorus Pro / Factur-X.
  */
 export default function TrackingFinancialSummary({ order }) {
-  const isPublicBuyer =
-    order.paymentMethod === "mandat" ||
-    order.buyerRole === "client_public" ||
-    order.buyerRole === "acheteur_public";
-  const totalHT = Number(order.totalHT || order.totalAmount || 0);
-  const totalTVA = Number(order.totalTVA || totalHT * 0.055);
-  const totalTTC = Number(
-    order.totalTTC || order.totalAmount || totalHT + totalTVA,
-  );
+  if (!order) return null;
+
+  const totalHT = Number(order.totalHT ?? order.amountHT ?? order.priceHT ?? 0);
+  const vatAmount = Number(order.totalVAT ?? order.vatAmount ?? 0);
+  const deliveryFee = Number(order.deliveryFee ?? order.shippingFee ?? 0);
+  const totalTTC = Number(order.totalTTC ?? order.amountTTC ?? (totalHT + vatAmount + deliveryFee));
+
+  const isPublicBuyer = order.buyerRole === "buyer_public" || order.isChorusPro;
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-4 text-xs">
-      {/* COMPARTIMENT 1 : ADRESSE DE LIVRAISON */}
-      <div className="space-y-1.5 border-b border-gray-200 pb-3">
-        <p className="font-black text-gray-900 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-          <MapPin size={13} className="text-emerald-700" />
-          Point de Distribution
-        </p>
-        <p className="font-bold text-gray-800 leading-snug">
-          {order.deliveryAddress || "Adresse enregistrée dans Mon Profil"}
-        </p>
+    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 space-y-3 text-xs">
+      <div className="flex items-center justify-between border-b border-gray-200 pb-2">
+        <h4 className="font-extrabold text-gray-900 text-xs flex items-center gap-1.5">
+          <Receipt size={15} className="text-emerald-700" />
+          <span>Détail Financier & Facturation</span>
+        </h4>
+        <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+          <CreditCard size={12} />
+          <span>Payé via Stripe Connect</span>
+        </span>
       </div>
 
-      {/* COMPARTIMENT 2 : FACTURATION & CHORUS PRO */}
-      <div className="space-y-1.5 border-b border-gray-200 pb-3">
-        <p className="font-black text-gray-900 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-          <Building size={13} className="text-blue-700" />
-          Facturation Légale
-        </p>
-        <p className="font-semibold text-gray-700">
-          Entité :{" "}
-          <strong className="text-gray-900">
-            {order.buyerName || order.companyName || "Acheteur"}
-          </strong>
-        </p>
-        <p className="font-mono text-gray-600 text-[11px]">
-          SIRET : {order.buyerSiret || order.siretBuyer || "Consigné"}
-        </p>
-        {isPublicBuyer &&
-          order.refEngagement &&
-          order.refEngagement !== "-" && (
-            <p className="font-bold text-blue-900 text-[11px]">
-              N° Engagement Chorus Pro : {order.refEngagement}
-            </p>
-          )}
-        <p className="text-[11px] font-bold text-emerald-800">
-          Règlement :{" "}
-          {isPublicBuyer
-            ? "Mandat Administratif (LME 30 jours)"
-            : "Carte Bancaire (Stripe Connect)"}
-        </p>
-      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+        <div className="bg-white p-2.5 rounded-lg border border-gray-200">
+          <span className="text-[9px] font-bold text-gray-400 uppercase block">Total Produits HT</span>
+          <span className="text-sm font-black text-gray-900">{totalHT.toFixed(2)} € HT</span>
+        </div>
 
-      {/* COMPARTIMENT 3 : VENTILATION FINANCIÈRE */}
-      <div className="space-y-1 font-bold border-b border-gray-200 pb-3">
-        <div className="flex justify-between text-gray-600">
-          <span>Sous-total HT :</span>
-          <span>{totalHT.toFixed(2)} €</span>
+        <div className="bg-white p-2.5 rounded-lg border border-gray-200">
+          <span className="text-[9px] font-bold text-gray-400 uppercase flex items-center gap-1">
+            <Percent size={10} />
+            <span>TVA Alimentation (5.5%)</span>
+          </span>
+          <span className="text-sm font-black text-gray-900">{vatAmount.toFixed(2)} €</span>
         </div>
-        <div className="flex justify-between text-gray-600">
-          <span>TVA (5.5%) :</span>
-          <span>{totalTVA.toFixed(2)} €</span>
+
+        <div className="bg-white p-2.5 rounded-lg border border-gray-200">
+         <span className="text-[9px] font-bold text-gray-400 uppercase flex items-center gap-1">
+            <Truck size={10} />
+            <span>Frais de Port B2B</span>
+          </span>
+          <span className="text-sm font-black text-gray-900">
+            {deliveryFee === 0 ? "Offerts (Franchise)" : `${deliveryFee.toFixed(2)} € HT`}
+          </span>
         </div>
-        <div className="flex justify-between text-gray-900 font-black pt-1 border-t border-gray-200">
-          <span>Total TTC :</span>
-          <span className="text-emerald-800">{totalTTC.toFixed(2)} €</span>
+
+        <div className="bg-emerald-50/80 p-2.5 rounded-lg border border-emerald-200">
+          <span className="text-[9px] font-bold text-emerald-800 uppercase block">Total Général TTC</span>
+          <span className="text-sm font-black text-emerald-900">{totalTTC.toFixed(2)} € TTC</span>
         </div>
       </div>
 
-      {/* COMPARTIMENT 4 : TÉLÉCHARGEMENTS JUSTIFICATIFS */}
-      <div className="flex gap-2">
-        <button
-          onClick={() =>
-            alert(
-              `📄 Duplicata du Bon de Commande BC-${order.id.slice(0, 8).toUpperCase()}`,
-            )
-          }
-          className="flex-1 bg-white hover:bg-gray-100 text-gray-800 font-black py-2 px-3 rounded-xl border border-gray-300 transition-colors flex items-center justify-center gap-1 cursor-pointer"
-        >
-          <Download size={13} />
-          <span>B.C. (PDF)</span>
-        </button>
+      {/* Conformité Factur-X & Chorus Pro */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[10px] text-gray-500 pt-1 border-t border-gray-200/80">
+        <div className="flex items-center gap-1.5">
+          <ShieldCheck size={13} className="text-emerald-700 shrink-0" />
+          <span>Factur-X certifié — Conformité Chorus Pro & DGFIP</span>
+        </div>
 
-        {["LIVRE", "TERMINE"].includes(order.status) && (
-          <button
-            onClick={() =>
-              alert(
-                `📄 Facture d'Achat FAC-${order.id.slice(0, 8).toUpperCase()}`,
-              )
-            }
-            className="flex-1 bg-emerald-700 hover:bg-emerald-800 text-white font-black py-2 px-3 rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer shadow-sm"
-          >
-            <FileText size={13} />
-            <span>Facture</span>
-          </button>
+        {isPublicBuyer && (
+          <span className="bg-blue-50 text-blue-900 border border-blue-200 px-2 py-0.5 rounded font-extrabold flex items-center gap-1">
+            <FileText size={11} />
+            <span>Transmis à Chorus Pro (Secteur Public)</span>
+          </span>
         )}
       </div>
     </div>

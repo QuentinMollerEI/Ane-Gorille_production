@@ -1,316 +1,192 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../../services/firestore.service";
-import {
-  ListOrdered,
-  AlertCircle,
-  RefreshCw,
-  Info,
-  Terminal,
-} from "lucide-react";
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { Truck, Package, RefreshCw, ShoppingBag, DollarSign } from "lucide-react";
 
 import TrackingFilters from "./components/TrackingFilters";
 import OrderTrackingCard from "./components/OrderTrackingCard";
 
 /**
- * 📦 COMPOSANT PRINCIPAL : OrderTracking.jsx
- * Emplacement : src/pages/SuiviDesCommandes/OrderTracking.jsx
- *
- * Suivi Logistique et Traçabilité des Commandes Acheteur (B2B / B2G)
+ * 🌾 COMPOSANT CENTRAL : OrderTracking.jsx
+ * Page principale de Suivi des Commandes en temps réel.
+ * S'adapte au rôle connecté (Acheteur, Producteur, Livreur, Admin).
  */
 export default function OrderTracking() {
-  const auth = useAuth() || {};
-  const { user, userProfile } = auth;
+  const { user } = useAuth();
 
-  const [rawOrders, setRawOrders] = useState([]);
-  const [subOrders, setSubOrders] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [showDebug, setShowDebug] = useState(false);
-
-  // Filtres
-  const [activeFilter, setActiveFilter] = useState("all"); // 'all' | 'in_progress' | 'completed'
-  const [searchQuery, setSearchQuery] = useState("");
-
-  const uid = user?.uid || userProfile?.uid || userProfile?.id;
-  const userEmail = user?.email || userProfile?.email || "";
-  const isAdmin = userProfile?.role === "admin" || user?.role === "admin";
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
 
   useEffect(() => {
-    if (!uid && !userEmail) {
+    if (!user?.uid) {
       setLoading(false);
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    const role = user?.role;
+    const isSupplier = role === "producer" || role === "producteur" || role === "fournisseur";
+    const isCarrier = role === "carrier" || role === "livreur";
 
-    // 1. Écoute globale de la collection 'orders'
-    const ordersRef = collection(db, "orders");
-    const unsubscribeOrders = onSnapshot(
-      ordersRef,
+    let q;
+    if (isSupplier) {
+      q = query(collection(db, "orders"), where("producerIds", "array-contains", user.uid));
+    } else if (isCarrier) {
+      q = query(collection(db, "orders"));
+    } else {
+      q = query(collection(db, "orders"), where("buyerId", "==", user.uid));
+    }
+
+    const unsubscribe = onSnapshot(
+      q,
       (snapshot) => {
-        const docsList = snapshot.docs.map((docSnap) => ({
+        const loadedOrders = snapshot.docs.map((docSnap) => ({
           id: docSnap.id,
           ...docSnap.data(),
         }));
 
-        // Tri par date récente
-        docsList.sort((a, b) => {
-          const dateA = a.createdAt?.toDate
-            ? a.createdAt.toDate()
-            : new Date(a.createdAt || 0);
-          const dateB = b.createdAt?.toDate
-            ? b.createdAt.toDate()
-            : new Date(b.createdAt || 0);
-          return dateB - dateA;
+        loadedOrders.sort((a, b) => {
+          const tA = a.createdAt?.seconds ? a.createdAt.seconds : new Date(a.createdAt || 0).getTime();
+          const tB = b.createdAt?.seconds ? b.createdAt.seconds : new Date(b.createdAt || 0).getTime();
+          return tB - tA;
         });
 
-        setRawOrders(docsList);
+        setOrders(loadedOrders);
         setLoading(false);
       },
-      (err) => {
-        console.error("Erreur synchronisation commandes :", err);
-        setError(
-          `Erreur Firestore : ${err.message || "Permissions insuffisantes"}`,
-        );
+      (error) => {
+        console.error("Erreur de synchronisation des commandes :", error);
         setLoading(false);
-      },
+      }
     );
 
-    // 2. Écoute globale des sous-commandes maraîchères 'sub_orders'
-    const subRef = collection(db, "sub_orders");
-    const unsubscribeSub = onSnapshot(
-      subRef,
-      (snapshot) => {
-        const subList = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }));
-        setSubOrders(subList);
-      },
-      (err) => {
-        console.error("Erreur synchronisation sub_orders :", err);
-      },
-    );
+    return () => unsubscribe();
+  }, [user?.uid, user?.role]);
 
-    return () => {
-      unsubscribeOrders();
-      unsubscribeSub();
-    };
-  }, [uid, userEmail]);
+  const filteredOrders = useMemo(() => {
+    return orders.filter((ord) => {
+      const matchSearch =
+        (ord.orderNumber || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (ord.buyerName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (ord.id || "").toLowerCase().includes(searchTerm.toLowerCase());
 
-  // Filtrage des commandes pour l'utilisateur connecté (Acheteur ou Admin)
-  const userOrders = rawOrders.filter((order) => {
-    if (isAdmin) return true;
+      const matchStatus = selectedStatus === "all" || ord.status === selectedStatus;
 
-    const matchUid =
-      order.buyerId === uid ||
-      order.clientId === uid ||
-      order.userId === uid ||
-      order.buyerUid === uid;
+      let matchDate = true;
+      if (dateFilter !== "all" && ord.createdAt) {
+        const orderDate = new Date(ord.createdAt?.seconds ? ord.createdAt.seconds * 1000 : ord.createdAt);
+        const now = new Date();
+        if (dateFilter === "today") {
+          matchDate = orderDate.toDateString() === now.toDateString();
+        } else if (dateFilter === "7days") {
+          matchDate = now - orderDate <= 7 * 24 * 60 * 60 * 1000;
+        } else if (dateFilter === "30days") {
+          matchDate = now - orderDate <= 30 * 24 * 60 * 60 * 1000;
+        }
+      }
 
-    const matchEmail =
-      userEmail &&
-      order.buyerEmail &&
-      order.buyerEmail.toLowerCase() === userEmail.toLowerCase();
+      return matchSearch && matchStatus && matchDate;
+    });
+  }, [orders, searchTerm, selectedStatus, dateFilter]);
 
-    return matchUid || matchEmail;
-  });
+  const handleConfirmDelivery = async (orderId) => {
+    if (!window.confirm("Confirmez-vous avoir bien reçu votre livraison ?")) return;
 
-  // Groupement des sub_orders par parentOrderId
-  const subOrdersMap = subOrders.reduce((acc, sub) => {
-    const parentKey = sub.parentOrderId || sub.orderId;
-    if (parentKey) {
-      if (!acc[parentKey]) acc[parentKey] = [];
-      acc[parentKey].push(sub);
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        status: "delivered",
+        deliveredAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Erreur de confirmation de livraison :", err);
+      alert("Erreur lors de la confirmation.");
     }
-    return acc;
-  }, {});
+  };
 
-  // Filtrage combiné (Statut + Recherche)
-  const filteredOrders = userOrders.filter((order) => {
-    const status = order.status || "A_PREPARER";
-    const isCompleted = ["LIVRE", "TERMINE"].includes(status);
-    const isInProgress = !isCompleted;
+  const handleResetFilters = () => {
+    setSearchTerm("");
+    setSelectedStatus("all");
+    setDateFilter("all");
+  };
 
-    if (activeFilter === "in_progress" && !isInProgress) return false;
-    if (activeFilter === "completed" && !isCompleted) return false;
-
-    if (searchQuery.trim() !== "") {
-      const q = searchQuery.toLowerCase();
-      const matchId =
-        (order.id || "").toLowerCase().includes(q) ||
-        (order.orderId || "").toLowerCase().includes(q);
-      const matchProducer = (order.producerName || "")
-        .toLowerCase()
-        .includes(q);
-      const matchAddress = (order.deliveryAddress || "")
-        .toLowerCase()
-        .includes(q);
-      const matchItems = (order.items || []).some((item) =>
-        (item.title || item.name || "").toLowerCase().includes(q),
-      );
-
-      return matchId || matchProducer || matchAddress || matchItems;
-    }
-
-    return true;
-  });
-
-  // Métriques
-  const totalCount = userOrders.length;
-  const inProgressCount = userOrders.filter(
-    (o) => !["LIVRE", "TERMINE"].includes(o.status),
-  ).length;
-  const completedCount = userOrders.filter((o) =>
-    ["LIVRE", "TERMINE"].includes(o.status),
-  ).length;
-
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 space-y-3">
-        <RefreshCw size={32} className="animate-spin text-emerald-700" />
-        <p className="text-xs font-bold text-gray-600">
-          Synchronisation de vos approvisionnements...
-        </p>
-      </div>
-    );
-  }
+  const activeCount = orders.filter((o) => ["paid", "preparing", "ready_for_pickup", "in_transit"].includes(o.status)).length;
+  const deliveredCount = orders.filter((o) => o.status === "delivered").length;
+  const totalVolumeTTC = orders.reduce((acc, o) => acc + Number(o.totalTTC ?? o.amountTTC ?? 0), 0);
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6 animate-fade-in text-xs">
-      {/* HEADER PAGE */}
-      <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
-            <ListOrdered size={26} />
-          </div>
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-5 animate-fade-in text-xs">
+      {/* CARTES DE SYNTHÈSE HAUT DE PAGE */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-black text-gray-900">
-              Suivi & Traçabilité des Commandes
-            </h1>
-            <p className="text-xs text-gray-500 font-semibold">
-              Pilotez en direct la récolte chez vos maraîchers et le transport
-              frigorifique
-            </p>
+            <span className="text-[10px] font-extrabold uppercase text-gray-400 block">Commandes en Cours</span>
+            <span className="text-xl font-black text-amber-900">{activeCount}</span>
+          </div>
+          <div className="p-2.5 bg-amber-50 text-amber-700 rounded-xl border border-amber-200">
+            <Truck size={20} />
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowDebug(!showDebug)}
-            className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-            title="Diagnostiquer la connexion Firestore"
-          >
-            <Terminal size={14} />
-            <span>Diagnostic</span>
-          </button>
-          <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 font-black px-3.5 py-1.5 rounded-full text-[11px]">
-            {totalCount} commande(s) enregistrée(s)
-          </span>
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-extrabold uppercase text-gray-400 block">Commandes Livrées</span>
+            <span className="text-xl font-black text-emerald-900">{deliveredCount}</span>
+          </div>
+          <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200">
+            <Package size={20} />
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-extrabold uppercase text-gray-400 block">Volume Total Commandé</span>
+            <span className="text-xl font-black text-gray-900">{totalVolumeTTC.toFixed(2)} € TTC</span>
+          </div>
+          <div className="p-2.5 bg-blue-50 text-blue-700 rounded-xl border border-blue-200">
+            <DollarSign size={20} />
+          </div>
         </div>
       </div>
 
-      {/* PANNEAU DE DIAGNOSTIC SI CLIQUE OU SI ERREUR */}
-      {(showDebug || error) && (
-        <div className="p-4 bg-slate-900 text-slate-100 rounded-2xl space-y-2 text-[11px] font-mono border border-slate-700 shadow-lg">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-            <span className="font-bold text-amber-400 flex items-center gap-2">
-              <Info size={14} /> Diagnostic de Connexion Firestore &
-              Authentification
-            </span>
-            <button
-              onClick={() => setShowDebug(false)}
-              className="text-slate-400 hover:text-white"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
-            <p>
-              • <strong>UID Utilisateur :</strong> {uid || "Non détecté"}
-            </p>
-            <p>
-              • <strong>E-mail :</strong> {userEmail || "Non renseigné"}
-            </p>
-            <p>
-              • <strong>Rôle :</strong>{" "}
-              {userProfile?.role || user?.role || "Non spécifié"}
-            </p>
-            <p>
-              • <strong>Commandes Firestore Brutes :</strong> {rawOrders.length}{" "}
-              doc(s)
-            </p>
-            <p>
-              • <strong>Commandes Correspondantes :</strong> {userOrders.length}{" "}
-              doc(s)
-            </p>
-            <p>
-              • <strong>Erreur Firestore :</strong> {error || "Aucune"}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 font-bold flex items-center gap-2">
-          <AlertCircle size={18} />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* BARRE DE FILTRES ET SYNTHÈSE */}
+      {/* BARRE DE FILTRES ET RECHERCHE */}
       <TrackingFilters
-        activeFilter={activeFilter}
-        setActiveFilter={setActiveFilter}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        totalCount={totalCount}
-        inProgressCount={inProgressCount}
-        completedCount={completedCount}
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        selectedStatus={selectedStatus}
+        setSelectedStatus={setSelectedStatus}
+        dateFilter={dateFilter}
+        setDateFilter={setDateFilter}
+        onResetFilters={handleResetFilters}
+        totalCount={orders.length}
+        filteredCount={filteredOrders.length}
       />
 
-      {/* LISTE DES CARTES DE SUIVI */}
-      {filteredOrders.length > 0 ? (
-        <div className="space-y-6">
-          {filteredOrders.map((order) => {
-            const associatedSubs =
-              subOrdersMap[order.id] || subOrdersMap[order.orderId] || [];
-            return (
-              <OrderTrackingCard
-                key={order.id}
-                order={order}
-                associatedSubs={associatedSubs}
-              />
-            );
-          })}
+      {/* LISTE DES COMMANDES OU SPINNER */}
+      {loading ? (
+        <div className="flex justify-center items-center py-20 min-h-[300px]">
+          <RefreshCw className="animate-spin text-emerald-700" size={28} />
+        </div>
+      ) : filteredOrders.length > 0 ? (
+        <div className="space-y-4">
+          {filteredOrders.map((ord) => (
+            <OrderTrackingCard
+              key={ord.id}
+              order={ord}
+              onConfirmDelivery={handleConfirmDelivery}
+            />
+          ))}
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center space-y-3">
-          <ListOrdered size={40} className="mx-auto text-gray-300" />
-          <h3 className="font-extrabold text-gray-800 text-base">
-            Aucune commande trouvée
-          </h3>
-          <p className="text-gray-500 max-w-sm mx-auto">
-            {!uid
-              ? "Veuillez vous connecter pour consulter vos commandes."
-              : rawOrders.length === 0
-                ? "Aucune commande n'est encore présente dans la base de données globale Firestore."
-                : "Vous n'avez pas encore passé de commande avec cet identifiant ou les filtres actuels masquent le résultat."}
+        <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-gray-300 text-gray-400 space-y-2">
+          <ShoppingBag size={36} className="mx-auto text-gray-300" />
+          <p className="font-extrabold text-sm text-gray-600">Aucune commande ne correspond à vos critères.</p>
+          <p className="text-xs text-gray-400">
+            Ajustez vos filtres ou passez une commande depuis la boutique.
           </p>
-          <button
-            onClick={() => setShowDebug(!showDebug)}
-            className="mt-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer"
-          >
-            <Terminal size={14} />
-            <span>
-              {showDebug
-                ? "Masquer le diagnostic"
-                : "Afficher le diagnostic technique"}
-            </span>
-          </button>
         </div>
       )}
     </div>
