@@ -17,7 +17,10 @@ import { calculateDeliveryFee } from "../../../services/CheckoutOrchestrator";
 
 /**
  * 🌾 COMPOSANT : CartContainer.jsx
- * Panier d'approvisionnement B2B / B2G avec découpage explicite en SOUS-COMMANDES par FOURNISSEUR/MARAÎCHER.
+ * Panier d'approvisionnement B2B / B2G.
+ * - Commande unique 1 producteur : Présentation classique sans découpage ni message spécifique.
+ * - Commande multi-producteurs : Découpage explicite par sous-commandes et message logistique.
+ * - Tarification dégressive B2B (15€ HT / 8€ HT / Franco dès 300€ HT) et double ventilation de TVA (5.5% et 20%).
  */
 export default function CartContainer({
   cart = [],
@@ -26,7 +29,7 @@ export default function CartContainer({
   onClearCart,
   onBackToShop,
 }) {
-  // 1. Regroupement explicite des articles par Producteur / Fournisseur
+  // 1. Regroupement par Producteur / Fournisseur
   const subOrdersGrouped = useMemo(() => {
     const map = {};
 
@@ -61,6 +64,8 @@ export default function CartContainer({
     return Object.values(map);
   }, [cart]);
 
+  const isMultiProducer = subOrdersGrouped.length > 1;
+
   // 2. Calcul des totaux généraux consolidés
   const globalSubtotalHT = useMemo(() => {
     return subOrdersGrouped.reduce((sum, group) => sum + group.subtotalHT, 0);
@@ -71,7 +76,7 @@ export default function CartContainer({
     ? calculateDeliveryFee(globalSubtotalHT)
     : globalSubtotalHT >= 300 ? 0 : globalSubtotalHT >= 150 ? 8 : 15;
 
-  // 4. Calculs de TVA (TVA 5.5% Alimentation + TVA 20% Transport)
+  // 4. Calculs de TVA (TVA 5.5% Alimentation + TVA 20% Transport en Régime Réel)
   const foodVAT = globalSubtotalHT * 0.055;
   const deliveryFeeVAT = deliveryFeeHT * 0.20;
   const totalTTC = globalSubtotalHT + foodVAT + deliveryFeeHT + deliveryFeeVAT;
@@ -90,7 +95,7 @@ export default function CartContainer({
         </p>
         <button
           onClick={onBackToShop}
-          className="px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-black rounded-2xl text-xs uppercase tracking-wider transition-colors inline-block cursor-pointer shadow-xs"
+          className="px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-black rounded-2xl text-xs uppercase tracking-wider transition-colors inline-block cursor-pointer shadow-sm"
         >
           Découvrir les produits
         </button>
@@ -109,7 +114,11 @@ export default function CartContainer({
           <div>
             <h2 className="text-xl font-black text-gray-900">Votre Panier d'Approvisionnement</h2>
             <p className="text-xs text-gray-500 font-semibold">
-              Commande groupée divisée en <strong className="text-emerald-800 font-bold">{subOrdersGrouped.length} sous-commande(s) producteur(s)</strong>
+              {isMultiProducer ? (
+                <>Commande groupée divisée en <strong className="text-emerald-800 font-bold">{subOrdersGrouped.length} sous-commandes producteurs</strong></>
+              ) : (
+                <>Commande directe auprès de <strong className="text-emerald-800 font-bold">{subOrdersGrouped[0]?.producerName || "Exploitation Locale"}</strong></>
+              )}
             </p>
           </div>
         </div>
@@ -123,10 +132,10 @@ export default function CartContainer({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* COLONNE GAUCHE : SÉPARATION PAR SOUS-COMMANDES PRODUCTEURS */}
+        {/* COLONNE GAUCHE : DÉTAIL DU PANIER / SOUS-COMMANDES */}
         <div className="lg:col-span-7 space-y-5">
           {/* 🚚 BARRE DE PROGRESSION INCITATIVE VERS LE FRANCO DE PORT */}
-          <div className="bg-emerald-50/70 border border-emerald-200 rounded-3xl p-4 space-y-2.5 shadow-2xs">
+          <div className="bg-emerald-50/70 border border-emerald-200 rounded-3xl p-4 space-y-2.5 shadow-sm">
             <div className="flex items-center justify-between font-extrabold text-[11px]">
               <span className="flex items-center gap-1.5 text-emerald-900">
                 <Truck size={16} className="text-emerald-700" />
@@ -160,26 +169,32 @@ export default function CartContainer({
             </div>
           </div>
 
-          {/* MESSAGE D'INFORMATION DÉCOUPAGE SOUS-COMMANDES */}
-          <div className="bg-blue-50/80 border border-blue-200 rounded-2xl p-3.5 text-blue-900 flex items-start gap-2.5">
-            <Layers size={18} className="text-blue-700 shrink-0 mt-0.5" />
-            <div className="space-y-1 text-[11px] leading-relaxed">
-              <span className="font-extrabold block">
-                Organisation Logistique : {subOrdersGrouped.length} Sous-Commande(s) Distincte(s)
-              </span>
-              <p className="text-blue-800 font-medium">
-                Votre panier réunit les récoltes de <strong>{subOrdersGrouped.length} maraîcher(s) différent(s)</strong>.
-                Chaque producteur recevra son bon de préparation dédié. La livraison est consolidée en un seul passage.
-              </p>
+          {/* MESSAGE D'INFORMATION SPÉCIFIQUE MULTI-PRODUCTEURS (Affiché UNIQUEMENT si multi-producteurs) */}
+          {isMultiProducer && (
+            <div className="bg-blue-50/80 border border-blue-200 rounded-2xl p-3.5 text-blue-900 flex items-start gap-2.5">
+              <Layers size={18} className="text-blue-700 shrink-0 mt-0.5" />
+              <div className="space-y-1 text-[11px] leading-relaxed">
+                <span className="font-extrabold block">
+                  Organisation Logistique : {subOrdersGrouped.length} Sous-Commandes Distinctes
+                </span>
+                <p className="text-blue-800 font-medium">
+                  Votre panier réunit les récoltes de <strong>{subOrdersGrouped.length} maraîchers différents</strong>.
+                  Chaque producteur recevra son bon de préparation dédié. La livraison est consolidée en un seul passage.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* BLOCS INDIVIDUELS PAR SOUS-COMMANDE PRODUCTEUR */}
+          {/* BLOCS PRODUITS / SOUS-COMMANDES */}
           <div className="space-y-4">
             <div className="flex justify-between items-center px-1">
               <h3 className="font-black text-gray-900 text-sm flex items-center gap-2">
                 <Store size={16} className="text-emerald-700" />
-                <span>Sous-Commandes par Fournisseur ({subOrdersGrouped.length})</span>
+                <span>
+                  {isMultiProducer 
+                    ? `Sous-Commandes par Fournisseur (${subOrdersGrouped.length})` 
+                    : `Produits Sélectionnés (${cart.length})`}
+                </span>
               </h3>
               <button
                 onClick={onClearCart}
@@ -190,7 +205,77 @@ export default function CartContainer({
               </button>
             </div>
 
-            {subOrdersGrouped.map((group, groupIdx) => {
+            {/* CAS 1 : COMMANDE UNIQUE (1 SEUL PRODUCTEUR) -> AFFICHAGE PROPRE ET CLASSIQUE */}
+            {!isMultiProducer && subOrdersGrouped.length === 1 && (
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-gray-200 pb-3">
+                  <div>
+                    <h4 className="font-extrabold text-gray-900 text-sm">
+                      {subOrdersGrouped[0].producerName}
+                    </h4>
+                    <p className="text-[10px] text-gray-500 font-bold">
+                      Provenance : {subOrdersGrouped[0].producerCity}
+                    </p>
+                  </div>
+                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 font-extrabold text-[10px] px-2.5 py-0.5 rounded-full uppercase">
+                    Vente Directe Producteur
+                  </span>
+                </div>
+
+                <div className="divide-y divide-gray-100 space-y-3">
+                  {subOrdersGrouped[0].items.map((item) => (
+                    <div key={item.id} className="pt-3 flex items-center justify-between gap-4">
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <h5 className="font-black text-gray-900 text-xs">{item.title || item.name}</h5>
+                          {item.isBio && (
+                            <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1.5 py-0.5 rounded uppercase">
+                              BIO
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-emerald-800 font-bold text-[11px] font-mono">
+                          {item.priceHT.toFixed(2)} € HT / {item.unit || "kg"}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center border border-gray-300 rounded-xl overflow-hidden bg-gray-50">
+                          <button
+                            onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
+                            className="px-2.5 py-1 text-gray-600 hover:bg-gray-200 font-black cursor-pointer"
+                          >
+                            <Minus size={13} />
+                          </button>
+                          <span className="px-3 py-1 font-extrabold text-gray-900 text-xs font-mono">{item.quantity}</span>
+                          <button
+                            onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+                            className="px-2.5 py-1 text-gray-600 hover:bg-gray-200 font-black cursor-pointer"
+                          >
+                            <Plus size={13} />
+                          </button>
+                        </div>
+
+                        <div className="text-right min-w-[70px]">
+                          <p className="font-black text-gray-900 text-xs font-mono">{item.lineHT.toFixed(2)} € HT</p>
+                        </div>
+
+                        <button
+                          onClick={() => onRemoveItem(item.id)}
+                          className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg transition-colors cursor-pointer"
+                          title="Retirer ce produit"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* CAS 2 : COMMANDE MULTI-PRODUCTEURS -> AFFICHAGE DÉCOUPÉ PAR SOUS-COMMANDES */}
+            {isMultiProducer && subOrdersGrouped.map((group, groupIdx) => {
               const groupFoodVAT = group.subtotalHT * 0.055;
               const groupTotalTTC = group.subtotalHT + groupFoodVAT;
 
@@ -200,7 +285,7 @@ export default function CartContainer({
                   className="bg-white border border-emerald-200 rounded-3xl p-5 shadow-sm space-y-4 relative overflow-hidden"
                 >
                   {/* En-tête de la Sous-Commande */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-150 pb-3 gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-200 pb-3 gap-2">
                     <div className="flex items-center gap-2.5">
                       <span className="p-2 bg-emerald-100 text-emerald-800 rounded-xl font-extrabold text-xs">
                         #{groupIdx + 1}
@@ -218,7 +303,7 @@ export default function CartContainer({
                       </div>
                     </div>
 
-                    <div className="text-right bg-emerald-50/60 border border-emerald-150 px-3 py-1.5 rounded-xl">
+                    <div className="text-right bg-emerald-50/60 border border-emerald-200 px-3 py-1.5 rounded-xl">
                       <span className="text-[9px] text-gray-500 font-extrabold uppercase block">Sous-Total Récolte</span>
                       <span className="font-black text-emerald-900 text-xs font-mono">
                         {group.subtotalHT.toFixed(2)} € HT
@@ -234,7 +319,7 @@ export default function CartContainer({
                           <div className="flex items-center gap-1.5">
                             <h5 className="font-extrabold text-gray-900 text-xs">{item.title || item.name}</h5>
                             {item.isBio && (
-                              <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1.5 py-0.2 rounded uppercase">
+                              <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1.5 py-0.5 rounded uppercase">
                                 BIO
                               </span>
                             )}
@@ -277,8 +362,8 @@ export default function CartContainer({
                     ))}
                   </div>
 
-                  {/* Pied de sous-commande : TVA 5.5% et Total Sous-Commande */}
-                  <div className="pt-2 border-t border-gray-150 flex items-center justify-between text-[11px] font-bold text-gray-600 bg-gray-50/50 p-2.5 rounded-xl">
+                  {/* Pied de sous-commande */}
+                  <div className="pt-2 border-t border-gray-200 flex items-center justify-between text-[11px] font-bold text-gray-600 bg-gray-50/50 p-2.5 rounded-xl">
                     <span className="flex items-center gap-1 text-gray-500">
                       <Percent size={11} />
                       <span>TVA Alimentation (5.5%) : <strong className="font-mono text-gray-800">{groupFoodVAT.toFixed(2)} €</strong></span>
@@ -294,20 +379,24 @@ export default function CartContainer({
 
           {/* RÉCAPITULATIF CONSOLIDÉ DES PRIX & LIVRAISON */}
           <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-3">
-            <h4 className="font-extrabold text-gray-900 text-xs uppercase tracking-wider text-gray-400 border-b border-gray-150 pb-2">
+            <h4 className="font-extrabold text-gray-500 text-xs uppercase tracking-wider border-b border-gray-200 pb-2">
               Synthèse Financière Consolidée
             </h4>
 
             <div className="space-y-2 text-xs font-semibold text-gray-700">
               <div className="flex justify-between items-center">
-                <span className="text-gray-500">Total Produits HT ({subOrdersGrouped.length} sous-commandes)</span>
+                <span className="text-gray-500">
+                  {isMultiProducer 
+                    ? `Total Produits HT (${subOrdersGrouped.length} sous-commandes)` 
+                    : `Sous-total Produits HT`}
+                </span>
                 <span className="font-black text-gray-900 font-mono">{globalSubtotalHT.toFixed(2)} € HT</span>
               </div>
 
               <div className="flex justify-between items-center">
                 <span className="flex items-center gap-1 text-gray-500">
                   <Truck size={13} className="text-emerald-700" />
-                  <span>Frais de Livraison B2B Consolidés</span>
+                  <span>Frais de Livraison B2B</span>
                 </span>
                 <span className="font-black font-mono">
                   {deliveryFeeHT === 0 ? (

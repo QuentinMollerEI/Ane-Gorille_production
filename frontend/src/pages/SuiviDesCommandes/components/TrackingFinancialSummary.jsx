@@ -37,7 +37,7 @@ export default function TrackingFinancialSummary({ order }) {
         </div>
 
         <div className="bg-white p-2.5 rounded-lg border border-gray-200">
-          <span className="text-[9px] font-bold text-gray-400 uppercase block flex items-center gap-1">
+          <span className="text-[9px] font-bold text-gray-400 uppercase flex items-center gap-1">
             <Truck size={10} />
             <span>Frais de Port B2B</span>
           </span>
@@ -45,12 +45,14 @@ export default function TrackingFinancialSummary({ order }) {
             {deliveryFee === 0 ? "Offerts (Franco)" : `${deliveryFee.toFixed(2)} € HT`}
           </span>
           {deliveryFee > 0 && (
-            <span className="text-[9px] text-gray-400 font-medium block mt-0.5 font-mono">+ TVA 20% ({deliveryFeeVAT.toFixed(2)} €)</span>
+            <span className="text-[9px] text-gray-400 font-medium block mt-0.5 font-mono">
+              + TVA 20% ({deliveryFeeVAT.toFixed(2)} €)
+            </span>
           )}
         </div>
 
         <div className="bg-white p-2.5 rounded-lg border border-gray-200">
-          <span className="text-[9px] font-bold text-gray-400 uppercase block flex items-center gap-1">
+          <span className="text-[9px] font-bold text-gray-400 uppercase flex items-center gap-1">
             <Percent size={10} />
             <span>TVA Totale Récupérable</span>
           </span>
