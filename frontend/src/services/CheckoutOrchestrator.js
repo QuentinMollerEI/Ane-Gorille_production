@@ -1,9 +1,9 @@
 /**
  * 🌾 SERVICE CENTRAL : CheckoutOrchestrator.js
  * Orchestrateur de transactions, préparation, livraison et génération comptable Factur-X / Chorus Pro.
- * Conforme au modèle économique EI (Régime réel simplifié de TVA) :
- * 1. Commission de service fixe de 12 %.
- * 2. Grille tarifaire B2B déressive par paliers :
+ * Conforme au nouveau modèle économique de l'EI (Régime réel simplifié de TVA) :
+ * 1. Commission de service fixe de 12 % (au lieu de 18 %).
+ * 2. Grille tarifaire de livraison B2B dégressive par paliers :
  *    - Niveau 1 Standard (< 150 € HT) : 15 € HT
  *    - Niveau 2 Incitatif (150 € à 299,99 € HT) : 8 € HT
  *    - Niveau 3 Franco de port (>= 300 € HT) : 0 € (Livraison offerte)
@@ -28,18 +28,18 @@ import {
 export function calculateDeliveryFee(subtotalHT) {
   const amount = Number(subtotalHT || 0);
   if (amount >= 300) {
-    return 0; // Franco de port
+    return 0; // Niveau 3 : Franco de port
   }
   if (amount >= 150) {
-    return 8; // Incitatif (150 € - 299,99 €)
+    return 8; // Niveau 2 : Incitatif (150 € - 299,99 €)
   }
-  return 15; // Standard (< 150 €)
+  return 15; // Niveau 1 : Standard (< 150 €)
 }
 
 export const CheckoutOrchestrator = {
   
   /**
-   * 1. VALIDATION DU PANIER & TRANSACTIONS ATOMIQUES
+   * 1. VALIDATION DU PANIER & TRANSACTIONS ATOMIQUES (3 Modes de Paiement + Grille 12% + Port Dégressif)
    */
   async processCheckout(buyerProfile, cartItems, checkoutOptions = {}) {
     if (!buyerProfile?.uid || !cartItems || cartItems.length === 0) {
@@ -58,12 +58,11 @@ export const CheckoutOrchestrator = {
       throw new Error("La facturation publique Chorus Pro exige un N° d'Engagement Budgétaire valide.");
     }
 
-    // Regroupement par producteur/maraîcher
     const itemsByProducer = cartItems.reduce((acc, item) => {
-      const pId = item.producerId || item.producer || "PROD_INCONNU";
+      const pId = item.producerId || "PROD_INCONNU";
       if (!acc[pId]) {
         acc[pId] = { 
-          producerName: item.producerCompany || item.producerName || item.producer || "Maraîcher Local", 
+          producerName: item.producerName || item.producer || "Maraîcher Local", 
           items: [], 
           totalAmountHT: 0 
         };
@@ -80,7 +79,6 @@ export const CheckoutOrchestrator = {
         const productSnaps = [];
         let globalTotalHT = 0;
 
-        // Lectures strictes
         for (const item of cartItems) {
           if (!item.id) continue;
           const productRef = doc(db, "products", item.id);
@@ -88,7 +86,6 @@ export const CheckoutOrchestrator = {
           productSnaps.push({ item, productRef, snap });
         }
 
-        // Vérification des stocks
         for (const { item, snap } of productSnaps) {
           if (!snap.exists()) {
             throw new Error(`Le produit "${item.title || item.name}" n'est plus disponible en rayon.`);
@@ -104,13 +101,10 @@ export const CheckoutOrchestrator = {
           globalTotalHT += priceHT * requestedQty;
         }
 
-        // Calculs financiers
         const deliveryFee = calculateDeliveryFee(globalTotalHT);
-        const deliveryFeeVAT = deliveryFee * 0.20; // TVA 20% sur la prestation de transport
-        const totalVAT = (globalTotalHT * 0.055) + deliveryFeeVAT; // TVA 5.5% denrées + TVA 20% port
-        const totalTTC = globalTotalHT + (globalTotalHT * 0.055) + deliveryFee + deliveryFeeVAT;
+        const totalVAT = globalTotalHT * 0.055;
+        const totalTTC = globalTotalHT + totalVAT + deliveryFee;
 
-        // Écritures atomiques
         for (const { item, productRef, snap } of productSnaps) {
           const pData = snap.data();
           const currentStock = Number(pData.stock || 0);
@@ -124,7 +118,6 @@ export const CheckoutOrchestrator = {
           });
         }
 
-        // Commande parente globale
         const globalOrder = {
           id: orderId,
           orderNumber: `CMD-${orderId.substring(0, 8).toUpperCase()}`,
@@ -136,8 +129,6 @@ export const CheckoutOrchestrator = {
           paymentMethod: paymentMethod,
           totalHT: Number(globalTotalHT.toFixed(2)),
           deliveryFee: Number(deliveryFee.toFixed(2)),
-          deliveryFeeVAT: Number(deliveryFeeVAT.toFixed(2)),
-          foodVAT: Number((globalTotalHT * 0.055).toFixed(2)),
           totalVAT: Number(totalVAT.toFixed(2)),
           totalTTC: Number(totalTTC.toFixed(2)),
           amountHT: Number(globalTotalHT.toFixed(2)),
@@ -163,14 +154,12 @@ export const CheckoutOrchestrator = {
             price: Number(i.priceHT ?? i.price ?? 0),
             quantity: Number(i.quantity || i.qty || 1),
             unit: i.unit || "kg",
-            producerId: i.producerId || i.producer,
-            producerName: i.producerCompany || i.producerName || i.producer || "Maraîcher Local",
-            isBio: Boolean(i.isBio)
+            producerId: i.producerId,
+            producerName: i.producerName || i.producer
           }))
         };
         transaction.set(orderRef, globalOrder);
 
-        // Sous-commandes producteurs
         for (const [producerId, group] of Object.entries(itemsByProducer)) {
           const subOrderRef = doc(collection(db, "sub_orders"));
           const subAmountHT = group.totalAmountHT;
@@ -275,9 +264,10 @@ export const CheckoutOrchestrator = {
   },
 
   /**
-   * 4. ESPACE LIVREUR : REMISE PHYSIQUE, HACCP & GÉNÉRATION COMPTABLE
+   * 4. ESPACE LIVREUR : REMISE PHYSIQUE, HACCP & GÉNÉRATION COMPTABLE (BL, FAC-VTE, FAC-COM, Chorus Pro)
+   * Prise en compte du nom du réceptionnaire et de la signature électronique eIDAS (Base64)
    */
-  async validateDelivery(orderId, tempHaccp, signatureBase64) {
+  async validateDelivery(orderId, tempHaccp, signatureBase64, recipientName) {
     if (!orderId) throw new Error("L'identifiant de la commande est requis.");
     if (tempHaccp === undefined || tempHaccp === null) throw new Error("Le relevé de température HACCP est obligatoire.");
 
@@ -292,16 +282,20 @@ export const CheckoutOrchestrator = {
     const subOrders = subSnaps.docs.map(d => ({ id: d.id, ...d.data() }));
 
     const isMandatPublic = orderData.paymentMethod === "mandat_public" || orderData.buyerRole === "acheteur_public";
+    const finalRecipient = recipientName || orderData.buyerName || "Réceptionnaire Client";
 
     await runTransaction(db, async (transaction) => {
+      // 1. Clôture de la commande globale
       transaction.update(orderRef, {
         status: "delivered",
         deliveredAt: serverTimestamp(),
         tempHaccp: Number(tempHaccp),
         signature: signatureBase64 || "EMARGEMENT_NUMERIQUE_OK",
+        recipientName: finalRecipient,
         updatedAt: serverTimestamp()
       });
 
+      // 2. Clôture des sous-commandes producteurs
       subOrders.forEach((so) => {
         const soRef = doc(db, "sub_orders", so.id);
         transaction.update(soRef, {
@@ -312,6 +306,7 @@ export const CheckoutOrchestrator = {
         });
       });
 
+      // 3. Génération du Bon de Livraison (BL) sécurisé pour CE client uniquement
       const blDocId = `BL-${orderId.substring(0, 8).toUpperCase()}`;
       const blRef = doc(db, "documents", blDocId);
       transaction.set(blRef, {
@@ -319,6 +314,7 @@ export const CheckoutOrchestrator = {
         orderId: orderId,
         buyerId: orderData.buyerId,
         buyerName: orderData.buyerName,
+        recipientName: finalRecipient,
         type: "Bon de livraison",
         entity: "Plateforme Âne & Gorille",
         totalAmount: orderData.totalAmount || orderData.amountTTC || 0,
@@ -327,6 +323,7 @@ export const CheckoutOrchestrator = {
         createdAt: serverTimestamp()
       }, { merge: true });
 
+      // 4. Génération des Factures de Vente (FAC-VTE) et de Commissions (FAC-COM)
       subOrders.forEach((so) => {
         const vteDocId = `FAC-VTE-${so.id.substring(0, 8).toUpperCase()}`;
         const vteRef = doc(db, "documents", vteDocId);
@@ -373,6 +370,7 @@ export const CheckoutOrchestrator = {
         });
       });
 
+      // 5. File d'attente Chorus Pro (B2G)
       if (isMandatPublic) {
         const chorusQueueRef = doc(collection(db, "chorus_queue"));
         transaction.set(chorusQueueRef, {

@@ -1,147 +1,130 @@
 import React from "react";
-import {
-  MapPin,
-  Phone,
-  Map,
-  CheckCircle2,
-  ChevronRight,
-  PackageOpen,
-} from "lucide-react";
+import { Store, MapPin, Phone, Truck } from "lucide-react";
 
 /**
  * 🌾 COMPOSANT : PickupLeg.jsx
- * Responsabilité unique : Gérer la liste des enlèvements physiques chez les producteurs maraîchers (SRP).
+ * Module de ramassage logistique chez les maraîchers partenaires.
  */
-export default function PickupLeg({
-  pickups = [],
-  onConfirmPickup,
-  processingId,
-}) {
-  if (pickups.length === 0) {
+export default function PickupLeg({ pickups = [], onConfirmPickup, processingId }) {
+  if (!pickups || pickups.length === 0) {
     return (
-      <div className="bg-white border border-gray-250 rounded-2xl p-8 text-center text-gray-400 italic shadow-sm flex flex-col items-center gap-3">
-        <PackageOpen size={36} className="text-gray-300" />
-        <p className="text-xs font-semibold">
-          Aucun colis n'est actuellement prêt pour un enlèvement maraîcher.
-        </p>
+      <div className="p-8 text-center bg-slate-50 rounded-md border border-dashed border-slate-300 text-slate-400 font-bold italic text-xs">
+        Aucune collecte en attente pour cette tournée.
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      {pickups.map((p) => {
-        const isProcessing = processingId === p.producerId;
+    <div className="space-y-4 text-xs font-sans text-slate-800">
+      {pickups.map((pickup) => {
+        const producerId = pickup.producerId;
+        const isProcessing = processingId === producerId;
+        const subOrders = pickup.subOrders || [];
+        const totalItemsCount = subOrders.reduce((acc, sub) => {
+          const items = Array.isArray(sub.items) ? sub.items : [];
+          return acc + items.reduce((iAcc, item) => iAcc + Number(item.quantity || item.qty || 1), 0);
+        }, 0);
 
-        // URL Google Maps dynamique
-        const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-          p.producerAddress || p.producerName,
+        const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+          `\\({pickup.producerName} \\){pickup.producerAddress}`
         )}`;
 
         return (
           <div
-            key={p.producerId}
-            className="bg-white border border-gray-250 rounded-2xl shadow-sm hover:shadow-md transition-all overflow-hidden"
+            key={producerId}
+            className="bg-white border border-slate-200 rounded-md p-4 shadow-sm space-y-3.5 hover:border-slate-300 transition-colors"
           >
-            {/* En-tête du point de ramassage */}
-            <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            {/* En-tête Exploitation */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
               <div className="space-y-1">
-                <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-50 border border-amber-150 px-2 py-0.5 rounded-md">
-                  Maraîcher Exploitant
-                </span>
-                <h4 className="text-sm font-black text-gray-900">
-                  {p.producerName}
-                </h4>
-              </div>
-
-              {/* Raccourcis d'action de navigation et contact */}
-              <div className="flex items-center gap-2">
-                {p.producerPhone && (
-                  <a
-                    href={`tel:${p.producerPhone}`}
-                    className="p-2 border border-gray-200 text-gray-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition"
-                    title="Appeler l'exploitant"
-                  >
-                    <Phone size={15} />
-                  </a>
-                )}
-                <a
-                  href={mapsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 border border-gray-200 text-gray-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition flex items-center gap-1.5 text-xs font-bold"
-                  title="Ouvrir l'itinéraire GPS"
-                >
-                  <Map size={15} />
-                  <span className="hidden sm:inline">GPS</span>
-                </a>
-              </div>
-            </div>
-
-            {/* Détails logistiques */}
-            <div className="p-5 space-y-4">
-              <div className="flex items-start gap-2.5 text-xs font-semibold text-gray-600">
-                <MapPin size={16} className="text-gray-400 shrink-0 mt-0.5" />
-                <p className="leading-relaxed">
-                  <span className="text-gray-400 block text-[10px] font-black uppercase tracking-wider">
-                    Adresse d'enlèvement
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-emerald-100 text-emerald-800 rounded-md">
+                    <Store size={16} />
                   </span>
-                  <span className="text-gray-900 font-bold">
-                    {p.producerAddress || "Adresse non fournie"}
-                  </span>
+                  <h4 className="font-extrabold text-slate-900 text-sm">
+                    {pickup.producerName}
+                  </h4>
+                </div>
+                <p className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
+                  <MapPin size={12} className="text-emerald-700 shrink-0" />
+                  <span>{pickup.producerAddress}</span>
                 </p>
               </div>
 
-              {/* Liste des colis maraîchers à collecter */}
-              <div className="space-y-2 border-t border-gray-100 pt-4">
-                <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider block">
-                  Colis à charger ({p.subOrders.length})
-                </span>
-                <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden bg-gray-50/30">
-                  {p.subOrders.map((sub) => (
-                    <div
-                      key={sub.id}
-                      className="p-3 text-xs flex justify-between items-center bg-white/50"
-                    >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-gray-900">
-                            #BP-{sub.id.slice(0, 8).toUpperCase()}
-                          </span>
-                          <span className="text-[9px] font-semibold text-gray-400">
-                            Pour : {sub.buyerName}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-gray-500 font-medium">
-                          {sub.items
-                            ?.map((it) => `${it.name} (x${it.quantity})`)
-                            .join(", ")}
-                        </p>
-                      </div>
-                      <ChevronRight size={14} className="text-gray-400" />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Validation de chargement */}
-              <div className="border-t border-gray-50 pt-4 flex justify-end">
-                <button
-                  onClick={() => onConfirmPickup(p.producerId, p.subOrders)}
-                  disabled={isProcessing}
-                  className="w-full sm:w-auto px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
+              {/* Raccourcis Livreur */}
+              <div className="flex items-center gap-2">
+                <a
+                  href={googleMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-emerald-50 text-emerald-800 font-bold rounded border border-slate-200 flex items-center gap-1 text-[10px] transition-colors"
+                  title="Ouvrir dans Google Maps"
                 >
-                  {isProcessing ? (
-                    <span className="animate-pulse">Chargement...</span>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={15} />
-                      Confirmer l'enlèvement ({p.subOrders.length} colis)
-                    </>
-                  )}
-                </button>
+                  <MapPin size={12} />
+                  <span>GPS</span>
+                </a>
+                {pickup.producerPhone && (
+                  <a
+                    href={`tel:${pickup.producerPhone}`}
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 text-blue-800 font-bold rounded border border-slate-200 flex items-center gap-1 text-[10px] transition-colors"
+                  >
+                    <Phone size={12} />
+                    <span>Appeler</span>
+                  </a>
+                )}
               </div>
             </div>
+
+            {/* Récapitulatif des sous-commandes */}
+            <div className="space-y-2">
+              <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider">
+                Colis & Lots Sanitaires à Ramasser ({subOrders.length} bon(s) / {totalItemsCount} unités)
+              </span>
+
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-md overflow-hidden bg-slate-50/50">
+                {subOrders.map((sub) => {
+                  const items = Array.isArray(sub.items) ? sub.items : [];
+                  const lot = sub.lotNumber || sub.batchNumber || "LOT-HACCP";
+
+                  return (
+                    <div key={sub.id} className="p-2.5 flex items-center justify-between gap-2 text-xs">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-extrabold text-slate-900 text-xs font-mono">
+                            #{sub.id.substring(0, 8).toUpperCase()}
+                          </span>
+                          <span className="bg-emerald-100 text-emerald-900 font-mono font-bold text-[10px] px-1.5 py-0.5 rounded border border-emerald-200">
+                            N° Lot : {lot}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-medium">
+                          Client : <strong>{sub.buyerName || "Acheteur"}</strong> ({items.length} réf.)
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          Prêt à Enlever
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Confirmation de chargement */}
+            <button
+              type="button"
+              onClick={() => onConfirmPickup(producerId, subOrders)}
+              disabled={isProcessing}
+              className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold rounded-md text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-50"
+            >
+              <Truck size={16} />
+              <span>
+                {isProcessing ? "Chargement en cours..." : "Confirmer le Chargement en Véhicule"}
+              </span>
+            </button>
           </div>
         );
       })}

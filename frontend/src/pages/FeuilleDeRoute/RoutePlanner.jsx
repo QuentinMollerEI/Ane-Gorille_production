@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Package, ShieldCheck, AlertCircle, Map, RefreshCw } from "lucide-react";
+import { Truck, Package, ShieldCheck, AlertCircle, Map, RefreshCw } from "lucide-react";
 import { collection, query, onSnapshot, doc, writeBatch } from "firebase/firestore";
 import { db } from "../../services/firestore.service.js";
 import { useAuth } from "../../context/AuthContext";
@@ -30,6 +30,9 @@ export default function RoutePlanner() {
   const [subOrders, setSubOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
+  // Navigation par onglet : 'pickups' (Collecte) ou 'deliveries' (Livraison)
+  const [activeTab, setActiveTab] = useState("pickups");
   
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSector, setSelectedSector] = useState("ALL");
@@ -64,6 +67,7 @@ export default function RoutePlanner() {
     return () => unsubscribe();
   }, [user?.uid]);
 
+  // Action 1 : Confirmation du chargement chez le maraîcher
   const handleConfirmPickup = async (producerId, associatedSubs) => {
     setProcessingId(producerId);
     try {
@@ -87,7 +91,7 @@ export default function RoutePlanner() {
         }
       });
       await batch.commit();
-      alert("Enlèvement confirmé ! Les colis maraîchers ont été chargés et sont en route.");
+      alert("Enlèvement confirmé ! Les colis maraîchers ont été chargés dans le véhicule.");
     } catch (err) {
       console.error("Erreur lors de la validation de l'enlèvement :", err);
       alert("Une erreur technique est survenue lors de la validation du chargement.");
@@ -96,16 +100,17 @@ export default function RoutePlanner() {
     }
   };
 
-  const handleConfirmDelivery = async (parentOrderId, tempHaccp, signature) => {
+  // Action 2 : Confirmation de livraison avec température HACCP et signature électronique
+  const handleConfirmDelivery = async (parentOrderId, tempHaccp, signature, recipientName) => {
     setProcessingId(parentOrderId);
     try {
-      // APPEL DU SERVICE D'ORCHESTRATION SÉCURISÉ (sans DocumentWorkflowService)
       await CheckoutOrchestrator.validateDelivery(
         parentOrderId,
         tempHaccp,
         signature || "EMARGEMENT_NUMERIQUE_OK",
+        recipientName || ""
       );
-      alert("Livraison validée avec succès ! Les factures et bons de livraison correspondants ont été émis.");
+      alert("Livraison validée avec succès ! Le Bon de Livraison (BL) émargé a été émis.");
     } catch (err) {
       console.error("Erreur lors de la validation de la livraison :", err);
       alert("Erreur de validation : " + err.message);
@@ -142,6 +147,7 @@ export default function RoutePlanner() {
     return true;
   });
 
+  // Groupement Collectes (Maraîchers)
   const readyForPickupSubs = filteredSubOrders.filter(
     (sub) => sub.status === "A_RAMASSER" || sub.status === "PRET_A_EXPEDIER",
   );
@@ -162,6 +168,7 @@ export default function RoutePlanner() {
   });
   const pickups = Object.values(pickupGroupsMap);
 
+  // Groupement Livraisons (Clients)
   const readyForDeliverySubs = filteredSubOrders.filter(
     (sub) => sub.status === "EXPEDIE" || sub.status === "EN_COURS_DE_LIVRAISON",
   );
@@ -226,34 +233,36 @@ export default function RoutePlanner() {
     return (
       <div className="flex flex-col justify-center items-center py-20 gap-3">
         <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-emerald-700"></div>
-        <span className="text-emerald-800 font-semibold text-sm">Calcul de la feuille de route mutualisée...</span>
+        <span className="text-emerald-800 font-semibold text-sm">Calcul de la feuille de route logistique...</span>
       </div>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in text-xs font-sans">
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-gray-100 pb-5 gap-4">
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6 text-xs font-sans text-slate-800">
+      {/* EN-TÊTE PRINCIPAL */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 pb-4 gap-3">
         <div>
-          <h1 className="text-2xl font-black text-gray-900 flex items-center gap-2">
-            <Map className="text-emerald-700" size={28} /> Feuille de Route Logistique
+          <h1 className="text-xl font-black text-slate-900 flex items-center gap-2">
+            <Map className="text-emerald-700" size={24} /> Feuille de Route Logistique
           </h1>
-          <p className="text-xs text-gray-500 mt-1">
-            Optimisez et pilotez votre double-tournée d'exploitation : ramassez les récoltes prêtes chez les maraîchers, chargez votre véhicule, et validez les livraisons groupées.
+          <p className="text-xs text-slate-500 mt-0.5">
+            Module de gestion des tournées de ramassage chez les maraîchers et de distribution client.
           </p>
         </div>
-        <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-semibold self-start md:self-auto">
+        <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-md flex items-center gap-2 text-xs font-semibold self-start md:self-auto">
           <ShieldCheck size={16} className="text-emerald-700" />
-          <span>Espace Logistique Connecté</span>
+          <span>Espace Logistique Sécurisé (RGPD & HACCP)</span>
         </div>
       </div>
 
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-semibold flex items-center gap-2">
+        <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-md text-xs font-semibold flex items-center gap-2">
           <AlertCircle size={16} /> {error}
         </div>
       )}
 
+      {/* SYNTHÈSE & FILTRES */}
       <RouteSummary stats={stats} />
       <RouteFilters
         searchQuery={searchQuery}
@@ -265,23 +274,58 @@ export default function RoutePlanner() {
         setSelectedDate={setSelectedDate}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        <div className="bg-gray-50/50 border border-gray-200 rounded-3xl p-6 space-y-6">
-          <div className="space-y-1">
-            <h3 className="font-extrabold text-gray-900 text-sm">1. Points de Collecte</h3>
-            <p className="text-[10px] text-gray-400">Visitez les exploitations partenaires pour charger les colis déjà prêts et étiquetés HACCP.</p>
+      {/* SÉLECTEUR D'ONGLETS SÉPARÉS (COLLECTE VS LIVRAISON) */}
+      <div className="flex border-b border-slate-200 space-x-2">
+        <button
+          onClick={() => setActiveTab("pickups")}
+          className={`pb-2.5 px-4 text-xs font-black uppercase tracking-wider flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+            activeTab === "pickups"
+              ? "border-emerald-700 text-emerald-900 bg-emerald-50/50 rounded-t-md"
+              : "border-transparent text-slate-400 hover:text-slate-700"
+          }`}
+        >
+          <Truck size={16} className={activeTab === "pickups" ? "text-emerald-700" : ""} />
+          <span>1. Tournée de Collecte Maraîchers ({pickups.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("deliveries")}
+          className={`pb-2.5 px-4 text-xs font-black uppercase tracking-wider flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+            activeTab === "deliveries"
+              ? "border-blue-700 text-blue-900 bg-blue-50/50 rounded-t-md"
+              : "border-transparent text-slate-400 hover:text-slate-700"
+          }`}
+        >
+          <Package size={16} className={activeTab === "deliveries" ? "text-blue-700" : ""} />
+          <span>2. Tournée de Livraison Clients ({deliveries.length})</span>
+        </button>
+      </div>
+
+      {/* VUE SÉPARÉE 1 : COLLECTE MARAÎCHERS */}
+      {activeTab === "pickups" && (
+        <div className="bg-white border border-slate-200 rounded-md p-4 space-y-4">
+          <div className="border-b border-slate-100 pb-2">
+            <h3 className="font-extrabold text-slate-900 text-sm">Tournée de Collecte aux Champs</h3>
+            <p className="text-[11px] text-slate-500">
+              Chargez les colis étiquetés HACCP chez chaque maraîcher partenaire avant le départ en livraison.
+            </p>
           </div>
           <PickupLeg pickups={pickups} onConfirmPickup={handleConfirmPickup} processingId={processingId} />
         </div>
+      )}
 
-        <div className="bg-gray-50/50 border border-gray-200 rounded-3xl p-6 space-y-6">
-          <div className="space-y-1">
-            <h3 className="font-extrabold text-gray-900 text-sm">2. Points de Distribution</h3>
-            <p className="text-[10px] text-gray-400">Livrez les marchandises groupées aux collectivités (B2G) et établissements professionnels (B2B).</p>
+      {/* VUE SÉPARÉE 2 : LIVRAISON CLIENTS */}
+      {activeTab === "deliveries" && (
+        <div className="bg-white border border-slate-200 rounded-md p-4 space-y-4">
+          <div className="border-b border-slate-100 pb-2">
+            <h3 className="font-extrabold text-slate-900 text-sm">Tournée de Distribution Client</h3>
+            <p className="text-[11px] text-slate-500">
+              Sélectionnez un client pour ouvrir son Bon de Livraison épuré et faire signer l'émargement en toute confidentialité.
+            </p>
           </div>
           <DeliveryLeg deliveries={deliveries} onConfirmDelivery={handleConfirmDelivery} processingId={processingId} />
         </div>
-      </div>
+      )}
     </div>
   );
 }
