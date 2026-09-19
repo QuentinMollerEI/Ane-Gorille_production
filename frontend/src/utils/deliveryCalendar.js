@@ -1,49 +1,67 @@
-export function calculateDeliveryWindow(orderDate = new Date()) {
-  const hour = orderDate.getHours();
-  const day = orderDate.getDay(); // 0: Dimanche, 1: Lundi, ..., 6: Samedi
+/**
+ * 🌾 CALCULATEUR LOGISTIQUE ÂNE & GORILLE
+ * Calcul dynamique de la date minimale de livraison (EADD)
+ * et génération de la liste des 11 jours livrables disponibles.
+ * 
+ * Règles logistiques :
+ * - Jours de collecte/livraison autorisés : Lundi (1), Mardi (2), Mercredi (3), Vendredi (5).
+ * - Jours de fermeture opérationnelle : Jeudi (4), Samedi (6), Dimanche (0).
+ * - Cutoff : 12h00 (Midi).
+ */
 
-  let leadDaysMin = 1;
+export function getEarliestDeliveryDate(orderDate = new Date()) {
+  const date = new Date(orderDate);
+  const hour = date.getHours();
+  const day = date.getDay(); // 0: Dimanche, 1: Lundi, ..., 6: Samedi
 
-  if ([1, 2, 3, 4].includes(day)) {
-    // Lundi au Jeudi : Avant 12h -> J+1 | Après 12h -> J+2
-    leadDaysMin = hour < 12 ? 1 : 2;
-  } else if (day === 5) {
-    // Vendredi : Avant 12h -> Lundi (J+1 décalé) | Après 12h -> Mardi (J+4)
-    leadDaysMin = hour < 12 ? 1 : 4;
-  } else if (day === 6) {
-    // Samedi : Livraison à partir du Mardi (J+3)
-    leadDaysMin = 3;
-  } else if (day === 0) {
-    // Dimanche : Livraison à partir du Mardi (J+2)
-    leadDaysMin = 2;
+  let deliveryDate = new Date(date);
+
+  if (day === 1) { // LUNDI
+    deliveryDate.setDate(date.getDate() + (hour < 12 ? 1 : 2)); // Mar (J+1) ou Mer (J+2)
+  } else if (day === 2) { // MARDI
+    deliveryDate.setDate(date.getDate() + (hour < 12 ? 1 : 3)); // Mer (J+1) ou Ven (J+3)
+  } else if (day === 3) { // MERCREDI
+    deliveryDate.setDate(date.getDate() + (hour < 12 ? 2 : 5)); // Ven (J+2) ou Lun (J+5)
+  } else if (day === 4) { // JEUDI (Fermé)
+    deliveryDate.setDate(date.getDate() + 4); // Lun (J+4)
+  } else if (day === 5) { // VENDREDI
+    deliveryDate.setDate(date.getDate() + (hour < 12 ? 3 : 4)); // Lun (J+3) ou Mar (J+4)
+  } else if (day === 6) { // SAMEDI (Fermé)
+    deliveryDate.setDate(date.getDate() + 3); // Mar (J+3)
+  } else if (day === 0) { // DIMANCHE (Fermé)
+    deliveryDate.setDate(date.getDate() + 2); // Mar (J+2)
   }
 
-  // 1. Définition de la date minimum de livraison
-  const minDate = new Date(orderDate);
-  minDate.setDate(minDate.getDate() + leadDaysMin);
-  minDate.setHours(0, 0, 0, 0);
+  deliveryDate.setHours(0, 0, 0, 0);
+  return deliveryDate;
+}
 
-  // Sécurité anti-weekend : Si la date min tombe un samedi ou dimanche, repousser au lundi
-  if (minDate.getDay() === 6) minDate.setDate(minDate.getDate() + 2); // Samedi -> Lundi
-  if (minDate.getDay() === 0) minDate.setDate(minDate.getDate() + 1); // Dimanche -> Lundi
-
-  // 2. Définition de la date maximum (J+7)
-  const maxDate = new Date(orderDate);
-  maxDate.setDate(maxDate.getDate() + 7);
-  maxDate.setHours(23, 59, 59, 999);
-
-  // 3. Génération des dates disponibles (exclusion stricte du samedi et du dimanche)
+export function getAvailableDeliveryDates(orderDate = new Date(), maxDeliverableDays = 11) {
+  const minDate = getEarliestDeliveryDate(orderDate);
   const availableDates = [];
+
   let currentDate = new Date(minDate);
 
-  while (currentDate <= maxDate) {
-    if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+  while (availableDates.length < maxDeliverableDays) {
+    const dayOfWeek = currentDate.getDay();
+    // On conserve uniquement Lundi(1), Mardi(2), Mercredi(3) et Vendredi(5)
+    if (dayOfWeek === 1 || dayOfWeek === 2 || dayOfWeek === 3 || dayOfWeek === 5) {
       availableDates.push(new Date(currentDate));
     }
     currentDate.setDate(currentDate.getDate() + 1);
   }
 
+  return availableDates;
+}
+
+export function calculateDeliveryWindow(orderDate = new Date()) {
   return {
-    availableDates,
+    availableDates: getAvailableDeliveryDates(orderDate, 11),
   };
 }
+
+export default {
+  getEarliestDeliveryDate,
+  getAvailableDeliveryDates,
+  calculateDeliveryWindow
+};

@@ -1,12 +1,11 @@
 /**
  * 🌾 SERVICE CENTRAL : CheckoutOrchestrator.js
  * Orchestrateur de transactions, préparation, livraison et génération comptable Factur-X / Chorus Pro.
- * Conforme au nouveau modèle économique EI (Régime réel simplifié de TVA) :
- * 1. Séparation stricte des sous-commandes (sub_orders) par producteur / fournisseur.
- * 2. Commission de service fixe de 12 % HT (+ TVA 20 %).
- * 3. Grille tarifaire B2B de livraison dégressive par paliers :
- *    - Niveau 1 Standard (< 150 € HT) : 15 € HT (+ TVA 20 % = 18 € TTC)
- *    - Niveau 2 Incitatif (150 € à 299,99 € HT) : 8 € HT (+ TVA 20 % = 9,60 € TTC)
+ * Conforme au modèle économique EI (Régime réel simplifié de TVA) :
+ * 1. Commission de service fixe de 12 %.
+ * 2. Grille tarifaire B2B déressive par paliers :
+ *    - Niveau 1 Standard (< 150 € HT) : 15 € HT
+ *    - Niveau 2 Incitatif (150 € à 299,99 € HT) : 8 € HT
  *    - Niveau 3 Franco de port (>= 300 € HT) : 0 € (Livraison offerte)
  */
 import { db } from "../config/firebase";
@@ -29,20 +28,18 @@ import {
 export function calculateDeliveryFee(subtotalHT) {
   const amount = Number(subtotalHT || 0);
   if (amount >= 300) {
-    return 0; // Niveau 3 : Franco de port
+    return 0; // Franco de port
   }
   if (amount >= 150) {
-    return 8; // Niveau 2 : Incitatif (150 € - 299,99 €)
+    return 8; // Incitatif (150 € - 299,99 €)
   }
-  return 15; // Niveau 1 : Standard (< 150 €)
+  return 15; // Standard (< 150 €)
 }
 
 export const CheckoutOrchestrator = {
-  calculateDeliveryFee,
-
+  
   /**
    * 1. VALIDATION DU PANIER & TRANSACTIONS ATOMIQUES
-   * (Découpage strict par producteur/fournisseur + Commission 12% HT + Port Dégressif + TVA Réel)
    */
   async processCheckout(buyerProfile, cartItems, checkoutOptions = {}) {
     if (!buyerProfile?.uid || !cartItems || cartItems.length === 0) {
@@ -55,19 +52,35 @@ export const CheckoutOrchestrator = {
     const role = buyerProfile.role || buyerProfile.buyerRole || "client_pro";
     const isPublicSector = role === "acheteur_public" || role === "client_public" || buyerProfile.buyerProfile === "B2G";
 
-    // Détermination du mode de règlement
     let paymentMethod = checkoutOptions.paymentMethod || (isPublicSector ? "mandat_public" : "stripe_b2b");
     
-    // Contrainte B2G Chorus Pro : N° d'engagement budgétaire obligatoire
     if (isPublicSector && (!checkoutOptions.refEngagement || checkoutOptions.refEngagement.trim() === "" || checkoutOptions.refEngagement === "-")) {
       throw new Error("La facturation publique Chorus Pro exige un N° d'Engagement Budgétaire valide.");
     }
 
+    // Regroupement par producteur/maraîcher
+    const itemsByProducer = cartItems.reduce((acc, item) => {
+      const pId = item.producerId || item.producer || "PROD_INCONNU";
+      if (!acc[pId]) {
+        acc[pId] = { 
+          producerName: item.producerCompany || item.producerName || item.producer || "Maraîcher Local", 
+          items: [], 
+          totalAmountHT: 0 
+        };
+      }
+      const qty = Number(item.quantity || item.qty || 1);
+      const pHT = Number(item.priceHT ?? item.price ?? 0);
+      acc[pId].items.push(item);
+      acc[pId].totalAmountHT += pHT * qty;
+      return acc;
+    }, {});
+
     try {
       await runTransaction(db, async (transaction) => {
         const productSnaps = [];
+        let globalTotalHT = 0;
 
-        // ÉTAPE A : Lectures strictes Firestore (Toutes les lectures avant les écritures)
+        // Lectures strictes
         for (const item of cartItems) {
           if (!item.id) continue;
           const productRef = doc(db, "products", item.id);
@@ -75,11 +88,7 @@ export const CheckoutOrchestrator = {
           productSnaps.push({ item, productRef, snap });
         }
 
-        // ÉTAPE B : Vérification des stocks & regroupement STRICT par producteur/fournisseur
-        let globalTotalHT = 0;
-        const itemsByProducer = {};
-        const enrichedCartItems = [];
-
+        // Vérification des stocks
         for (const { item, snap } of productSnaps) {
           if (!snap.exists()) {
             throw new Error(`Le produit "${item.title || item.name}" n'est plus disponible en rayon.`);
@@ -91,57 +100,17 @@ export const CheckoutOrchestrator = {
           if (currentStock < requestedQty) {
             throw new Error(`Stock insuffisant pour "${pData.title || pData.name}". Restant : ${currentStock}`);
           }
-
           const priceHT = Number(pData.priceHT ?? pData.price ?? item.priceHT ?? item.price ?? 0);
           globalTotalHT += priceHT * requestedQty;
-
-          // 🎯 Extraction ultra-robuste de l'ID du producteur (priorité aux données Firestore pData, puis item)
-          const producerId = pData.producerId || pData.producer || pData.producerUid || pData.supplierId || pData.userId || 
-                             item.producerId || item.producer || item.producerUid || item.supplierId || item.vendorId || item.userId || "PROD_INCONNU";
-
-          const producerName = pData.producerName || pData.producerCompany || pData.producer || pData.supplierName || 
-                               item.producerName || item.producerCompany || item.producer || "Maraîcher Local";
-
-          const enrichedItem = {
-            id: item.id,
-            name: pData.title || pData.name || item.title || item.name,
-            title: pData.title || pData.name || item.title || item.name,
-            priceHT: priceHT,
-            price: priceHT,
-            quantity: requestedQty,
-            unit: pData.unit || item.unit || "kg",
-            producerId: producerId,
-            producerName: producerName,
-            isBio: Boolean(pData.isBio || item.isBio),
-            category: pData.category || item.category || "Légumes"
-          };
-
-          enrichedCartItems.push(enrichedItem);
-
-          // Groupement par producteur
-          if (!itemsByProducer[producerId]) {
-            itemsByProducer[producerId] = {
-              producerId: producerId,
-              producerName: producerName,
-              items: [],
-              totalAmountHT: 0
-            };
-          }
-          itemsByProducer[producerId].items.push(enrichedItem);
-          itemsByProducer[producerId].totalAmountHT += priceHT * requestedQty;
         }
 
-        // ÉTAPE C : Calculs financiers selon le Régime Réel de TVA
-        const deliveryFeeHT = calculateDeliveryFee(globalTotalHT); // Port dégressif HT (0€ / 8€ / 15€)
-        const deliveryFeeVAT = deliveryFeeHT * 0.20; // TVA 20 % prestation de transport
-        const deliveryFeeTTC = deliveryFeeHT + deliveryFeeVAT;
+        // Calculs financiers
+        const deliveryFee = calculateDeliveryFee(globalTotalHT);
+        const deliveryFeeVAT = deliveryFee * 0.20; // TVA 20% sur la prestation de transport
+        const totalVAT = (globalTotalHT * 0.055) + deliveryFeeVAT; // TVA 5.5% denrées + TVA 20% port
+        const totalTTC = globalTotalHT + (globalTotalHT * 0.055) + deliveryFee + deliveryFeeVAT;
 
-        const foodVAT = globalTotalHT * 0.055; // TVA 5.5 % denrées alimentaires
-        const totalVAT = foodVAT + deliveryFeeVAT;
-        const totalTTC = globalTotalHT + foodVAT + deliveryFeeTTC;
-
-        // ÉTAPE D : Écritures atomiques
-        // 1. Décrémentation physique des stocks
+        // Écritures atomiques
         for (const { item, productRef, snap } of productSnaps) {
           const pData = snap.data();
           const currentStock = Number(pData.stock || 0);
@@ -155,7 +124,7 @@ export const CheckoutOrchestrator = {
           });
         }
 
-        // 2. Création de la commande parente globale (orders)
+        // Commande parente globale
         const globalOrder = {
           id: orderId,
           orderNumber: `CMD-${orderId.substring(0, 8).toUpperCase()}`,
@@ -166,11 +135,9 @@ export const CheckoutOrchestrator = {
           refEngagement: checkoutOptions.refEngagement || "-",
           paymentMethod: paymentMethod,
           totalHT: Number(globalTotalHT.toFixed(2)),
-          deliveryFee: Number(deliveryFeeHT.toFixed(2)),
-          deliveryFeeHT: Number(deliveryFeeHT.toFixed(2)),
+          deliveryFee: Number(deliveryFee.toFixed(2)),
           deliveryFeeVAT: Number(deliveryFeeVAT.toFixed(2)),
-          deliveryFeeTTC: Number(deliveryFeeTTC.toFixed(2)),
-          foodVAT: Number(foodVAT.toFixed(2)),
+          foodVAT: Number((globalTotalHT * 0.055).toFixed(2)),
           totalVAT: Number(totalVAT.toFixed(2)),
           totalTTC: Number(totalTTC.toFixed(2)),
           amountHT: Number(globalTotalHT.toFixed(2)),
@@ -181,35 +148,40 @@ export const CheckoutOrchestrator = {
           status: "paid",
           deliveryDetails: {
             selectedDate: checkoutOptions.deliveryDetails?.selectedDate || new Date().toISOString().split("T")[0],
-            deliveryWindow: checkoutOptions.deliveryDetails?.deliveryWindow || "06:00 - 08:00",
+            deliveryWindow: checkoutOptions.deliveryDetails?.deliveryWindow || "06:00 - 09:00",
             instructions: checkoutOptions.deliveryDetails?.instructions || ""
           },
           deliveryAddress: checkoutOptions.deliveryAddress || buyerProfile.address || "Adresse de livraison",
-          producerIds: Object.keys(itemsByProducer), // Liste exacte de tous les UIDs producteurs impliqués
+          producerIds: Object.keys(itemsByProducer),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          items: enrichedCartItems
+          items: cartItems.map(i => ({
+            id: i.id,
+            name: i.title || i.name,
+            title: i.title || i.name,
+            priceHT: Number(i.priceHT ?? i.price ?? 0),
+            price: Number(i.priceHT ?? i.price ?? 0),
+            quantity: Number(i.quantity || i.qty || 1),
+            unit: i.unit || "kg",
+            producerId: i.producerId || i.producer,
+            producerName: i.producerCompany || i.producerName || i.producer || "Maraîcher Local",
+            isBio: Boolean(i.isBio)
+          }))
         };
         transaction.set(orderRef, globalOrder);
 
-        // 3. Création des SOUS-COMMANDES INDIVIDUELLES (sub_orders) — 1 par Producteur/Fournisseur
+        // Sous-commandes producteurs
         for (const [producerId, group] of Object.entries(itemsByProducer)) {
           const subOrderRef = doc(collection(db, "sub_orders"));
           const subAmountHT = group.totalAmountHT;
           const subAmountTTC = subAmountHT * 1.055;
-
-          // Commission 12 % HT + TVA 20 % sur la commission (Services en Régime Réel)
-          const commissionRate = 0.12;
-          const commissionAmountHT = subAmountHT * commissionRate;
-          const commissionVAT = commissionAmountHT * 0.20;
-          const commissionAmountTTC = commissionAmountHT + commissionVAT;
+          const commissionAmount = subAmountHT * 0.12;
 
           transaction.set(subOrderRef, {
             id: subOrderRef.id,
             orderId: orderId,
             parentOrderId: orderId,
-            mainOrderId: orderId,
-            producerId: producerId, // ✅ Identifiant exact du producteur
+            producerId: producerId,
             producerName: group.producerName,
             buyerId: buyerProfile.uid,
             buyerName: globalOrder.buyerName,
@@ -219,12 +191,9 @@ export const CheckoutOrchestrator = {
             amount: Number(subAmountTTC.toFixed(2)),
             totalAmount: Number(subAmountTTC.toFixed(2)),
             commissionRate: 12,
-            commissionAmountHT: Number(commissionAmountHT.toFixed(2)),
-            commissionVAT: Number(commissionVAT.toFixed(2)),
-            commissionAmountTTC: Number(commissionAmountTTC.toFixed(2)),
-            commissionAmount: Number(commissionAmountTTC.toFixed(2)),
-            netProducerAmount: Number((subAmountHT - commissionAmountHT).toFixed(2)), // 88 % HT au producteur
-            items: group.items, // Uniquement les produits de CE producteur
+            commissionAmount: Number(commissionAmount.toFixed(2)),
+            netProducerAmount: Number((subAmountHT - commissionAmount).toFixed(2)),
+            items: group.items,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           });
@@ -306,7 +275,7 @@ export const CheckoutOrchestrator = {
   },
 
   /**
-   * 4. ESPACE LIVREUR : REMISE PHYSIQUE, HACCP & GÉNÉRATION COMPTABLE (BL, FAC-VTE, FAC-COM, Chorus Pro)
+   * 4. ESPACE LIVREUR : REMISE PHYSIQUE, HACCP & GÉNÉRATION COMPTABLE
    */
   async validateDelivery(orderId, tempHaccp, signatureBase64) {
     if (!orderId) throw new Error("L'identifiant de la commande est requis.");
@@ -325,7 +294,6 @@ export const CheckoutOrchestrator = {
     const isMandatPublic = orderData.paymentMethod === "mandat_public" || orderData.buyerRole === "acheteur_public";
 
     await runTransaction(db, async (transaction) => {
-      // 1. Clôture de la commande globale
       transaction.update(orderRef, {
         status: "delivered",
         deliveredAt: serverTimestamp(),
@@ -334,7 +302,6 @@ export const CheckoutOrchestrator = {
         updatedAt: serverTimestamp()
       });
 
-      // 2. Clôture des sous-commandes producteurs
       subOrders.forEach((so) => {
         const soRef = doc(db, "sub_orders", so.id);
         transaction.update(soRef, {
@@ -345,7 +312,6 @@ export const CheckoutOrchestrator = {
         });
       });
 
-      // 3. Génération du Bon de Livraison (BL)
       const blDocId = `BL-${orderId.substring(0, 8).toUpperCase()}`;
       const blRef = doc(db, "documents", blDocId);
       transaction.set(blRef, {
@@ -361,7 +327,6 @@ export const CheckoutOrchestrator = {
         createdAt: serverTimestamp()
       }, { merge: true });
 
-      // 4. Génération des Factures de Vente (FAC-VTE) et de Commissions (FAC-COM)
       subOrders.forEach((so) => {
         const vteDocId = `FAC-VTE-${so.id.substring(0, 8).toUpperCase()}`;
         const vteRef = doc(db, "documents", vteDocId);
@@ -385,12 +350,11 @@ export const CheckoutOrchestrator = {
           createdAt: serverTimestamp()
         });
 
-        // Facture de frais de service (Commission 12 % HT + TVA 20 % en Régime Réel)
         const comDocId = `FAC-COM-${so.id.substring(0, 8).toUpperCase()}`;
         const comRef = doc(db, "documents", comDocId);
         const commissionHT = subAmountHT * 0.12;
-        const commissionVAT = commissionHT * 0.20;
-        const commissionTTC = commissionHT + commissionVAT;
+        const commissionTVA = commissionHT * 0.20;
+        const commissionTTC = commissionHT + commissionTVA;
 
         transaction.set(comRef, {
           id: comDocId,
@@ -401,7 +365,7 @@ export const CheckoutOrchestrator = {
           producerId: so.producerId,
           producerName: so.producerName,
           amountHT: Number(commissionHT.toFixed(2)),
-          amountVAT: Number(commissionVAT.toFixed(2)),
+          amountVAT: Number(commissionTVA.toFixed(2)),
           amountTTC: Number(commissionTTC.toFixed(2)),
           vatRate: 20,
           status: "paid",
@@ -409,7 +373,6 @@ export const CheckoutOrchestrator = {
         });
       });
 
-      // 5. File d'attente Chorus Pro (B2G)
       if (isMandatPublic) {
         const chorusQueueRef = doc(collection(db, "chorus_queue"));
         transaction.set(chorusQueueRef, {

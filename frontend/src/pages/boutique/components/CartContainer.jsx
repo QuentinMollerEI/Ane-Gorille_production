@@ -205,96 +205,29 @@ export default function CartContainer({
               </button>
             </div>
 
-            {/* CAS 1 : COMMANDE UNIQUE (1 SEUL PRODUCTEUR) -> AFFICHAGE PROPRE ET CLASSIQUE */}
-            {!isMultiProducer && subOrdersGrouped.length === 1 && (
-              <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-4">
-                <div className="flex items-center justify-between border-b border-gray-200 pb-3">
-                  <div>
-                    <h4 className="font-extrabold text-gray-900 text-sm">
-                      {subOrdersGrouped[0].producerName}
-                    </h4>
-                    <p className="text-[10px] text-gray-500 font-bold">
-                      Provenance : {subOrdersGrouped[0].producerCity}
-                    </p>
-                  </div>
-                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 font-extrabold text-[10px] px-2.5 py-0.5 rounded-full uppercase">
-                    Vente Directe Producteur
-                  </span>
-                </div>
-
-                <div className="divide-y divide-gray-100 space-y-3">
-                  {subOrdersGrouped[0].items.map((item) => (
-                    <div key={item.id} className="pt-3 flex items-center justify-between gap-4">
-                      <div className="space-y-1 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <h5 className="font-black text-gray-900 text-xs">{item.title || item.name}</h5>
-                          {item.isBio && (
-                            <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1.5 py-0.5 rounded uppercase">
-                              BIO
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-emerald-800 font-bold text-[11px] font-mono">
-                          {item.priceHT.toFixed(2)} € HT / {item.unit || "kg"}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center border border-gray-300 rounded-xl overflow-hidden bg-gray-50">
-                          <button
-                            onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
-                            className="px-2.5 py-1 text-gray-600 hover:bg-gray-200 font-black cursor-pointer"
-                          >
-                            <Minus size={13} />
-                          </button>
-                          <span className="px-3 py-1 font-extrabold text-gray-900 text-xs font-mono">{item.quantity}</span>
-                          <button
-                            onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-                            className="px-2.5 py-1 text-gray-600 hover:bg-gray-200 font-black cursor-pointer"
-                          >
-                            <Plus size={13} />
-                          </button>
-                        </div>
-
-                        <div className="text-right min-w-[70px]">
-                          <p className="font-black text-gray-900 text-xs font-mono">{item.lineHT.toFixed(2)} € HT</p>
-                        </div>
-
-                        <button
-                          onClick={() => onRemoveItem(item.id)}
-                          className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg transition-colors cursor-pointer"
-                          title="Retirer ce produit"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* CAS 2 : COMMANDE MULTI-PRODUCTEURS -> AFFICHAGE DÉCOUPÉ PAR SOUS-COMMANDES */}
-            {isMultiProducer && subOrdersGrouped.map((group, groupIdx) => {
+            {/* BOUCLE DE RENDU DYNAMIQUE DES GROUPES PRODUCTEURS */}
+            {subOrdersGrouped.map((group, groupIdx) => {
               const groupFoodVAT = group.subtotalHT * 0.055;
               const groupTotalTTC = group.subtotalHT + groupFoodVAT;
 
               return (
                 <div 
                   key={group.producerId} 
-                  className="bg-white border border-emerald-200 rounded-3xl p-5 shadow-sm space-y-4 relative overflow-hidden"
+                  className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm space-y-4 relative overflow-hidden"
                 >
-                  {/* En-tête de la Sous-Commande */}
+                  {/* En-tête du groupe */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-200 pb-3 gap-2">
                     <div className="flex items-center gap-2.5">
-                      <span className="p-2 bg-emerald-100 text-emerald-800 rounded-xl font-extrabold text-xs">
-                        #{groupIdx + 1}
-                      </span>
+                      {isMultiProducer && (
+                        <span className="p-2 bg-emerald-100 text-emerald-800 rounded-xl font-extrabold text-xs">
+                          #{groupIdx + 1}
+                        </span>
+                      )}
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="font-black text-gray-900 text-sm">{group.producerName}</h4>
                           <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 font-extrabold text-[9px] px-2 py-0.5 rounded-full uppercase">
-                            Sous-Commande #{groupIdx + 1}
+                            {isMultiProducer ? `Sous-Commande #${groupIdx + 1}` : "Vente Directe Producteur"}
                           </span>
                         </div>
                         <p className="text-[10px] text-gray-400 font-bold">
@@ -369,7 +302,7 @@ export default function CartContainer({
                       <span>TVA Alimentation (5.5%) : <strong className="font-mono text-gray-800">{groupFoodVAT.toFixed(2)} €</strong></span>
                     </span>
                     <span className="text-emerald-900 font-mono font-black">
-                      Total Sous-Commande : {groupTotalTTC.toFixed(2)} € TTC
+                      Total Récolte : {groupTotalTTC.toFixed(2)} € TTC
                     </span>
                   </div>
                 </div>

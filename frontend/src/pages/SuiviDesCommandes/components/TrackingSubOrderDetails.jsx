@@ -1,22 +1,59 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Store, Tag, Calendar, MapPin } from "lucide-react";
 
 /**
+ * 🚚 Helper : Formatage sécurisé des dates de récolte (Timestamp Firestore, Date ou String)
+ */
+function formatHarvestDate(dateVal) {
+  if (!dateVal) return null;
+  try {
+    if (typeof dateVal.toDate === "function") {
+      return dateVal.toDate().toLocaleDateString("fr-FR");
+    }
+    if (typeof dateVal === "object" && dateVal.seconds) {
+      return new Date(dateVal.seconds * 1000).toLocaleDateString("fr-FR");
+    }
+    const d = new Date(dateVal);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString("fr-FR");
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+/**
  * 🌾 COMPOSANT : TrackingSubOrderDetails.jsx
- * Affichage des sous-commandes groupées par producteur/maraîcher avec numéros de lots sanitaires.
+ * Affichage sans doublons des sous-commandes groupées par producteur/maraîcher
+ * avec traçabilité sanitaire HACCP et numéros de lots.
  */
 export default function TrackingSubOrderDetails({ subOrders = [], items = [] }) {
-  const groupedProducts = React.useMemo(() => {
-    if (subOrders && subOrders.length > 0) return subOrders;
+  // Déduplication et structuration sécurisée des sous-commandes / produits
+  const groupedProducts = useMemo(() => {
+    if (Array.isArray(subOrders) && subOrders.length > 0) {
+      const map = new Map();
+      subOrders.forEach((sub, idx) => {
+        if (!sub) return;
+        const key = sub.id || `${sub.producerId || sub.producerName || "prod"}-${idx}`;
+        if (!map.has(key)) {
+          map.set(key, sub);
+        }
+      });
+      return Array.from(map.values());
+    }
 
+    // Mode fallback : regroupement des produits par producteur si subOrders est vide
     const map = {};
     (items || []).forEach((item) => {
+      if (!item) return;
       const pName = item.producerName || item.producer || "Maraîcher Local";
       if (!map[pName]) {
         map[pName] = {
+          id: `fallback-${pName}`,
           producerName: pName,
           department: item.department || item.origin || "Local",
-          batchNumber: item.batchNumber || item.lotNumber || "LOT-HACCP-STD",
+          batchNumber: item.batchNumber || item.lotNumber || null,
           harvestDate: item.harvestDate || item.manufacturingDate || null,
           items: [],
         };
@@ -36,22 +73,23 @@ export default function TrackingSubOrderDetails({ subOrders = [], items = [] }) 
   }
 
   return (
-    <div className="space-y-2 text-xs">
+    <div className="space-y-2 text-xs font-sans text-slate-800">
       {groupedProducts.map((sub, idx) => {
         const producerName = sub.producerName || sub.producer || "Exploitation Agricole";
         const dept = sub.department || sub.origin || "Local";
-        const batchNum = sub.batchNumber || sub.lotNumber || "LOT-STD";
-        const subItems = sub.items || sub.products || [];
+        const batchNum = sub.batchNumber || sub.lotNumber || null;
+        const formattedDate = formatHarvestDate(sub.harvestDate || sub.createdAt);
+        const subItems = Array.isArray(sub.items) ? sub.items : (Array.isArray(sub.products) ? sub.products : []);
 
         return (
           <div
             key={sub.id || idx}
-            className="border border-slate-200 rounded-sm bg-white overflow-hidden shadow-2xs p-2.5 space-y-2"
+            className="border border-slate-200 rounded-md bg-white overflow-hidden shadow-sm p-3 space-y-2.5"
           >
-            {/* En-tête Producteur */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-1.5 gap-1.5">
+            {/* En-tête Producteur & Traçabilité */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-2 gap-2">
               <div className="flex items-center gap-2">
-                <span className="p-1 bg-emerald-100 text-emerald-800 rounded-sm">
+                <span className="p-1.5 bg-emerald-100 text-emerald-800 rounded-sm">
                   <Store size={14} />
                 </span>
                 <div>
@@ -71,16 +109,16 @@ export default function TrackingSubOrderDetails({ subOrders = [], items = [] }) 
                     <span>N° Lot : {batchNum}</span>
                   </span>
                 )}
-                {sub.harvestDate && (
+                {formattedDate && (
                   <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-sm font-bold flex items-center gap-1">
                     <Calendar size={11} />
-                    <span>Récolté le : {new Date(sub.harvestDate).toLocaleDateString("fr-FR")}</span>
+                    <span>Récolté le : {formattedDate}</span>
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Tableau des articles de ce producteur */}
+            {/* Tableau des articles de cette exploitation */}
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -103,9 +141,14 @@ export default function TrackingSubOrderDetails({ subOrders = [], items = [] }) 
                         <td className="p-1.5">
                           <div className="flex items-center gap-1.5">
                             <span className="font-extrabold text-slate-900">{prod.title || prod.name}</span>
-                            {prod.isBio && (
-                              <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1 py-0.2 rounded-sm uppercase">
+                            {Boolean(prod.isBio) && (
+                              <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1.5 py-0.5 rounded-sm uppercase">
                                 Bio
+                              </span>
+                            )}
+                            {Boolean(prod.isAOP) && (
+                              <span className="bg-blue-100 text-blue-900 font-black text-[8px] px-1.5 py-0.5 rounded-sm uppercase">
+                                AOP
                               </span>
                             )}
                           </div>

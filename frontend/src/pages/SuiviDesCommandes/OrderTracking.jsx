@@ -1,27 +1,29 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/firestore.service";
-import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { Truck, Package, RefreshCw, ShoppingBag, DollarSign, ChevronLeft, ChevronRight } from "lucide-react";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { Truck, Package, RefreshCw, ShoppingBag, DollarSign } from "lucide-react";
 
 import TrackingFilters from "./components/TrackingFilters";
 import OrderTrackingCard from "./components/OrderTrackingCard";
 
 /**
  * 🌾 COMPOSANT CENTRAL : OrderTracking.jsx
- * Page principale de Suivi des Commandes avec pagination stricte (10 / 20 / 50 / Tout).
+ * Interface métier moderne, épurée et espacée pour le suivi des commandes.
  */
 export default function OrderTracking() {
   const { user } = useAuth();
 
   const [orders, setOrders] = useState([]);
+  const [subOrders, setSubOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // États des filtres, tri et pagination
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
-
-  // State Pagination
-  const [pageSize, setPageSize] = useState(10); // 10, 20, 50, -1 (Tout)
+  const [sortBy, setSortBy] = useState("date_desc");
+  const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
@@ -34,28 +36,22 @@ export default function OrderTracking() {
     const isSupplier = role === "producer" || role === "producteur" || role === "fournisseur";
     const isCarrier = role === "carrier" || role === "livreur";
 
-    let q;
+    let qOrders;
     if (isSupplier) {
-      q = query(collection(db, "orders"), where("producerIds", "array-contains", user.uid));
+      qOrders = query(collection(db, "orders"), where("producerIds", "array-contains", user.uid));
     } else if (isCarrier) {
-      q = query(collection(db, "orders"));
+      qOrders = query(collection(db, "orders"));
     } else {
-      q = query(collection(db, "orders"), where("buyerId", "==", user.uid));
+      qOrders = query(collection(db, "orders"), where("buyerId", "==", user.uid));
     }
 
-    const unsubscribe = onSnapshot(
-      q,
+    const unsubOrders = onSnapshot(
+      qOrders,
       (snapshot) => {
         const loadedOrders = snapshot.docs.map((docSnap) => ({
           id: docSnap.id,
           ...docSnap.data(),
         }));
-
-        loadedOrders.sort((a, b) => {
-          const tA = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : new Date(a.createdAt || 0).getTime();
-          const tB = b.createdAt?.seconds ? b.createdAt.seconds * 1000 : new Date(b.createdAt || 0).getTime();
-          return tB - tA;
-        });
 
         setOrders(loadedOrders);
         setLoading(false);
@@ -66,128 +62,171 @@ export default function OrderTracking() {
       }
     );
 
-    return () => unsubscribe();
+    // Écoute des sous-commandes
+    let qSubs = isSupplier
+      ? query(collection(db, "sub_orders"), where("producerId", "==", user.uid))
+      : query(collection(db, "sub_orders"), where("buyerId", "==", user.uid));
+
+    const unsubSubs = onSnapshot(
+      qSubs,
+      (snapshot) => {
+        const loadedSubs = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...docSnap.data(),
+        }));
+        setSubOrders(loadedSubs);
+      },
+      (err) => console.error("Erreur sub_orders:", err)
+    );
+
+    return () => {
+      unsubOrders();
+      unsubSubs();
+    };
   }, [user?.uid, user?.role]);
 
-  // Réinitialiser la page à 1 dès que les filtres ou la recherche changent
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, selectedStatus, dateFilter, pageSize]);
+  // Fusion stricte et sans doublons des sous-commandes appartenant à chaque commande
+  const mergedOrders = useMemo(() => {
+    return orders.map((ord) => {
+      // Filtrage STRICT par orderId ou parentOrderId (Pas de filtre élargi par buyerId qui crée des doublons)
+      const matchingSubs = subOrders.filter((s) => s.orderId === ord.id || s.parentOrderId === ord.id);
+      
+      let effectiveStatus = ord.status || "paid";
+      if (matchingSubs.length > 0) {
+        const allReady = matchingSubs.every((s) => 
+          s.status === "A_RAMASSER" || s.status === "PRET_A_EXPEDIER" || s.status === "EXPEDIE" || s.status === "DELIVERED"
+        );
+        const anyHarvesting = matchingSubs.some((s) => s.status === "EN_PREPARATION" || s.status === "A_PREPARER" || s.status === "HARVESTING");
+        
+        if (allReady && (effectiveStatus === "paid" || effectiveStatus === "A_PREPARER")) {
+          effectiveStatus = "ready_for_pickup";
+        } else if (anyHarvesting && effectiveStatus === "paid") {
+          effectiveStatus = "preparing";
+        }
+      }
 
-  const filteredOrders = useMemo(() => {
-    return orders.filter((ord) => {
+      return {
+        ...ord,
+        status: effectiveStatus,
+        subOrders: matchingSubs.length > 0 ? matchingSubs : ord.subOrders || [],
+      };
+    });
+  }, [orders, subOrders]);
+
+  // Filtrage et Tri
+  const filteredAndSortedOrders = useMemo(() => {
+    let result = mergedOrders.filter((ord) => {
+      const qStr = searchTerm.toLowerCase();
       const matchSearch =
-        (ord.orderNumber || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (ord.buyerName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (ord.id || "").toLowerCase().includes(searchTerm.toLowerCase());
+        (ord.orderNumber || "").toLowerCase().includes(qStr) ||
+        (ord.buyerName || "").toLowerCase().includes(qStr) ||
+        (ord.id || "").toLowerCase().includes(qStr);
 
-      const matchStatus = selectedStatus === "all" || ord.status === selectedStatus;
+      const normStatus = String(ord.status || "").toLowerCase();
+      let matchStatus = true;
+      if (selectedStatus === "paid") matchStatus = ["paid", "pending", "a_preparer"].includes(normStatus);
+      else if (selectedStatus === "preparing") matchStatus = ["preparing", "harvesting", "en_preparation"].includes(normStatus);
+      else if (selectedStatus === "ready_for_pickup") matchStatus = ["ready_for_pickup", "ready_to_ship", "a_ramasser", "pret_a_expedier"].includes(normStatus);
+      else if (selectedStatus === "in_transit") matchStatus = ["in_transit", "shipping", "en_cours_de_livraison", "expedie"].includes(normStatus);
+      else if (selectedStatus === "delivered") matchStatus = ["delivered", "livre", "termine"].includes(normStatus);
 
       let matchDate = true;
       if (dateFilter !== "all" && ord.createdAt) {
         const orderDate = new Date(ord.createdAt?.seconds ? ord.createdAt.seconds * 1000 : ord.createdAt);
         const now = new Date();
-        if (dateFilter === "today") {
-          matchDate = orderDate.toDateString() === now.toDateString();
-        } else if (dateFilter === "7days") {
-          matchDate = now - orderDate <= 7 * 24 * 60 * 60 * 1000;
-        } else if (dateFilter === "30days") {
-          matchDate = now - orderDate <= 30 * 24 * 60 * 60 * 1000;
-        }
+        if (dateFilter === "today") matchDate = orderDate.toDateString() === now.toDateString();
+        else if (dateFilter === "7days") matchDate = now - orderDate <= 7 * 24 * 60 * 60 * 1000;
+        else if (dateFilter === "30days") matchDate = now - orderDate <= 30 * 24 * 60 * 60 * 1000;
       }
 
       return matchSearch && matchStatus && matchDate;
     });
-  }, [orders, searchTerm, selectedStatus, dateFilter]);
 
-  // Moteur de pagination numérique strict
-  const totalFilteredCount = filteredOrders.length;
-  const numericPageSize = Number(pageSize);
+    // Tri
+    result.sort((a, b) => {
+      const tA = a.createdAt?.seconds ? a.createdAt.seconds : new Date(a.createdAt || 0).getTime();
+      const tB = b.createdAt?.seconds ? b.createdAt.seconds : new Date(b.createdAt || 0).getTime();
+      const valA = Number(a.totalTTC ?? a.amountTTC ?? 0);
+      const valB = Number(b.totalTTC ?? b.amountTTC ?? 0);
 
-  const totalPages = useMemo(() => {
-    if (numericPageSize === -1 || totalFilteredCount === 0) return 1;
-    return Math.max(1, Math.ceil(totalFilteredCount / numericPageSize));
-  }, [totalFilteredCount, numericPageSize]);
+      if (sortBy === "date_asc") return tA - tB;
+      if (sortBy === "amount_desc") return valB - valA;
+      if (sortBy === "amount_asc") return valA - valB;
+      return tB - tA;
+    });
 
+    return result;
+  }, [mergedOrders, searchTerm, selectedStatus, dateFilter, sortBy]);
+
+  // Pagination
+  const totalPages = pageSize === "all" ? 1 : Math.ceil(filteredAndSortedOrders.length / pageSize) || 1;
   const paginatedOrders = useMemo(() => {
-    if (numericPageSize === -1) return filteredOrders;
-    const validPage = Math.max(1, Math.min(currentPage, totalPages));
-    const startIndex = (validPage - 1) * numericPageSize;
-    const endIndex = startIndex + numericPageSize;
-    return filteredOrders.slice(startIndex, endIndex);
-  }, [filteredOrders, currentPage, numericPageSize, totalPages]);
-
-  const handlePageSizeChange = (newSize) => {
-    setPageSize(Number(newSize));
-    setCurrentPage(1);
-  };
-
-  const handleConfirmDelivery = async (orderId) => {
-    if (!window.confirm("Confirmez-vous avoir bien reçu votre livraison ?")) return;
-
-    try {
-      await updateDoc(doc(db, "orders", orderId), {
-        status: "delivered",
-        deliveredAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err) {
-      console.error("Erreur de confirmation de livraison :", err);
-      alert("Erreur lors de la confirmation.");
-    }
-  };
+    if (pageSize === "all") return filteredAndSortedOrders;
+    const start = (currentPage - 1) * pageSize;
+    return filteredAndSortedOrders.slice(start, start + pageSize);
+  }, [filteredAndSortedOrders, currentPage, pageSize]);
 
   const handleResetFilters = () => {
     setSearchTerm("");
     setSelectedStatus("all");
     setDateFilter("all");
+    setSortBy("date_desc");
     setCurrentPage(1);
   };
 
-  const activeCount = orders.filter((o) => ["paid", "preparing", "ready_for_pickup", "in_transit"].includes(o.status)).length;
-  const deliveredCount = orders.filter((o) => o.status === "delivered").length;
-  const totalVolumeTTC = orders.reduce((acc, o) => {
-    const items = Array.isArray(o.items) ? o.items : [];
-    const calc = items.reduce((a, i) => a + Number(i.priceHT ?? i.price ?? 0) * Number(i.quantity ?? i.qty ?? 1) * 1.055, 0);
-    return acc + Number(o.totalTTC ?? o.amountTTC ?? o.totalAmount ?? o.amount ?? (calc > 0 ? calc : 0));
+  const activeCount = mergedOrders.filter((o) => ["paid", "preparing", "ready_for_pickup", "in_transit", "a_preparer", "en_preparation", "a_ramasser"].includes(String(o.status).toLowerCase())).length;
+  const deliveredCount = mergedOrders.filter((o) => ["delivered", "livre", "termine"].includes(String(o.status).toLowerCase())).length;
+  
+  // Calcul précis du volume total TTC avec prise en compte du sous-total et frais de port
+  const totalVolumeTTC = mergedOrders.reduce((acc, o) => {
+    const rawTTC = Number(o.totalTTC ?? o.amountTTC ?? 0);
+    if (rawTTC > 0) return acc + rawTTC;
+
+    const itemsHT = (o.items || []).reduce((s, i) => s + Number(i.priceHT ?? i.price ?? 0) * Number(i.quantity ?? i.qty ?? 1), 0);
+    const rawHT = Number(o.totalHT ?? o.amountHT ?? 0);
+    const totHT = rawHT > 0 ? rawHT : itemsHT;
+    let fee = Number(o.deliveryFee ?? 0);
+    if (fee === 0 && totHT < 300 && totHT > 0) fee = totHT >= 150 ? 8 : 15;
+    const vat = totHT * 0.055 + (fee > 0 ? fee * 0.20 : 0);
+    return acc + totHT + fee + vat;
   }, 0);
 
   return (
-    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4 animate-fade-in text-xs">
-      {/* CARTES DE SYNTHÈSE HAUT DE PAGE */}
+    <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-4 text-xs font-sans text-slate-800">
+      {/* 📊 KPI HEADER */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="bg-white border border-gray-200 rounded-xl p-3.5 shadow-2xs flex items-center justify-between">
+        <div className="bg-white border border-slate-200 rounded-md p-3.5 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-extrabold uppercase text-gray-400 block">Commandes en Cours</span>
-            <span className="text-xl font-black text-amber-900 font-mono">{activeCount}</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase block">Commandes Actives</span>
+            <span className="text-xl font-bold font-mono text-amber-900">{activeCount}</span>
           </div>
-          <div className="p-2 bg-amber-50 text-amber-700 rounded-lg border border-amber-200">
+          <div className="p-2 bg-amber-50 text-amber-700 rounded border border-amber-200">
             <Truck size={18} />
           </div>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-3.5 shadow-2xs flex items-center justify-between">
+        <div className="bg-white border border-slate-200 rounded-md p-3.5 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-extrabold uppercase text-gray-400 block">Commandes Livrées</span>
-            <span className="text-xl font-black text-emerald-900 font-mono">{deliveredCount}</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase block">Commandes Livrées</span>
+            <span className="text-xl font-bold font-mono text-emerald-900">{deliveredCount}</span>
           </div>
-          <div className="p-2 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200">
+          <div className="p-2 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
             <Package size={18} />
           </div>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-3.5 shadow-2xs flex items-center justify-between">
+        <div className="bg-white border border-slate-200 rounded-md p-3.5 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-extrabold uppercase text-gray-400 block">Volume Total Commandé</span>
-            <span className="text-xl font-black text-gray-900 font-mono">{totalVolumeTTC.toFixed(2)} € TTC</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase block">Volume Total Engagé</span>
+            <span className="text-xl font-bold font-mono text-slate-900">{totalVolumeTTC.toFixed(2)} €</span>
           </div>
-          <div className="p-2 bg-blue-50 text-blue-700 rounded-lg border border-blue-200">
+          <div className="p-2 bg-slate-100 text-slate-700 rounded border border-slate-200">
             <DollarSign size={18} />
           </div>
         </div>
       </div>
 
-      {/* BARRE DE FILTRES ET RECHERCHE */}
+      {/* 🔍 BARRE DE FILTRES ET PAGINATION */}
       <TrackingFilters
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
@@ -195,82 +234,55 @@ export default function OrderTracking() {
         setSelectedStatus={setSelectedStatus}
         dateFilter={dateFilter}
         setDateFilter={setDateFilter}
+        sortBy={sortBy}
+        setSortBy={setSortBy}
+        pageSize={pageSize}
+        setPageSize={setPageSize}
+        currentPage={currentPage}
+        setCurrentPage={setCurrentPage}
+        totalPages={totalPages}
         onResetFilters={handleResetFilters}
-        totalCount={orders.length}
-        filteredCount={totalFilteredCount}
+        totalCount={mergedOrders.length}
+        filteredCount={filteredAndSortedOrders.length}
       />
 
-      {/* LISTE DES COMMANDES AVEC PAGINATION STRICTE */}
+      {/* 📋 EN-TÊTE DE TABLEAU DE BORD */}
+      <div className="hidden sm:flex items-center justify-between px-3 py-2 bg-slate-100/80 border border-slate-200 rounded-t-md font-bold text-[11px] text-slate-600 uppercase tracking-wider">
+        <div className="min-w-[200px]">Réf Commande & Statut</div>
+        <div className="flex items-center gap-4">
+          <div className="w-[120px]">Date</div>
+          <div className="w-[140px]">Client / Acheteur</div>
+          <div className="w-[60px]">Articles</div>
+          <div className="w-[110px]">Règlement</div>
+          <div className="w-[90px] text-right">Total TTC</div>
+          <div className="w-[24px]"></div>
+        </div>
+      </div>
+
+      {/* LISTE OU SPINNER */}
       {loading ? (
-        <div className="flex justify-center items-center py-20 min-h-[300px]">
-          <RefreshCw className="animate-spin text-emerald-700" size={28} />
+        <div className="flex justify-center items-center py-16 bg-white border border-slate-200 rounded-md">
+          <RefreshCw className="animate-spin text-emerald-700" size={24} />
         </div>
       ) : paginatedOrders.length > 0 ? (
-        <div className="space-y-3">
+        <div className="space-y-1.5">
           {paginatedOrders.map((ord) => (
             <OrderTrackingCard
               key={ord.id}
               order={ord}
-              onConfirmDelivery={handleConfirmDelivery}
             />
           ))}
-
-          {/* BARRE DE PAGINATION INTUITIVE */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white border border-gray-200 rounded-xl p-3 shadow-2xs mt-4">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold text-gray-500">Afficher par page :</span>
-              {[10, 20, 50, -1].map((size) => (
-                <button
-                  key={size}
-                  type="button"
-                  onClick={() => handlePageSizeChange(size)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-black transition-colors cursor-pointer ${
-                    Number(pageSize) === Number(size)
-                      ? "bg-emerald-700 text-white shadow-2xs"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  {size === -1 ? "Tout" : size}
-                </button>
-              ))}
-            </div>
-
-            {numericPageSize !== -1 && totalPages > 1 && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                  disabled={currentPage === 1}
-                  className="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
-                  title="Page précédente"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-
-                <span className="text-xs font-extrabold text-gray-700 font-mono">
-                  Page {currentPage} sur {totalPages}
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                  disabled={currentPage === totalPages}
-                  className="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
-                  title="Page suivante"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       ) : (
-        <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-gray-300 text-gray-400 space-y-2">
-          <ShoppingBag size={36} className="mx-auto text-gray-300" />
-          <p className="font-extrabold text-sm text-gray-600">Aucune commande ne correspond à vos critères.</p>
-          <p className="text-xs text-gray-400">
-            Ajustez vos filtres ou passez une commande depuis la boutique.
-          </p>
+        <div className="p-12 text-center bg-white border border-dashed border-slate-300 rounded-md text-slate-400 space-y-2">
+          <ShoppingBag size={32} className="mx-auto text-slate-300" />
+          <p className="font-semibold text-slate-700 text-xs">Aucune commande ne correspond aux filtres.</p>
+          <button
+            onClick={handleResetFilters}
+            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded text-xs cursor-pointer"
+          >
+            Réinitialiser les critères
+          </button>
         </div>
       )}
     </div>

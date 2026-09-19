@@ -1,127 +1,149 @@
 import React, { useState, useEffect } from "react";
-import { calculateDeliveryWindow } from "../../utils/deliveryCalendar";
-import { Truck, Calendar, Info, Clock, AlertTriangle } from "lucide-react";
+import { Truck, Calendar, Info } from "lucide-react";
+import { getAvailableDeliveryDates } from "../../utils/deliveryCalendar";
 
+/**
+ * 🌾 COMPOSANT : CheckoutDeliverySelector.jsx
+ * Sélecteur de date de livraison B2B/B2G avec un paragraphe d'information synthétique.
+ * 
+ * - Jours de livraison : Lundi, Mardi, Mercredi, Vendredi (06h00 - 09h00).
+ * - Coupure à 12h00 : Commande avant 12h = récolte l'après-midi même.
+ * - Fermeture : Jeudi, Samedi et Dimanche.
+ */
 export default function CheckoutDeliverySelector({ onDeliveryChange }) {
   const [availableDates, setAvailableDates] = useState([]);
-
+  
   const [deliveryDetails, setDeliveryDetails] = useState({
     selectedDate: "",
-    deliveryWindow: "Matin",
+    deliveryWindow: "06:00 - 09:00 (Matinée)",
     instructions: ""
   });
 
-  // 1. Initialisation des dates au montage du composant
+  // Initialisation et calcul sécurisé des dates livrables
   useEffect(() => {
-    const windowData = calculateDeliveryWindow(new Date());
-    const dates = windowData.availableDates || [];
+    let dates = [];
+    try {
+      if (typeof getAvailableDeliveryDates === "function") {
+        dates = getAvailableDeliveryDates(new Date(), 11);
+      }
+    } catch (e) {
+      console.warn("Utilisation du mode de secours pour le calendrier de livraison :", e);
+    }
+
+    // Fallback de secours si getAvailableDeliveryDates n'est pas disponible
+    if (!dates || dates.length === 0) {
+      const now = new Date();
+      let current = new Date(now);
+      current.setDate(current.getDate() + (now.getHours() < 12 ? 1 : 2));
+      
+      while (dates.length < 11) {
+        const d = current.getDay();
+        // Lundi (1), Mardi (2), Mercredi (3), Vendredi (5)
+        if (d === 1 || d === 2 || d === 3 || d === 5) {
+          dates.push(new Date(current));
+        }
+        current.setDate(current.getDate() + 1);
+      }
+    }
+
     setAvailableDates(dates);
 
-    if (dates.length > 0) {
-      const firstDateString = dates[0].toISOString().slice(0, 10);
-      setDeliveryDetails((prev) => ({
-        ...prev,
-        selectedDate: firstDateString
-      }));
+    if (dates && dates.length > 0) {
+      const defaultDate = dates[0].toISOString().slice(0, 10);
+      const initialDetails = {
+        selectedDate: defaultDate,
+        deliveryWindow: "06:00 - 09:00 (Matinée)",
+        instructions: ""
+      };
+      setDeliveryDetails(initialDetails);
+
+      // Notification différée au composant parent (CheckoutForm) sans bloquer le cycle de rendu
+      if (onDeliveryChange) {
+        queueMicrotask(() => {
+          onDeliveryChange(initialDetails);
+        });
+      }
     }
   }, []);
 
-  // 2. Notification du composant parent (CheckoutForm)
-  useEffect(() => {
-    if (deliveryDetails.selectedDate && typeof onDeliveryChange === "function") {
-      onDeliveryChange(deliveryDetails);
-    }
-  }, [deliveryDetails, onDeliveryChange]);
-
-  // 3. Gestionnaires d'événements
-  const handleDateChange = (e) => {
-    const newDate = e.target.value;
-    setDeliveryDetails((prev) => ({ ...prev, selectedDate: newDate }));
-  };
-
-  const handleInstructionsChange = (e) => {
-    const newInstructions = e.target.value;
-    setDeliveryDetails((prev) => ({ ...prev, instructions: newInstructions }));
+  const handleUpdate = (updates) => {
+    const nextState = { ...deliveryDetails, ...updates };
+    setDeliveryDetails(nextState);
+    if (onDeliveryChange) onDeliveryChange(nextState);
   };
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 space-y-4">
-      <h3 className="font-extrabold text-gray-900 text-xs flex items-center gap-2 border-b border-gray-200 pb-2">
-        <Truck className="text-emerald-700" size={16} />
-        Planification Logistique
-      </h3>
-
-      {/* 📦 INFORMATIONS DÉLAIS ET COLLECTES */}
-      <div className="p-3.5 bg-white border border-gray-200 rounded-2xl space-y-2.5 text-[11px] shadow-2xs">
-        <div className="flex items-center gap-1.5 font-extrabold text-gray-900">
-          <Clock size={14} className="text-amber-600 shrink-0" />
-          <span>Collectes l'après-midi & Heure de coupure (12h) :</span>
+    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm space-y-4 text-xs">
+      {/* BANNIÈRE D'INFORMATION SYNTHÉTIQUE EN UN SEUL PARAGRAPHE */}
+      <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 space-y-2 text-emerald-950">
+        <div className="flex items-center gap-2 border-b border-emerald-200/80 pb-2">
+          <Truck className="text-emerald-700 shrink-0" size={18} />
+          <h4 className="font-black text-sm text-emerald-900">
+            Récolte & Planning de Livraison
+          </h4>
         </div>
 
-        {/* GRILLE DÉLAIS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100">
-            <span className="font-black text-[9px] uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
-              Avant 12h
-            </span>
-            <span className="font-bold text-gray-700">
-              Livraison dès <strong className="text-gray-900">J+1</strong>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100">
-            <span className="font-black text-[9px] uppercase tracking-wider text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
-              Après 12h
-            </span>
-            <span className="font-bold text-gray-700">
-              Livraison dès <strong className="text-gray-900">J+2</strong>
-            </span>
-          </div>
-        </div>
-
-        {/* ⚠️ RÈGLE DU WEEK-END */}
-        <div className="flex items-start gap-1.5 text-[10px] text-amber-900 font-medium bg-amber-50/80 border border-amber-200/80 p-2 rounded-xl">
-          <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
-          <span>
-            <strong className="font-black uppercase tracking-wider text-amber-950">Attention :</strong> Les commandes passées du <strong>vendredi après 12h jusqu'au dimanche</strong> sont collectées le lundi et livrées à partir du <strong>mardi matin</strong>.
-          </span>
-        </div>
+        <p className="text-xs text-gray-700 leading-relaxed font-medium">
+          Commandez avant <strong className="text-emerald-950 font-black">12h00 (Midi)</strong> pour une récolte au champ l'après-midi même et une livraison le prochain jour travaillé (<strong className="text-emerald-900 font-extrabold">Lundi, Mardi, Mercredi ou Vendredi</strong> entre <strong className="text-emerald-900 font-extrabold">06h00 et 09h00</strong>). Aucune collecte ni livraison le Jeudi, Samedi et Dimanche.
+        </p>
       </div>
 
-      {/* SÉLECTEUR DE DATE */}
-      <div className="space-y-1.5">
-        <label className="font-bold text-gray-700 text-[11px] flex items-center gap-1.5 uppercase tracking-wider">
-          <Calendar size={12} className="text-emerald-700" /> Date de livraison souhaitée *
-        </label>
-        <select
-          required
-          value={deliveryDetails.selectedDate}
-          onChange={handleDateChange}
-          className="w-full p-2.5 border border-gray-300 rounded-xl bg-white text-xs font-bold focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-        >
-          <option value="" disabled>Choisir une date</option>
-          {availableDates.map((date, idx) => (
-            <option key={idx} value={date.toISOString().slice(0, 10)}>
-              {date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-            </option>
-          ))}
-        </select>
-        <p className="text-[10px] text-gray-500 mt-1 font-semibold">Toutes nos livraisons s'effectuent exclusivement le matin.</p>
-      </div>
+      {/* SÉLECTEUR DE DATE DE LIVRAISON SOUHAITÉE */}
+      <div className="space-y-3 pt-1">
+        <h3 className="font-extrabold text-gray-900 text-xs flex items-center gap-2 border-b border-gray-200 pb-2">
+          <Calendar className="text-emerald-700" size={16} />
+          <span>Sélection de votre date de réception</span>
+        </h3>
 
-      {/* CONSIGNES LIVREUR */}
-      <div className="space-y-1.5 pt-1">
-        <label className="font-bold text-gray-700 text-[11px] flex items-center gap-1.5 uppercase tracking-wider">
-          <Info size={12} className="text-emerald-700" /> Consignes Livreur (Optionnel)
-        </label>
-        <input
-          type="text"
-          maxLength={150}
-          placeholder="Ex: Code portail 1234, accès par le quai arrière..."
-          value={deliveryDetails.instructions}
-          onChange={handleInstructionsChange}
-          className="w-full p-2.5 border border-gray-300 rounded-xl bg-white text-xs font-medium focus:ring-2 focus:ring-emerald-500"
-        />
+        {/* Menu déroulant unique pour la date de livraison */}
+        <div className="space-y-1.5">
+          <label className="font-bold text-gray-700 text-[11px] flex items-center justify-between uppercase tracking-wider">
+            <span className="flex items-center gap-1.5">
+              <Calendar size={13} className="text-emerald-700" />
+              Date de livraison souhaitée *
+            </span>
+            <span className="text-[10px] text-emerald-800 font-extrabold lowercase font-mono">
+              (Livraison de 06h00 à 09h00)
+            </span>
+          </label>
+          <select
+            required
+            value={deliveryDetails.selectedDate}
+            onChange={(e) => handleUpdate({ selectedDate: e.target.value })}
+            className="w-full p-3 border border-gray-300 rounded-xl bg-white text-xs font-bold text-gray-900 focus:ring-2 focus:ring-emerald-500 cursor-pointer shadow-sm"
+          >
+            <option value="" disabled>Choisir une date de livraison</option>
+            {availableDates.map((date, idx) => {
+              const dateStr = date.toISOString().slice(0, 10);
+              const formatted = date.toLocaleDateString("fr-FR", {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+                year: "numeric"
+              });
+              return (
+                <option key={idx} value={dateStr}>
+                  {formatted.charAt(0).toUpperCase() + formatted.slice(1)}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
+        {/* Consignes pour le livreur */}
+        <div className="space-y-1.5 pt-1">
+          <label className="font-bold text-gray-700 text-[11px] flex items-center gap-1.5 uppercase tracking-wider">
+            <Info size={12} className="text-emerald-700" /> Consignes Livreur (Optionnel)
+          </label>
+          <input
+            type="text"
+            maxLength={150}
+            placeholder="Ex: Code portail 1234, quai de déchargement en cuisine..."
+            value={deliveryDetails.instructions}
+            onChange={(e) => handleUpdate({ instructions: e.target.value })}
+            className="w-full p-2.5 border border-gray-300 rounded-xl bg-white text-xs font-medium text-gray-800 focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
       </div>
     </div>
   );
