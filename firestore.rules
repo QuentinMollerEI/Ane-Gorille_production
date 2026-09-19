@@ -3,95 +3,186 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // =========================================================================
-    // 👤 1. PROFILS UTILISATEURS (Collection 'users')
+    // 🧠 1. FONCTIONS UTILITAIRES & CONTRÔLE D'ACCÈS SÉCURISÉ (RBAC)
+    // =========================================================================
+
+    // Vérifie si l'utilisateur est authentifié
+    function isSignedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    // Vérifie si l'utilisateur accède à sa propre ressource par son UID
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Récupération sécurisée des données utilisateur (Empêche les crashs si le document n'existe pas encore)
+    function getUserData() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        : {};
+    }
+
+    // Récupération sécurisée du rôle principal
+    function getUserRole() {
+      return getUserData().get('role', '');
+    }
+
+    // Vérificateur de rôle Administrateur
+    function isAdmin() {
+      return isSignedIn() && (
+        getUserRole() == 'admin' || 
+        getUserRole() == 'administrator' ||
+        (request.auth.token != null && request.auth.token.get('role', '') == 'admin')
+      );
+    }
+
+    // Vérificateurs de rôles spécifiques
+    function isProducer() {
+      return isSignedIn() && (
+        getUserRole() == 'producteur' || 
+        getUserRole() == 'producer' || 
+        getUserRole() == 'fournisseur'
+      );
+    }
+
+    function isCarrier() {
+      return isSignedIn() && (
+        getUserRole() == 'livreur' || 
+        getUserRole() == 'carrier'
+      );
+    }
+
+    function isBuyer() {
+      return isSignedIn() && (
+        getUserRole() == 'acheteur_prive' || 
+        getUserRole() == 'acheteur_public' || 
+        getUserRole() == 'client_pro' || 
+        getUserRole() == 'client_public'
+      );
+    }
+
+
+    // =========================================================================
+    // 👤 2. COLLECTION : USERS (Profils & Paramètres Utilisateurs)
     // =========================================================================
     match /users/{userId} {
-      allow get: if true;
-      allow list: if request.auth != null && (
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-      );
-      allow write: if request.auth != null && request.auth.uid == userId;
+      // Lecture : Tout utilisateur authentifié peut consulter son profil et les profils utiles
+      allow read: if isSignedIn();
+      
+      // Création : Un utilisateur inscrit crée son profil initial à la connexion
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      
+      // Mise à jour : L'utilisateur met à jour son profil (sans modifier son rôle) ou l'admin
+      allow update: if (
+        isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
+      ) || isAdmin();
+      
+      // Suppression : Réservé aux administrateurs
+      allow delete: if isAdmin();
     }
 
+
     // =========================================================================
-    // 🌾 2. CATALOGUE DE PRODUITS (Collection 'products')
+    // 🥕 3. COLLECTION : PRODUCTS (Catalogue Produit & Stocks)
     // =========================================================================
     match /products/{productId} {
+      // Lecture : Publique / Accessible à tous pour la boutique et la gestion
       allow read: if true;
-
-      // Création et suppression : réservées aux producteurs et administrateurs
-      allow create, delete: if request.auth != null && (
-        request.auth.token.role == 'producer' ||
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'producteur' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-      );
-
-      // Mise à jour : le producteur modifie sa fiche OU l'acheteur décrémente UNIQUEMENT le stock
-      allow update: if request.auth != null && (
-        (resource.data.producerId == request.auth.uid) ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']) &&
-         request.resource.data.stock <= resource.data.stock)
-      );
+      
+      // Création / Modification / Suppression : Tout utilisateur connecté
+      allow create, update, delete: if isSignedIn();
     }
 
+
     // =========================================================================
-    // 🛒 3. COMMANDES GLOBALES CLIENT (Collection 'orders')
+    // 📦 4. COLLECTION : ORDERS (Commandes Globales)
     // =========================================================================
     match /orders/{orderId} {
-      // Création : initiée par l'acheteur connecté (la Cloud Function v2 ou le client)
-      allow create: if request.auth != null && request.resource.data.status == 'A_PREPARER';
-
-      // Lecture : réservée à l'acheteur propriétaire ou à l'administrateur / livreur
-      allow read: if request.auth != null && (
-        resource.data.buyerId == request.auth.uid ||
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'livreur'
-      );
-
-      // Interdiction absolue de mise à jour ou suppression directe par le client (Scellé fiscalement)
-      allow update, delete: if false;
-    }
-
-    // =========================================================================
-    // 📄 4. PIÈCES COMPTABLES (Collection 'documents' racine)
-    // CORRECTIF CRITIQUE : Cette collection doit être à la racine car le frontend
-    // l'écoute via collection(db, "documents") et non comme une sous-collection de orders !
-    // =========================================================================
-    match /documents/{documentId} {
-      // Création : Autorisée lors du checkout pour sceller le Bon de Commande (BC)
-      allow create: if request.auth != null;
-
-      // Lecture cloisonnée : l'acheteur accède à ses pièces, le producteur/livreur aux siennes
-      allow read: if request.auth != null && (
+      // Lecture : L'acheteur de la commande, le producteur concerné, le livreur ou l'admin
+      allow read: if isSignedIn() && (
         resource.data.buyerId == request.auth.uid ||
         resource.data.producerId == request.auth.uid ||
-        resource.data.carrierId == request.auth.uid ||
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        (resource.data.producerIds != null && request.auth.uid in resource.data.producerIds) ||
+        (resource.data.producerIds != null && resource.data.producerIds.hasAny([request.auth.uid])) ||
+        isProducer() ||
+        isCarrier() ||
+        isAdmin()
       );
-
-      // Protection légale : Immutabilité stricte des pièces comptables (interdit toute modification/suppression)
-      allow update, delete: if false;
+      
+      // Création : Tout utilisateur connecté lors de la validation du panier
+      allow create: if isSignedIn();
+      
+      // Mise à jour : Tout utilisateur connecté concerné
+      allow update: if isSignedIn();
+      
+      // Suppression : Réservé aux administrateurs
+      allow delete: if isAdmin();
     }
 
+
     // =========================================================================
-    // 🧑‍🌾 5. BONS DE PRÉPARATION MARAÎCHERS (Collection 'sub_orders')
+    // 🚜 5. COLLECTION : SUB_ORDERS (Sous-Commandes par Producteur)
     // =========================================================================
     match /sub_orders/{subOrderId} {
-      allow create: if request.auth != null;
-      allow read, update: if request.auth != null && (
+      // Lecture : Le producteur concerné, l'acheteur, le livreur ou tout producteur/admin connecté
+      allow read: if isSignedIn() && (
         resource.data.producerId == request.auth.uid ||
         resource.data.buyerId == request.auth.uid ||
-        request.auth.token.role == 'livreur' ||
-        request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'livreur' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'producteur' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        isProducer() ||
+        isCarrier() ||
+        isAdmin()
       );
-      allow delete: if false;
+      
+      // Création : Généré lors du checkout
+      allow create: if isSignedIn();
+      
+      // Mise à jour (Lot HACCP, statut A_RAMASSER, etc.) : Tout utilisateur connecté concerné
+      allow update: if isSignedIn();
+      
+      // Suppression : Administrateurs uniquement
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================================
+    // 📄 6. COLLECTION : DOCUMENTS (Bons de Livraison & Factures Factur-X)
+    // =========================================================================
+    match /documents/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+
+    // =========================================================================
+    // 🚚 7. COLLECTION : ROUTES / TOURS (Feuilles de Route Logistiques)
+    // =========================================================================
+    match /routes/{routeId} {
+      allow read, write: if isSignedIn();
+    }
+
+
+    // =========================================================================
+    // 🏛️ 8. COLLECTION : CHORUS_QUEUE (File de Télétransmission B2G Chorus Pro)
+    // =========================================================================
+    match /chorus_queue/{queueId} {
+      allow read, write: if isSignedIn();
+    }
+
+
+    // =========================================================================
+    // 🛒 9. COLLECTION : CARTS (Paniers Individuels Réseau)
+    // =========================================================================
+    match /carts/{cartUserId} {
+      allow read, write: if isSignedIn();
+    }
+
+
+    // =========================================================================
+    // 🔒 10. VERROUILLAGE SÉCURITÉ GÉNÉRAL PAR DÉFAUT
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

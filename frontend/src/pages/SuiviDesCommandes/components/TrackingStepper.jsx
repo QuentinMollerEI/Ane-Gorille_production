@@ -3,7 +3,6 @@ import { CheckCircle2, Clock, PackageCheck, Truck, CheckCheck, XCircle } from "l
 
 /**
  * 🌾 COMPOSANT : TrackingStepper.jsx
- * Progression visuelle par étapes de la commande (Commandé -> Récolté -> Enlevé -> En Livraison -> Livré).
  */
 export default function TrackingStepper({ status = "paid" }) {
   if (status === "cancelled") {
@@ -16,9 +15,9 @@ export default function TrackingStepper({ status = "paid" }) {
   }
 
   const steps = [
-    { key: "paid", label: "Payée", icon: CheckCircle2, desc: "Paiement Stripe valide" },
+    { key: "paid", label: "Payée", icon: CheckCircle2, desc: "Paiement valide" },
     { key: "preparing", label: "Récolte & Préparation", icon: Clock, desc: "Cueillette & Lot HACCP" },
-    { key: "ready_for_pickup", label: "Colis Scellé", icon: PackageCheck, desc: "Caisse consignée prête" },
+    { key: "ready_for_pickup", label: "Commande Prête", icon: PackageCheck, desc: "Caisse consignée prête" },
     { key: "in_transit", label: "En Livraison", icon: Truck, desc: "Livreur Âne & Gorille" },
     { key: "delivered", label: "Livrée", icon: CheckCheck, desc: "Réception confirmée" },
   ];
@@ -33,9 +32,12 @@ export default function TrackingStepper({ status = "paid" }) {
         return 1;
       case "ready_for_pickup":
       case "ready_to_ship":
+      case "A_RAMASSER":
+      case "PRET_A_EXPEDIER":
         return 2;
       case "in_transit":
       case "shipping":
+      case "EXPEDIE":
         return 3;
       case "delivered":
         return 4;
@@ -67,7 +69,6 @@ export default function TrackingStepper({ status = "paid" }) {
 
           return (
             <div key={step.key} className="flex flex-col items-center text-center relative z-10">
-              {/* Ligne de connexion entre cercles */}
               {idx < steps.length - 1 && (
                 <div
                   className={`absolute top-4 left-1/2 w-full h-1 -z-10 transition-colors ${
@@ -76,14 +77,10 @@ export default function TrackingStepper({ status = "paid" }) {
                 />
               )}
 
-              {/* Cercle d'étape */}
-              <div
-                className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${circleStyle}`}
-              >
+              <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${circleStyle}`}>
                 <StepIcon size={16} />
               </div>
 
-              {/* Titre & Description */}
               <span className={`text-[10px] mt-1.5 leading-tight ${textColor}`}>
                 {step.label}
               </span>
