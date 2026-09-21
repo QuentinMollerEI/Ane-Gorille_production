@@ -1,550 +1,466 @@
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+/**
+ * 📜 SERVICE DOCUMENTAIRE : OrderDocumentGenerator.js
+ * Générateur universel de documents imprimables et téléchargeables :
+ * 1. Bon de Commande (Acheteur & Vendeur)
+ * 2. Bon de Préparation (Maraîcher / Récolte)
+ * 3. Bon de Ramassage (Livreur / Collecte Exploitation)
+ * 4. Bon de Livraison - BL (Livreur / Client avec Émargement & Réserves)
+ * 
+ * GARANTIE : Affiche de façon proéminente la "DATE DE LIVRAISON SOUHAITÉE" sur chaque document.
+ */
+
+import { formatFrenchDate, getCalculatedDeliveryDate } from "../utils/deliveryCalendar.js";
 
 /**
- * Helper universel de nettoyage pour pdf-lib (StandardFonts.Helvetica / WinAnsiEncoding).
- * Convertit tous les caractères accentués, symboles et ponctuations spéciales en équivalents ASCII
- * pour garantir l'absence totale d'exception "WinAnsi cannot encode".
+ * Extraie les articles de manière universelle (qu'il s'agisse d'une commande parente ou d'un groupe multi-producteurs).
  */
-const cleanText = (str) => {
-  if (str === null || str === undefined) return "";
-  let text = String(str);
-
-  const replacements = {
-    "€": " EUR",
-    "’": "'",
-    "‘": "'",
-    "‚": "'",
-    "“": '"',
-    "”": '"',
-    "«": '"',
-    "»": '"',
-    "°": " deg",
-    "–": "-",
-    "—": "-",
-    "…": "...",
-    œ: "oe",
-    Œ: "OE",
-    æ: "ae",
-    Æ: "AE",
-    à: "a",
-    á: "a",
-    â: "a",
-    ã: "a",
-    ä: "a",
-    è: "e",
-    é: "e",
-    ê: "e",
-    ë: "e",
-    ì: "i",
-    í: "i",
-    î: "i",
-    ï: "i",
-    ò: "o",
-    ó: "o",
-    ô: "o",
-    õ: "o",
-    ö: "o",
-    ù: "u",
-    ú: "u",
-    û: "u",
-    ü: "u",
-    ç: "c",
-    À: "A",
-    Á: "A",
-    Â: "A",
-    Ã: "A",
-    Ä: "A",
-    È: "E",
-    É: "E",
-    Ê: "E",
-    Ë: "E",
-    Ì: "I",
-    Í: "I",
-    Î: "I",
-    Ï: "I",
-    Ò: "O",
-    Ó: "O",
-    Ô: "O",
-    Õ: "O",
-    Ö: "O",
-    Ù: "U",
-    Ú: "U",
-    Û: "U",
-    Ü: "U",
-    Ç: "C",
-  };
-
-  for (const [k, v] of Object.entries(replacements)) {
-    text = text.replaceAll(k, v);
+const extractItems = (data) => {
+  if (Array.isArray(data.items) && data.items.length > 0) {
+    return data.items;
   }
-
-  // Filtrage strict pour ne conserver que les caractères ASCII imprimables ( -~)
-  return text.replace(/[^\x20-\x7E]/g, "");
+  if (Array.isArray(data.subOrders) && data.subOrders.length > 0) {
+    const combined = [];
+    data.subOrders.forEach((so) => {
+      if (Array.isArray(so.items)) {
+        so.items.forEach((item) => {
+          combined.push({
+            ...item,
+            producerName: item.producerName || so.producerName || "Maraîcher",
+            lotNumber: item.lotNumber || so.lotNumber || "HACCP-OK"
+          });
+        });
+      }
+    });
+    return combined;
+  }
+  return [];
 };
 
-/**
- * Helper d'échappement XML strict (Factur-X / EN 16931)
- */
-const escapeXml = (str) => {
-  if (str === null || str === undefined) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-};
-
-/**
- * 🧾 SERVICE CENTRALISÉ DE GÉNÉRATION DE DOCUMENTS PDF & FACTUR-X
- * Responsabilité unique : Convertir les données de commande, livraison ou facturation
- * en documents PDF certifiés (BC, BP, BL avec contrôles HACCP) et Factur-X (PDF/A-3 + XML CII EN 16931).
- */
 export const OrderDocumentGenerator = {
+
   /**
-   * Génère le fichier XML Factur-X conforme à la norme européenne EN 16931 (Profil BASIC)
+   * 1. 🛒 BON DE COMMANDE (Global ou Sous-Commande)
    */
-  generateFacturXXml(docData) {
-    const rawDate = docData.date
-      ? docData.date.replace(/\//g, "").replace(/-/g, "")
-      : new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const issueDate = escapeXml(rawDate);
+  generateOrderSlipHTML(order) {
+    const rawDate = order.selectedDate || order.deliveryDate || order.deliveryDetails?.selectedDate;
+    const selectedDate = (rawDate && rawDate !== "Non spécifiée" && rawDate !== "")
+      ? rawDate
+      : getCalculatedDeliveryDate(order.createdAt?.toDate ? order.createdAt.toDate() : new Date());
 
-    const amountVal = Number(docData.amount || 0);
-    const amount = amountVal.toFixed(2);
-    const vatRateVal = Number(docData.vatRate || 5.5);
-    const vatRate = vatRateVal.toFixed(2);
+    const dateFormatted = formatFrenchDate(selectedDate);
 
-    const vatAmountVal = amountVal * (vatRateVal / (100 + vatRateVal));
-    const vatAmount = vatAmountVal.toFixed(2);
-    const amountHT = (amountVal - vatAmountVal).toFixed(2);
+    const items = extractItems(order);
 
-    const docId = escapeXml(docData.id || "FAC-2026-001");
-    const sellerName = escapeXml(
-      docData.producerName ||
-        docData.producer ||
-        "Plateforme Ane et Gorille SAS",
-    );
-    const buyerName = escapeXml(
-      docData.buyerName || docData.entity || docData.buyer || "Acheteur Client",
-    );
-    const buyerSiret = escapeXml(
-      docData.buyerSiret || docData.siret || "21310555400018",
-    );
+    return `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <title>Bon de Commande - ${order.orderNumber || order.id}</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #1e293b; padding: 20px; line-height: 1.5; }
+          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f766e; padding-bottom: 12px; margin-bottom: 16px; }
+          .logo { font-size: 20px; font-weight: 900; color: #0f766e; }
+          .title { font-size: 16px; font-weight: 800; text-transform: uppercase; color: #0f172a; }
+          
+          .delivery-badge { background-color: #f0fdf4; border: 2px solid #16a34a; border-radius: 6px; padding: 12px; margin-bottom: 20px; text-align: center; }
+          .delivery-badge-title { font-size: 11px; text-transform: uppercase; font-weight: 800; color: #15803d; letter-spacing: 0.5px; }
+          .delivery-badge-date { font-size: 18px; font-weight: 900; color: #166534; margin-top: 4px; }
+          
+          .grid { display: flex; justify-content: space-between; margin-bottom: 20px; }
+          .box { width: 48%; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; }
+          .box-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 6px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
+          
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+          th { background: #0f766e; color: white; text-align: left; padding: 8px; font-size: 11px; text-transform: uppercase; }
+          td { border-bottom: 1px solid #e2e8f0; padding: 8px; }
+          .total-row { font-weight: 800; font-size: 13px; background: #f1f5f9; }
+          .footer { margin-top: 30px; font-size: 10px; color: #64748b; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="logo">Âne & Gorille</div>
+          <div class="title">Bon de Commande</div>
+        </div>
 
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
-                          xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
-                          xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100"
-                          xmlns:qdt="urn:un:unece:uncefact:data:standard:QualifiedDataType:100">
-  <rsm:ExchangedDocumentContext>
-    <ram:GuidelineSpecifiedDocumentContextParameter>
-      <ram:ID>urn:factur-x.eu:1p0:basic</ram:ID>
-    </ram:GuidelineSpecifiedDocumentContextParameter>
-  </rsm:ExchangedDocumentContext>
-  <rsm:ExchangedDocument>
-    <ram:ID>${docId}</ram:ID>
-    <ram:TypeCode>380</ram:TypeCode>
-    <ram:IssueDateTime>
-      <udt:DateTimeString format="102">${issueDate}</udt:DateTimeString>
-    </ram:IssueDateTime>
-  </rsm:ExchangedDocument>
-  <rsm:SupplyChainTradeTransaction>
-    <ram:ApplicableHeaderTradeAgreement>
-      <ram:SellerTradeParty>
-        <ram:Name>${sellerName}</ram:Name>
-        <ram:SpecifiedLegalOrganization>
-          <ram:ID schemeID="0002">98765432100019</ram:ID>
-        </ram:SpecifiedLegalOrganization>
-      </ram:SellerTradeParty>
-      <ram:BuyerTradeParty>
-        <ram:Name>${buyerName}</ram:Name>
-        <ram:SpecifiedLegalOrganization>
-          <ram:ID schemeID="0002">${buyerSiret}</ram:ID>
-        </ram:SpecifiedLegalOrganization>
-      </ram:BuyerTradeParty>
-    </ram:ApplicableHeaderTradeAgreement>
-    <ram:ApplicableHeaderTradeDelivery/>
-    <ram:ApplicableHeaderTradeSettlement>
-      <ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
-      <ram:ApplicableTradeTax>
-        <ram:CalculatedAmount currencyID="EUR">${vatAmount}</ram:CalculatedAmount>
-        <ram:TypeCode>VAT</ram:TypeCode>
-        <ram:BasisAmount currencyID="EUR">${amountHT}</ram:BasisAmount>
-        <ram:CategoryCode>S</ram:CategoryCode>
-        <ram:RateApplicablePercent>${vatRate}</ram:RateApplicablePercent>
-      </ram:ApplicableTradeTax>
-      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
-        <ram:LineTotalAmount currencyID="EUR">${amountHT}</ram:LineTotalAmount>
-        <ram:TaxBasisTotalAmount currencyID="EUR">${amountHT}</ram:TaxBasisTotalAmount>
-        <ram:TaxTotalAmount currencyID="EUR">${vatAmount}</ram:TaxTotalAmount>
-        <ram:GrandTotalAmount currencyID="EUR">${amount}</ram:GrandTotalAmount>
-        <ram:DuePayableAmount currencyID="EUR">${amount}</ram:DuePayableAmount>
-      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
-    </ram:ApplicableHeaderTradeSettlement>
-  </rsm:SupplyChainTradeTransaction>
-</rsm:CrossIndustryInvoice>`;
+        <!-- BADGE OFFICIEL DATE DE LIVRAISON SOUHAITÉE -->
+        <div class="delivery-badge">
+          <div class="delivery-badge-title">📅 Date de Livraison Souhaitée par l'Acheteur</div>
+          <div class="delivery-badge-date">${dateFormatted} (${selectedDate.split('-').reverse().join('/')})</div>
+          <small style="color: #15803d; font-weight: 600;">Créneau : ${order.deliveryDetails?.deliveryWindow || "Matin (06h00 - 08h00)"}</small>
+        </div>
+
+        <div class="grid">
+          <div class="box">
+            <div class="box-title">Client / Acheteur</div>
+            <strong>${order.buyerName || "Acheteur Client"}</strong><br>
+            ${order.deliveryAddress || "Adresse de livraison"}<br>
+            SIRET : ${order.siretBuyer || "-"}<br>
+            N° Engagement : ${order.refEngagement || "-"}
+          </div>
+          <div class="box">
+            <div class="box-title">Détails Commande</div>
+            N° Commande : <strong>${order.orderNumber || order.id}</strong><br>
+            Date d'Achat : ${order.createdAt?.toDate ? order.createdAt.toDate().toLocaleDateString("fr-FR") : new Date().toLocaleDateString("fr-FR")}<br>
+            Mode de Règlement : <strong>${order.paymentMethod === 'mandat_public' ? 'Mandat Public (Chorus Pro)' : 'Règlement B2B'}</strong>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Désignation Produit</th>
+              <th>Producteur</th>
+              <th>Quantité</th>
+              <th>Prix Unitaire HT</th>
+              <th>Total HT</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td><strong>${item.name || item.title}</strong></td>
+                <td>${item.producerName || "Maraîcher Local"}</td>
+                <td>${item.quantity || item.qty} ${item.unit || 'kg'}</td>
+                <td>${Number(item.priceHT || item.price || 0).toFixed(2)} €</td>
+                <td>${(Number(item.quantity || 1) * Number(item.priceHT || item.price || 0)).toFixed(2)} €</td>
+              </tr>
+            `).join('')}
+            <tr class="total-row">
+              <td colspan="4" style="text-align: right; padding-right: 10px;">Total HT Produit :</td>
+              <td>${Number(order.totalHT || order.amountHT || 0).toFixed(2)} €</td>
+            </tr>
+            <tr class="total-row">
+              <td colspan="4" style="text-align: right; padding-right: 10px;">Frais de Livraison B2B :</td>
+              <td>${Number(order.deliveryFee || 0).toFixed(2)} €</td>
+            </tr>
+            <tr class="total-row" style="background: #e2e8f0; font-size: 14px;">
+              <td colspan="4" style="text-align: right; padding-right: 10px;">TOTAL TTC :</td>
+              <td><strong>${Number(order.totalTTC || order.totalAmount || order.amount || 0).toFixed(2)} €</strong></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="footer">
+          Document généré par la plateforme Âne & Gorille — EI Régime Réel Simplifié de TVA — SIRET : 123 456 789 00012
+        </div>
+      </body>
+      </html>
+    `;
   },
 
   /**
-   * Génère et déclenche le téléchargement d'un document PDF certifié ou Factur-X
-   *
-   * @param {Object} docData - Données du document (id, date, amount, items, buyerName, producerName, tempHaccp, signature, etc.)
-   * @param {string} docType - 'BC' | 'BP' | 'BL' | 'FAC'
+   * 🌾 2. BON DE PRÉPARATION / FICHE DE RÉCOLTE (Producteur / Maraîcher)
    */
-  async generatePDF(docData, docType = "FAC") {
-    try {
-      const pdfDoc = await PDFDocument.create();
-      const page = pdfDoc.addPage([595.28, 841.89]); // A4 en points
-      const fontNormal = await pdfDoc.embedStandardFont(
-        StandardFonts.Helvetica,
-      );
-      const fontBold = await pdfDoc.embedStandardFont(
-        StandardFonts.HelveticaBold,
-      );
+  generatePreparationSlipHTML(subOrder) {
+    const rawDate = subOrder.selectedDate || subOrder.deliveryDate || subOrder.deliveryDetails?.selectedDate;
+    const selectedDate = (rawDate && rawDate !== "Non spécifiée" && rawDate !== "")
+      ? rawDate
+      : getCalculatedDeliveryDate(subOrder.createdAt?.toDate ? subOrder.createdAt.toDate() : new Date());
 
-      const { height } = page.getSize();
-      let y = height - 50;
+    const dateFormatted = formatFrenchDate(selectedDate);
+    const items = extractItems(subOrder);
 
-      // 🟩 EN-TÊTE OFFICIEL DE LA PLATFORME
-      page.drawText(cleanText("PLATEFORME ANE & GORILLE"), {
-        x: 50,
-        y,
-        size: 16,
-        font: fontBold,
-        color: rgb(0.08, 0.45, 0.25),
-      });
-      page.drawText(
-        cleanText("Alimentation locale en circuit court B2B / B2G"),
-        {
-          x: 50,
-          y: y - 18,
-          size: 9,
-          font: fontNormal,
-          color: rgb(0.4, 0.4, 0.4),
-        },
-      );
+    return `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <title>Bon de Préparation Maraîchère - ${subOrder.id}</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #0f172a; padding: 20px; line-height: 1.5; }
+          .header { border-bottom: 3px solid #15803d; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+          .title { font-size: 18px; font-weight: 900; color: #166534; text-transform: uppercase; }
+          
+          .harvest-alert { background-color: #fefce8; border: 2px solid #eab308; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+          .harvest-date-label { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #854d0e; }
+          .harvest-date-value { font-size: 22px; font-weight: 900; color: #a16207; margin-top: 4px; }
+          
+          .grid { display: flex; justify-content: space-between; margin-bottom: 15px; }
+          .box { width: 48%; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; }
+          
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+          th { background: #166534; color: white; padding: 10px; text-align: left; font-size: 11px; text-transform: uppercase; }
+          td { border-bottom: 1px solid #e2e8f0; padding: 10px; font-size: 13px; }
+          
+          .haccp-box { margin-top: 25px; border: 2px dashed #166534; padding: 15px; border-radius: 6px; background: #f0fdf4; }
+          .haccp-title { font-weight: 800; color: #14532d; text-transform: uppercase; font-size: 11px; margin-bottom: 5px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">Bon de Préparation & Récolte</div>
+            <small style="color: #64748b;">N° Sous-Commande : <strong>${subOrder.id}</strong></small>
+          </div>
+          <div style="font-weight: 800; color: #15803d; font-size: 16px;">Âne & Gorille</div>
+        </div>
 
-      y -= 50;
+        <!-- ALERTE DATE DE LIVRAISON POUR LE MARAÎCHER -->
+        <div class="harvest-alert">
+          <div class="harvest-date-label">🌾 DATE DE LIVRAISON SOUHAITÉE PAR L'ACHETEUR</div>
+          <div class="harvest-date-value">📅 ${dateFormatted} (${selectedDate.split('-').reverse().join('/')})</div>
+          <div style="font-size: 11px; font-weight: 700; color: #713f12; margin-top: 5px;">
+            ⚠️ Les produits doivent être cueillis, mis en cagettes fraîches et prêts pour le ramassage camion le matin même.
+          </div>
+        </div>
 
-      // Titres selon le type de document
-      const typeTitles = {
-        BC: "BON DE COMMANDE (BC)",
-        BP: "BON DE PREPARATION MARAICHER (BP)",
-        BL: "BON DE LIVRAISON EMARGE (BL)",
-        FAC: "FACTURE OFFICIELLE (Factur-X)",
-      };
+        <div class="grid">
+          <div class="box">
+            <strong>Maraîcher Exploitant :</strong><br>
+            ${subOrder.producerName || "Exploitation Agricole"}
+          </div>
+          <div class="box">
+            <strong>Destinataire Final :</strong><br>
+            ${subOrder.buyerName || "Acheteur Client"}<br>
+            ${subOrder.deliveryAddress || "Adresse de livraison"}
+          </div>
+        </div>
 
-      const rawTitle = typeTitles[docType] || "DOCUMENT LOGISTIQUE";
-      page.drawText(cleanText(rawTitle), {
-        x: 50,
-        y,
-        size: 14,
-        font: fontBold,
-        color: rgb(0.1, 0.1, 0.1),
-      });
+        <table>
+          <thead>
+            <tr>
+              <th>Produit à Récolter</th>
+              <th>Quantité Commandée</th>
+              <th>Conditionnement</th>
+              <th>Cocher Récolté</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td><strong>${item.name || item.title}</strong></td>
+                <td><strong style="font-size: 15px; color: #166534;">${item.quantity || item.qty} ${item.unit || 'kg'}</strong></td>
+                <td>Cagette bois / Isotherme</td>
+                <td style="text-align: center;"><input type="checkbox" style="transform: scale(1.5);"></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
 
-      y -= 25;
-      page.drawLine({
-        start: { x: 50, y },
-        end: { x: 545, y },
-        thickness: 1,
-        color: rgb(0.85, 0.85, 0.85),
-      });
-      y -= 25;
-
-      // 📌 INFORMATIONS DE PIÈCE
-      const refCode = cleanText(docData.blCode || docData.id || "PIECE-2026");
-      const dateStr = cleanText(
-        docData.date || new Date().toLocaleDateString("fr-FR"),
-      );
-
-      page.drawText(cleanText(`N deg Reference : ${refCode}`), {
-        x: 50,
-        y,
-        size: 10,
-        font: fontBold,
-      });
-      page.drawText(cleanText(`Date d'emission : ${dateStr}`), {
-        x: 300,
-        y,
-        size: 10,
-        font: fontNormal,
-      });
-
-      y -= 20;
-
-      // PARTENAIRES CONCERNÉS
-      const buyer = cleanText(
-        docData.buyerName ||
-          docData.entity ||
-          docData.buyer ||
-          "Acheteur Public / Pro",
-      );
-      const producer = cleanText(
-        docData.producerName || docData.producer || "Maraicher Exploitant",
-      );
-
-      page.drawText(cleanText(`Expediteur / Maraicher : ${producer}`), {
-        x: 50,
-        y,
-        size: 9,
-        font: fontNormal,
-      });
-      page.drawText(cleanText(`Destinataire : ${buyer}`), {
-        x: 300,
-        y,
-        size: 9,
-        font: fontBold,
-      });
-
-      if (docData.refEngagement && docData.refEngagement !== "-") {
-        y -= 15;
-        page.drawText(
-          cleanText(`N deg Engagement Public : ${docData.refEngagement}`),
-          { x: 300, y, size: 9, font: fontNormal, color: rgb(0, 0.3, 0.7) },
-        );
-      }
-
-      y -= 30;
-
-      // ❄️ SECTION DÉDIÉE SÉCURITÉ ALIMENTAIRE & CONTÔLE HACCP (Si BL)
-      if (docType === "BL" || docData.tempHaccp) {
-        page.drawRectangle({
-          x: 50,
-          y: y - 35,
-          width: 495,
-          height: 40,
-          color: rgb(0.93, 0.97, 0.94),
-          borderColor: rgb(0.7, 0.88, 0.75),
-          borderWidth: 1,
-        });
-
-        const tempVal = docData.tempHaccp
-          ? `${docData.tempHaccp} deg C`
-          : "Conforme (2 deg C - 6 deg C)";
-        page.drawText(
-          cleanText(
-            "CONTROLE DE SECURITE SANITAIRE ET CHAINE DU FROID (HACCP)",
-          ),
-          {
-            x: 60,
-            y: y - 12,
-            size: 9,
-            font: fontBold,
-            color: rgb(0.08, 0.45, 0.25),
-          },
-        );
-        page.drawText(
-          cleanText(
-            `Temperature relevee au dechargement : ${tempVal} | Statut : CONFORME (Reglement CE 852/2004)`,
-          ),
-          {
-            x: 60,
-            y: y - 27,
-            size: 8,
-            font: fontNormal,
-            color: rgb(0.15, 0.2, 0.15),
-          },
-        );
-
-        y -= 50;
-      }
-
-      // 📦 TABLEAU DE CONTENU DES ARTICLES
-      page.drawText(cleanText("DETAIL DES PRODUITS & PRESTATIONS :"), {
-        x: 50,
-        y,
-        size: 10,
-        font: fontBold,
-      });
-      y -= 18;
-
-      // En-tête tableau
-      page.drawRectangle({
-        x: 50,
-        y: y - 15,
-        width: 495,
-        height: 18,
-        color: rgb(0.95, 0.95, 0.95),
-      });
-      page.drawText(cleanText("Designation Produit"), {
-        x: 55,
-        y: y - 11,
-        size: 8,
-        font: fontBold,
-      });
-      page.drawText(cleanText("Quantite"), {
-        x: 300,
-        y: y - 11,
-        size: 8,
-        font: fontBold,
-      });
-      page.drawText(cleanText("Prix Unitaire HT"), {
-        x: 380,
-        y: y - 11,
-        size: 8,
-        font: fontBold,
-      });
-      page.drawText(cleanText("Total TTC"), {
-        x: 470,
-        y: y - 11,
-        size: 8,
-        font: fontBold,
-      });
-
-      y -= 25;
-
-      const items = docData.items || [
-        {
-          name: docData.type || "Prestation Logistique & Alimentaire",
-          quantity: 1,
-          price: docData.amount || 18.75,
-        },
-      ];
-
-      items.forEach((item) => {
-        const name = cleanText(
-          item.name || item.title || "Produit local frais",
-        );
-        const qty = cleanText(item.quantity || item.qty || 1);
-        const priceNum = Number(item.price || item.priceHT || 0);
-        const totalNum = Number(qty || 1) * priceNum;
-
-        page.drawText(name.slice(0, 45), {
-          x: 55,
-          y,
-          size: 8,
-          font: fontNormal,
-        });
-        page.drawText(`${qty}`, { x: 310, y, size: 8, font: fontNormal });
-        page.drawText(cleanText(`${priceNum.toFixed(2)} EUR`), {
-          x: 390,
-          y,
-          size: 8,
-          font: fontNormal,
-        });
-        page.drawText(cleanText(`${totalNum.toFixed(2)} EUR`), {
-          x: 475,
-          y,
-          size: 8,
-          font: fontNormal,
-        });
-
-        y -= 16;
-      });
-
-      y -= 15;
-      page.drawLine({
-        start: { x: 50, y },
-        end: { x: 545, y },
-        thickness: 0.8,
-        color: rgb(0.8, 0.8, 0.8),
-      });
-      y -= 25;
-
-      // 💶 TOTAUX FINANCIERS & TVA
-      const totalTTC = Number(docData.amount || 0);
-      const vatRate = Number(docData.vatRate || 5.5);
-      const vatAmount = totalTTC * (vatRate / (100 + vatRate));
-      const totalHT = totalTTC - vatAmount;
-
-      page.drawText(cleanText(`Montant Total HT : ${totalHT.toFixed(2)} EUR`), {
-        x: 350,
-        y,
-        size: 9,
-        font: fontNormal,
-      });
-      y -= 15;
-      page.drawText(
-        cleanText(`TVA (${vatRate}%) : ${vatAmount.toFixed(2)} EUR`),
-        { x: 350, y, size: 9, font: fontNormal },
-      );
-      y -= 18;
-      page.drawText(
-        cleanText(`TOTAL A REGLER TTC : ${totalTTC.toFixed(2)} EUR`),
-        { x: 350, y, size: 11, font: fontBold, color: rgb(0.08, 0.45, 0.25) },
-      );
-
-      y -= 40;
-
-      // ✍️ ÉMARGEMENT & SIGNATURE (Si BL)
-      if (docType === "BL") {
-        page.drawText(cleanText("EMARGEMENT & PREUVE DE RECEPTION CLIENT :"), {
-          x: 50,
-          y,
-          size: 9,
-          font: fontBold,
-        });
-        y -= 15;
-        page.drawRectangle({
-          x: 50,
-          y: y - 30,
-          width: 220,
-          height: 35,
-          color: rgb(0.98, 0.98, 0.98),
-          borderColor: rgb(0.8, 0.8, 0.8),
-          borderWidth: 0.5,
-        });
-        page.drawText(cleanText("Signature Acheteur / Cachet :"), {
-          x: 55,
-          y: y - 10,
-          size: 7,
-          font: fontNormal,
-          color: rgb(0.5, 0.5, 0.5),
-        });
-        page.drawText(cleanText("EMARGE NUMERIQUEMENT OK"), {
-          x: 55,
-          y: y - 24,
-          size: 8,
-          font: fontBold,
-          color: rgb(0, 0.5, 0),
-        });
-      }
-
-      // 📄 EMBARQUEMENT DU XML FACTUR-X (SI FACTURE / FACTUR-X)
-      if (docType === "FAC") {
-        const xmlContent = this.generateFacturXXml(docData);
-        const xmlBytes = new TextEncoder().encode(xmlContent);
-
-        await pdfDoc.attach(xmlBytes, "factur-x.xml", {
-          mimeType: "text/xml",
-          description:
-            "Donnees de facturation structurees EN 16931 pour Chorus Pro et PDP",
-          creationDate: new Date(),
-          modificationDate: new Date(),
-        });
-      }
-
-      // 🏁 GÉNÉRATION DU BLOB PDF ET DÉCLENCHEMENT DU TÉLÉCHARGEMENT
-      const pdfBytes = await pdfDoc.save();
-      const blob = new Blob([pdfBytes], { type: "application/pdf" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `${docType}_${refCode}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      console.error(
-        "Erreur lors de la generation du document PDF / Factur-X :",
-        err,
-      );
-      alert("Une erreur est survenue lors de la creation du document PDF.");
-    }
+        <div class="haccp-box">
+          <div class="haccp-title">📋 Traçabilité Sanitaire & Numéro de Lot (HACCP)</div>
+          <strong>Numéro de Lot Attribué :</strong> <span style="font-family: monospace; font-size: 14px; font-weight: bold; color: #166534;">${subOrder.lotNumber || subOrder.batchNumber || 'À renseigner lors du démarrage'}</span><br>
+          <small>Règlement CE 178/2002 & Règlements CE 543/2011 sur le marquage des fruits et légumes frais.</small>
+        </div>
+      </body>
+      </html>
+    `;
   },
 
   /**
-   * Téléchargement autonome de la facture XML Factur-X brute pour dépôt direct Chorus Pro
+   * 🚚 3. BON DE RAMASSAGE / ENLÈVEMENT FERME (Livreur / Maraîcher)
    */
-  downloadFacturXXml(docData) {
-    const xmlContent = this.generateFacturXXml(docData);
-    const blob = new Blob([xmlContent], { type: "text/xml;charset=utf-8" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `FacturX_${docData.id || "FAC"}.xml`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  generatePickupSlipHTML(pickup) {
+    const rawDate = pickup.subOrders?.[0]?.selectedDate || pickup.selectedDate;
+    const selectedDate = (rawDate && rawDate !== "Non spécifiée" && rawDate !== "")
+      ? rawDate
+      : getCalculatedDeliveryDate(new Date());
+
+    const dateFormatted = formatFrenchDate(selectedDate);
+    const items = extractItems(pickup);
+
+    return `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <title>Bon de Ramassage - ${pickup.producerName}</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #0f172a; padding: 20px; line-height: 1.5; }
+          .header { border-bottom: 3px solid #16a34a; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+          .title { font-size: 18px; font-weight: 900; color: #15803d; text-transform: uppercase; }
+          
+          .pickup-badge { background-color: #f0fdf4; border: 2px solid #16a34a; border-radius: 8px; padding: 12px; margin-bottom: 20px; text-align: center; }
+          .pickup-date-label { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #15803d; }
+          .pickup-date-value { font-size: 20px; font-weight: 900; color: #166534; margin-top: 4px; }
+          
+          .grid { display: flex; justify-content: space-between; margin-bottom: 15px; }
+          .box { width: 48%; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; }
+          
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+          th { background: #16a34a; color: white; padding: 8px; text-align: left; font-size: 11px; text-transform: uppercase; }
+          td { border-bottom: 1px solid #e2e8f0; padding: 8px; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">Bon de Ramassage & Collecte Exploitation</div>
+            <small style="color: #64748b;">Espace Livreur — Collecte Camion</small>
+          </div>
+          <div style="font-weight: 800; color: #16a34a; font-size: 16px;">Âne & Gorille Logistique</div>
+        </div>
+
+        <div class="pickup-badge">
+          <div class="pickup-date-label">📅 DATE DE LIVRAISON CIBLE POUR LES COLIS RAMASSÉS</div>
+          <div class="pickup-date-value">${dateFormatted} (${selectedDate.split('-').reverse().join('/')})</div>
+        </div>
+
+        <div class="grid">
+          <div class="box">
+            <strong>Maraîcher Expediteur :</strong><br>
+            <strong>${pickup.producerName || "Maraîcher Local"}</strong><br>
+            ${pickup.producerAddress || "Adresse Exploitation"}<br>
+            Tél : ${pickup.producerPhone || "-"}
+          </div>
+          <div class="box">
+            <strong>Contrôle Chargement Camion :</strong><br>
+            Transporteur : <strong>Livreur Âne & Gorille</strong><br>
+            Nombre de colis : <strong>${pickup.subOrders?.length || 1} cagette(s)</strong><br>
+            Statut : <strong>Prêt pour Chargement Frigo</strong>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Réf / Produit</th>
+              <th>Acheteur Destinataire</th>
+              <th>Quantité</th>
+              <th>N° Lot HACCP</th>
+              <th>Pointage Livreur</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td><strong>${item.name || item.title}</strong></td>
+                <td>${item.buyerName || "Client"}</td>
+                <td><strong>${item.quantity || item.qty} ${item.unit || 'kg'}</strong></td>
+                <td><span style="font-family: monospace; font-weight: bold; color: #166534;">${item.lotNumber || 'HACCP-OK'}</span></td>
+                <td style="text-align: center;"><input type="checkbox" style="transform: scale(1.3);"> Chargé</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
   },
+
+  /**
+   * 🚚 4. BON DE LIVRAISON - BL (Livreur / Client avec Émargement & Réserves)
+   */
+  generateDeliverySlipHTML(order) {
+    const rawDate = order.selectedDate || order.deliveryDate || order.deliveryDetails?.selectedDate;
+    const selectedDate = (rawDate && rawDate !== "Non spécifiée" && rawDate !== "")
+      ? rawDate
+      : getCalculatedDeliveryDate(order.createdAt?.toDate ? order.createdAt.toDate() : new Date());
+
+    const dateFormatted = formatFrenchDate(selectedDate);
+    const items = extractItems(order);
+
+    return `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <title>Bon de Livraison - ${order.orderNumber || order.id}</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #0f172a; padding: 20px; line-height: 1.5; }
+          .header { border-bottom: 3px solid #0369a1; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+          .title { font-size: 18px; font-weight: 900; color: #0369a1; text-transform: uppercase; }
+          
+          .bl-header-box { background: #f0f9ff; border: 2px solid #0284c7; border-radius: 8px; padding: 15px; margin-bottom: 20px; text-align: center; }
+          .bl-date-label { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #0369a1; }
+          .bl-date-value { font-size: 20px; font-weight: 900; color: #075985; margin-top: 4px; }
+          
+          .grid { display: flex; justify-content: space-between; margin-bottom: 15px; }
+          .box { width: 48%; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; }
+          
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+          th { background: #0369a1; color: white; padding: 8px; text-align: left; font-size: 11px; text-transform: uppercase; }
+          td { border-bottom: 1px solid #e2e8f0; padding: 8px; font-size: 12px; }
+          
+          .sign-box { margin-top: 25px; display: flex; justify-content: space-between; }
+          .sign-card { width: 48%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px; background: #fafafa; }
+          .sign-img { max-height: 80px; border: 1px solid #cbd5e1; background: white; margin-top: 8px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">Bon de Livraison (BL)</div>
+            <small style="color: #64748b;">Ref : <strong>BL-${order.orderNumber || order.id}</strong></small>
+          </div>
+          <div style="font-weight: 800; color: #0369a1; font-size: 16px;">Âne & Gorille Logistique</div>
+        </div>
+
+        <!-- BADGE OFFICIEL DATE DE LIVRAISON DU BL -->
+        <div class="bl-header-box">
+          <div class="bl-date-label">📅 DATE DE LIVRAISON DÉSIGNÉE SUR LE BL</div>
+          <div class="bl-date-value">${dateFormatted} (${selectedDate.split('-').reverse().join('/')})</div>
+          <div style="font-size: 11px; font-weight: 600; color: #0369a1; margin-top: 4px;">
+            Créneau de livraison : ${order.deliveryDetails?.deliveryWindow || "Matin (06h00 - 08h00)"}
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="box">
+            <strong>Client Destinataire :</strong><br>
+            <strong>${order.buyerName || "Acheteur Client"}</strong><br>
+            ${order.deliveryAddress || "Adresse de livraison"}<br>
+            Remarques : ${order.deliveryDetails?.instructions || "Aucune consigne"}
+          </div>
+          <div class="box">
+            <strong>Contrôle Logistique & Transport :</strong><br>
+            Chauffeur Livreur : <strong>${order.carrierName || "Livreur Âne & Gorille"}</strong><br>
+            Relevé Température HACCP : <strong>${order.tempHaccp !== undefined ? order.tempHaccp + " °C" : "En attente"}</strong><br>
+            Statut : <strong>${order.status === 'delivered' ? 'LIVRÉ' : 'EN COURS'}</strong>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Réf / Produit</th>
+              <th>Maraîcher Origine</th>
+              <th>Quantité</th>
+              <th>N° Lot HACCP</th>
+              <th>État Réception</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td><strong>${item.name || item.title}</strong></td>
+                <td>${item.producerName || "Producteur"}</td>
+                <td><strong>${item.quantity || item.qty} ${item.unit || 'kg'}</strong></td>
+                <td><span style="font-family: monospace; font-weight: bold;">${item.lotNumber || order.lotNumber || 'HACCP-OK'}</span></td>
+                <td>Conforme / Bon état</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <!-- ZONE DÉDIÉE AUX RÉSERVES DU CLIENT -->
+        ${order.reservations ? `
+          <div style="margin-top: 15px; border: 2px solid #dc2626; padding: 10px; border-radius: 6px; background-color: #fef2f2; color: #991b1b;">
+            <strong>⚠️ RÉSERVES ÉMISES À LA RÉCEPTION :</strong><br>
+            ${order.reservations}
+          </div>
+        ` : ''}
+
+        <div class="sign-box">
+          <div class="sign-card">
+            <strong>Contrôle Température Camion :</strong><br>
+            Température mesurée : <strong>${order.tempHaccp !== undefined ? order.tempHaccp + " °C" : "___ °C"}</strong><br>
+            <small style="color: #166534;">✓ Respect strict de la chaîne du froid (2°C - 8°C)</small>
+          </div>
+          <div class="sign-card">
+            <strong>Émargement Client Réceptionnaire :</strong><br>
+            Nom : <strong>${order.recipientName || order.buyerName || "Réceptionnaire"}</strong><br>
+            ${order.signature && order.signature.startsWith('data:') ? `
+              <img src="${order.signature}" class="sign-img" alt="Signature eIDAS" />
+            ` : `<small style="color: #64748b; font-style: italic;">Signé numériquement au déchargement</small>`}
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
 };
+
+export default OrderDocumentGenerator;

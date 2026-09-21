@@ -9,6 +9,7 @@
  *    - Niveau 3 Franco de port (>= 300 € HT) : 0 € (Livraison offerte)
  */
 import { db } from "../config/firebase";
+import { getCalculatedDeliveryDate, formatDateToYYYYMMDD } from "../utils/deliveryCalendar.js";
 import { 
   collection, 
   doc, 
@@ -39,7 +40,7 @@ export function calculateDeliveryFee(subtotalHT) {
 export const CheckoutOrchestrator = {
   
   /**
-   * 1. VALIDATION DU PANIER & TRANSACTIONS ATOMIQUES (3 Modes de Paiement + Grille 12% + Port Dégressif)
+   * 1. VALIDATION DU PANIER & TRANSACTIONS ATOMIQUES (3 Modes de Paiement + Grille 12% + Port Dégressif + Ancrage Date de Livraison)
    */
   async processCheckout(buyerProfile, cartItems, checkoutOptions = {}) {
     if (!buyerProfile?.uid || !cartItems || cartItems.length === 0) {
@@ -52,12 +53,31 @@ export const CheckoutOrchestrator = {
     const role = buyerProfile.role || buyerProfile.buyerRole || "client_pro";
     const isPublicSector = role === "acheteur_public" || role === "client_public" || buyerProfile.buyerProfile === "B2G";
 
+    // Détermination du mode de règlement
     let paymentMethod = checkoutOptions.paymentMethod || (isPublicSector ? "mandat_public" : "stripe_b2b");
     
+    // Contrainte B2G Chorus Pro : N° d'engagement budgétaire obligatoire
     if (isPublicSector && (!checkoutOptions.refEngagement || checkoutOptions.refEngagement.trim() === "" || checkoutOptions.refEngagement === "-")) {
       throw new Error("La facturation publique Chorus Pro exige un N° d'Engagement Budgétaire valide.");
     }
 
+    // Récupération sécurisée et garantie de la DATE DE LIVRAISON SOUHAITÉE (11j livrables selon date et heure)
+    let requestedDeliveryDate = 
+      checkoutOptions.deliveryDetails?.selectedDate || 
+      checkoutOptions.selectedDate || 
+      checkoutOptions.deliveryDate;
+
+    if (!requestedDeliveryDate || requestedDeliveryDate.trim() === "" || requestedDeliveryDate === "Non spécifiée") {
+      requestedDeliveryDate = getCalculatedDeliveryDate(new Date());
+    }
+
+    const deliveryDetailsObj = {
+      selectedDate: requestedDeliveryDate,
+      deliveryWindow: checkoutOptions.deliveryDetails?.deliveryWindow || "06:00 - 08:00",
+      instructions: checkoutOptions.deliveryDetails?.instructions || ""
+    };
+
+    // Regroupement des articles par producteur/maraîcher
     const itemsByProducer = cartItems.reduce((acc, item) => {
       const pId = item.producerId || "PROD_INCONNU";
       if (!acc[pId]) {
@@ -79,6 +99,7 @@ export const CheckoutOrchestrator = {
         const productSnaps = [];
         let globalTotalHT = 0;
 
+        // ÉTAPE A : Lectures strictes Firestore
         for (const item of cartItems) {
           if (!item.id) continue;
           const productRef = doc(db, "products", item.id);
@@ -86,6 +107,7 @@ export const CheckoutOrchestrator = {
           productSnaps.push({ item, productRef, snap });
         }
 
+        // ÉTAPE B : Vérification des stocks & calcul sécurisé
         for (const { item, snap } of productSnaps) {
           if (!snap.exists()) {
             throw new Error(`Le produit "${item.title || item.name}" n'est plus disponible en rayon.`);
@@ -101,10 +123,13 @@ export const CheckoutOrchestrator = {
           globalTotalHT += priceHT * requestedQty;
         }
 
+        // ÉTAPE C : Calculs financiers
         const deliveryFee = calculateDeliveryFee(globalTotalHT);
         const totalVAT = globalTotalHT * 0.055;
         const totalTTC = globalTotalHT + totalVAT + deliveryFee;
 
+        // ÉTAPE D : Écritures atomiques
+        // 1. Décrémentation physique des stocks
         for (const { item, productRef, snap } of productSnaps) {
           const pData = snap.data();
           const currentStock = Number(pData.stock || 0);
@@ -118,6 +143,7 @@ export const CheckoutOrchestrator = {
           });
         }
 
+        // 2. Création de la commande parente globale (orders)
         const globalOrder = {
           id: orderId,
           orderNumber: `CMD-${orderId.substring(0, 8).toUpperCase()}`,
@@ -137,11 +163,9 @@ export const CheckoutOrchestrator = {
           amount: Number(totalTTC.toFixed(2)),
           commissionRate: 12,
           status: "paid",
-          deliveryDetails: {
-            selectedDate: checkoutOptions.deliveryDetails?.selectedDate || new Date().toISOString().split("T")[0],
-            deliveryWindow: checkoutOptions.deliveryDetails?.deliveryWindow || "06:00 - 09:00",
-            instructions: checkoutOptions.deliveryDetails?.instructions || ""
-          },
+          selectedDate: requestedDeliveryDate, // ✅ Date scellée à 100%
+          deliveryDate: requestedDeliveryDate,
+          deliveryDetails: deliveryDetailsObj,
           deliveryAddress: checkoutOptions.deliveryAddress || buyerProfile.address || "Adresse de livraison",
           producerIds: Object.keys(itemsByProducer),
           createdAt: serverTimestamp(),
@@ -160,6 +184,7 @@ export const CheckoutOrchestrator = {
         };
         transaction.set(orderRef, globalOrder);
 
+        // 3. Création des sous-commandes individuelles par maraîcher (sub_orders)
         for (const [producerId, group] of Object.entries(itemsByProducer)) {
           const subOrderRef = doc(collection(db, "sub_orders"));
           const subAmountHT = group.totalAmountHT;
@@ -175,6 +200,10 @@ export const CheckoutOrchestrator = {
             buyerId: buyerProfile.uid,
             buyerName: globalOrder.buyerName,
             status: "A_PREPARER",
+            selectedDate: requestedDeliveryDate, // ✅ Date scellée à 100%
+            deliveryDate: requestedDeliveryDate,
+            deliveryDetails: deliveryDetailsObj,
+            deliveryAddress: globalOrder.deliveryAddress,
             amountHT: Number(subAmountHT.toFixed(2)),
             amountTTC: Number(subAmountTTC.toFixed(2)),
             amount: Number(subAmountTTC.toFixed(2)),
@@ -265,9 +294,8 @@ export const CheckoutOrchestrator = {
 
   /**
    * 4. ESPACE LIVREUR : REMISE PHYSIQUE, HACCP & GÉNÉRATION COMPTABLE (BL, FAC-VTE, FAC-COM, Chorus Pro)
-   * Prise en compte du nom du réceptionnaire et de la signature électronique eIDAS (Base64)
    */
-  async validateDelivery(orderId, tempHaccp, signatureBase64, recipientName) {
+  async validateDelivery(orderId, tempHaccp, signatureBase64, recipientName = "") {
     if (!orderId) throw new Error("L'identifiant de la commande est requis.");
     if (tempHaccp === undefined || tempHaccp === null) throw new Error("Le relevé de température HACCP est obligatoire.");
 
@@ -282,7 +310,6 @@ export const CheckoutOrchestrator = {
     const subOrders = subSnaps.docs.map(d => ({ id: d.id, ...d.data() }));
 
     const isMandatPublic = orderData.paymentMethod === "mandat_public" || orderData.buyerRole === "acheteur_public";
-    const finalRecipient = recipientName || orderData.buyerName || "Réceptionnaire Client";
 
     await runTransaction(db, async (transaction) => {
       // 1. Clôture de la commande globale
@@ -290,8 +317,8 @@ export const CheckoutOrchestrator = {
         status: "delivered",
         deliveredAt: serverTimestamp(),
         tempHaccp: Number(tempHaccp),
+        recipientName: recipientName || "-",
         signature: signatureBase64 || "EMARGEMENT_NUMERIQUE_OK",
-        recipientName: finalRecipient,
         updatedAt: serverTimestamp()
       });
 
@@ -301,12 +328,13 @@ export const CheckoutOrchestrator = {
         transaction.update(soRef, {
           status: "DELIVERED",
           tempHaccp: Number(tempHaccp),
+          recipientName: recipientName || "-",
           deliveredAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
       });
 
-      // 3. Génération du Bon de Livraison (BL) sécurisé pour CE client uniquement
+      // 3. Génération du Bon de Livraison (BL)
       const blDocId = `BL-${orderId.substring(0, 8).toUpperCase()}`;
       const blRef = doc(db, "documents", blDocId);
       transaction.set(blRef, {
@@ -314,11 +342,12 @@ export const CheckoutOrchestrator = {
         orderId: orderId,
         buyerId: orderData.buyerId,
         buyerName: orderData.buyerName,
-        recipientName: finalRecipient,
+        selectedDate: orderData.selectedDate || orderData.deliveryDate || "-",
         type: "Bon de livraison",
         entity: "Plateforme Âne & Gorille",
         totalAmount: orderData.totalAmount || orderData.amountTTC || 0,
         tempHaccp: Number(tempHaccp),
+        recipientName: recipientName || "-",
         signature: signatureBase64 || "EMARGEMENT_NUMERIQUE_OK",
         createdAt: serverTimestamp()
       }, { merge: true });
@@ -347,6 +376,7 @@ export const CheckoutOrchestrator = {
           createdAt: serverTimestamp()
         });
 
+        // Facture de frais de service (Commission 12 %)
         const comDocId = `FAC-COM-${so.id.substring(0, 8).toUpperCase()}`;
         const comRef = doc(db, "documents", comDocId);
         const commissionHT = subAmountHT * 0.12;

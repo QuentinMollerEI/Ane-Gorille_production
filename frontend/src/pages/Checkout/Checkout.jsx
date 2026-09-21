@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { CheckoutService } from "../../services/checkoutService";
+import { CheckoutOrchestrator } from "../../services/CheckoutOrchestrator";
+import CheckoutDeliverySelector from "../../components/Checkout/CheckoutDeliverySelector";
 import {
   CreditCard,
   Building,
@@ -8,498 +9,462 @@ import {
   ShieldCheck,
   AlertCircle,
   FileText,
-  ArrowRight,
   Loader2,
   CheckCircle2,
+  Truck,
+  ArrowRight,
+  Info,
 } from "lucide-react";
 
 /**
- * 🛒 COMPOSANT : Checkout.jsx (v3 - Orchestration Server-Side & Chorus Pro Public)
+ * 🛒 COMPOSANT CENTRAL : Checkout.jsx
+ * Page/Module de validation de commande B2B & B2G.
  *
- * Responsabilité unique (SRP) : Collecter les informations de facturation,
- * valider les exigences juridiques (SIRET, Chorus Pro) selon le mode de paiement,
- * et appeler le service de checkout unifié connecté aux Cloud Functions.
+ * Responsabilité Unique (SRP) :
+ * 1. Collecter les informations de facturation et de livraison.
+ * 2. Sélectionner la date de livraison souhaitée via CheckoutDeliverySelector (11j livrables).
+ * 3. Valider les contraintes légales (SIRET, Engagement Chorus Pro pour le secteur public).
+ * 4. Transmettre la transaction complète à l'Orchestrateur (CheckoutOrchestrator.js).
  */
-export default function Checkout() {
-  const { user } = useAuth();
+export default function Checkout({ cartItems = [], clearCart, onCheckoutSuccess }) {
+  const { user, userProfile } = useAuth();
 
-  // Simulation de panier local (à remplacer par votre hook useCart() réel)
-  const [cartItems, setCartItems] = useState([
-    {
-      id: "PROD-001",
-      name: "Tomates Coeur de Boeuf Bio",
-      price: 4.5,
-      quantity: 10,
-      producerId: "USR-PROD-01",
-      producerName: "Ferme de la Rosée",
-      vatRate: 5.5,
-    },
-    {
-      id: "PROD-002",
-      name: "Carottes Sables de Landes",
-      price: 2.8,
-      quantity: 15,
-      producerId: "USR-PROD-01",
-      producerName: "Ferme de la Rosée",
-      vatRate: 5.5,
-    },
-    {
-      id: "PROD-003",
-      name: "Fraises Gariguette Pleine Terre",
-      price: 6.9,
-      quantity: 5,
-      producerId: "USR-PROD-02",
-      producerName: "Le Jardin d'Émile",
-      vatRate: 5.5,
-    },
-  ]);
+  // Profil fusionné de l'acheteur connecté
+  const profile = userProfile || user || {};
+  const isPublicSector =
+    profile.role === "acheteur_public" ||
+    profile.role === "client_public" ||
+    profile.buyerProfile === "B2G";
 
-  const [paymentMethod, setPaymentMethod] = useState("mandat"); // 'stripe' | 'mandat'
+  // États locaux du formulaire de paiement & facturation
+  const [paymentMethod, setPaymentMethod] = useState(
+    isPublicSector ? "mandat_public" : "stripe_b2b"
+  );
+
+  const [billingInfo, setBillingInfo] = useState({
+    siret: profile.siret || profile.numSiret || "",
+    codeService: profile.codeService || profile.codeChorus || "Service Général",
+    refEngagement: profile.refEngagement || profile.defaultEngagement || "",
+    billingContact: profile.email || profile.billingContact || "",
+    deliveryAddress:
+      profile.address ||
+      profile.adresse ||
+      profile.deliveryAddress ||
+      "Adresse d'exploitation",
+  });
+
+  // État local des détails logistiques reçus du sélecteur
+  const [deliveryDetails, setDeliveryDetails] = useState({
+    selectedDate: sessionStorage.getItem("selectedDeliveryDate") || "",
+    deliveryWindow: "Matin (06h00 - 08h00)",
+    instructions: "",
+  });
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [successOrderId, setSuccessOrderId] = useState(null);
 
-  // Formulaire d'identification comptable
-  const [billingInfo, setBillingInfo] = useState({
-    siret: user?.siret || "",
-    codeService: user?.codeService || "",
-    refEngagement: user?.refEngagement || "",
-    billingContact: user?.email || "",
-  });
-
-  // Calcul du montant total du panier (TTC)
-  const totalCartAmount = cartItems.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0,
+  // Calculs financiers du panier
+  const totalHT = cartItems.reduce(
+    (sum, item) => sum + Number(item.priceHT ?? item.price ?? 0) * (item.quantity || 1),
+    0
   );
+  const totalVAT = totalHT * 0.055; // TVA réduite produits alimentaires (5.5%)
+  const totalTTC = totalHT + totalVAT;
 
-  // Validation sémantique du formulaire selon le cadre légal
+  /**
+   * 🔍 Validation sémantique du formulaire selon le cadre juridique
+   */
   const validateForm = () => {
-    if (paymentMethod === "mandat") {
-      // 1. Validation réglementaire du SIRET (14 chiffres)
-      const cleanSiret = billingInfo.siret.replace(/\s/g, "");
-      if (!/^\d{14}$/.test(cleanSiret)) {
+    // 1. Validation obligatoire de la date de livraison
+    if (!deliveryDetails?.selectedDate) {
+      throw new Error(
+        "Veuillez sélectionner une date de livraison souhaitée dans le calendrier."
+      );
+    }
+
+    // 2. Validation réglementaire du secteur public B2G (Chorus Pro)
+    if (paymentMethod === "mandat_public" || isPublicSector) {
+      const cleanSiret = (billingInfo.siret || "").replace(/\s/g, "");
+      if (!cleanSiret || cleanSiret.length !== 14) {
         throw new Error(
-          "Réglementation Chorus Pro : Le numéro de SIRET de l'établissement public doit comporter exactement 14 chiffres.",
+          "Un SIRET public valide (14 chiffres) est obligatoire pour la facturation Chorus Pro."
         );
       }
-
-      // 2. Numéro d'engagement public / Bon de commande interne (Requis pour facturation publique)
-      if (!billingInfo.refEngagement.trim()) {
+      if (!billingInfo.refEngagement || billingInfo.refEngagement.trim() === "" || billingInfo.refEngagement === "-") {
         throw new Error(
-          "Loi LME & Chorus Pro : Le numéro d'engagement (Bon de commande public) est obligatoire pour valider un règlement par mandat administratif.",
+          "Le secteur public Chorus Pro exige un N° d'Engagement Budgétaire valide (ex: ENG-2026-908)."
         );
       }
     }
 
-    if (!billingInfo.billingContact.trim()) {
+    // 3. Validation de l'adresse de livraison
+    if (!billingInfo.deliveryAddress || billingInfo.deliveryAddress.trim().length < 5) {
       throw new Error(
-        "Veuillez renseigner un e-mail de contact pour l'envoi des pièces comptables.",
+        "Veuillez renseigner une adresse de livraison complète dans votre profil."
       );
     }
   };
 
+  /**
+   * 🚀 Validation et soumission de la commande vers l'Orchestrateur
+   */
   const handleCheckoutSubmit = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setLoading(true);
     setError(null);
 
     try {
-      // Étape A : Validation sémantique locale des obligations juridiques
+      // Étape A : Validation locale des contraintes légales et logistiques
       validateForm();
 
-      // Étape B : Structuration du payload acheteur
-      const buyerInfo = {
-        uid: user?.uid || "TEST_BUYER_ID_LOCAL",
-        name: user?.displayName || user?.name || "Établissement Public de Test",
-        role:
-          user?.role ||
-          (paymentMethod === "mandat" ? "client_public" : "client_prive"),
-        siret:
-          paymentMethod === "mandat"
-            ? billingInfo.siret.replace(/\s/g, "")
-            : "-",
-        codeService:
-          paymentMethod === "mandat" && billingInfo.codeService
-            ? billingInfo.codeService.trim()
-            : "-",
-        refEngagement:
-          paymentMethod === "mandat" ? billingInfo.refEngagement.trim() : "-",
-        billingContact: billingInfo.billingContact.trim(),
+      // Étape B : Structuration du profil acheteur
+      const buyerProfileObj = {
+        uid: profile.uid || profile.id || "USER_ID",
+        companyName: profile.companyName || profile.displayName || "Acheteur Client",
+        displayName: profile.displayName || profile.companyName || "Acheteur Client",
+        role: profile.role || (isPublicSector ? "acheteur_public" : "client_pro"),
+        buyerRole: profile.role || (isPublicSector ? "acheteur_public" : "client_pro"),
+        siret: billingInfo.siret.replace(/\s/g, ""),
+        codeService: billingInfo.codeService,
+        address: billingInfo.deliveryAddress,
+        email: profile.email || billingInfo.billingContact,
       };
 
-      // Étape C : Appel de la Cloud Function via le CheckoutService unifié
-      const orderId = await CheckoutService.validateAndCreateOrder(
-        buyerInfo,
+      // Étape C : Structuration complète des options de checkout
+      const checkoutOptions = {
+        paymentMethod: paymentMethod,
+        selectedDate: deliveryDetails.selectedDate, // 👈 Ancrage explicite de la date
+        deliveryDetails: {
+          selectedDate: deliveryDetails.selectedDate,
+          deliveryWindow: deliveryDetails.deliveryWindow || "Matin (06h00 - 08h00)",
+          instructions: deliveryDetails.instructions || "",
+        },
+        deliveryAddress: billingInfo.deliveryAddress,
+        refEngagement: billingInfo.refEngagement || "-",
+      };
+
+      // Étape D : Exécution de la transaction atomique Firestore / Cloud Function
+      const result = await CheckoutOrchestrator.processCheckout(
+        buyerProfileObj,
         cartItems,
-        paymentMethod,
+        checkoutOptions
       );
 
-      // Succès : Passage à la vue de confirmation
-      setSuccessOrderId(orderId);
+      if (result.success) {
+        // Effacement de la clé temporaire du navigateur
+        sessionStorage.removeItem("selectedDeliveryDate");
+        setSuccessOrderId(result.orderId);
+        if (clearCart) clearCart();
+        if (onCheckoutSuccess) onCheckoutSuccess(result.orderId);
+      } else {
+        throw new Error("Échec de la validation de commande.");
+      }
     } catch (err) {
-      console.error("Échec de la validation de commande :", err);
-      setError(
-        err.message ||
-          "Une erreur inconnue s'est produite lors de la validation.",
-      );
+      console.error("[Checkout] Erreur lors de la validation :", err);
+      setError(err.message || "Une erreur est survenue lors de la validation.");
     } finally {
       setLoading(false);
     }
   };
 
-  // --- VUE SUCCESS : Commande Validée & Pièces Comptables Émises ---
+  // --- VUE SUCCESS : Commande Validée & Factures Émises ---
   if (successOrderId) {
     return (
-      <div className="max-w-2xl mx-auto p-8 bg-white border border-gray-200 rounded-3xl shadow-sm text-center space-y-6 animate-fade-in my-10">
-        <div className="inline-flex p-4 bg-emerald-50 text-emerald-700 rounded-full">
-          <CheckCircle2 size={48} />
+      <div className="bg-emerald-50 border border-emerald-200 rounded-3xl p-8 space-y-6 text-center max-w-2xl mx-auto my-8 text-xs font-sans text-emerald-900 animate-fade-in shadow-sm">
+        <div className="w-16 h-16 bg-emerald-600 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
+          <ShieldCheck size={36} />
         </div>
+
         <div className="space-y-2">
-          <h2 className="text-2xl font-black text-gray-900 tracking-tight">
+          <h2 className="text-2xl font-black text-emerald-950">
             Commande Validée avec Succès !
           </h2>
-          <p className="text-sm text-gray-500 max-w-md mx-auto">
-            Votre commande a été traitée de manière sécurisée côté serveur. Vos
-            stocks maraîchers ont été réservés et les documents de facturation
-            ont été émis.
+          <p className="text-xs text-emerald-800 font-medium">
+            Votre commande a été scellée. Les bons de préparation ont été transmis aux maraîchers partenaires.
           </p>
         </div>
 
-        {/* Détails Commande */}
-        <div className="bg-gray-50 border border-gray-150 rounded-2xl p-5 text-left space-y-3">
-          <div className="flex justify-between items-center border-b border-gray-200 pb-2.5">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Référence Commande
-            </span>
-            <span className="text-sm font-black text-emerald-800">
-              {successOrderId}
+        <div className="bg-white border border-emerald-200 rounded-2xl p-4 text-left space-y-2 font-mono text-[11px] shadow-xs">
+          <div className="flex justify-between border-b border-emerald-100 pb-1.5">
+            <span className="font-bold text-slate-500">Référence Commande :</span>
+            <span className="font-extrabold text-emerald-950">#{successOrderId}</span>
+          </div>
+          <div className="flex justify-between border-b border-emerald-100 pb-1.5">
+            <span className="font-bold text-slate-500">Date de Livraison Souhaitée :</span>
+            <span className="font-extrabold text-emerald-950">{deliveryDetails.selectedDate}</span>
+          </div>
+          <div className="flex justify-between border-b border-emerald-100 pb-1.5">
+            <span className="font-bold text-slate-500">Mode de Règlement :</span>
+            <span className="font-extrabold text-emerald-950">
+              {paymentMethod === "mandat_public"
+                ? "Mandat Administratif Chorus Pro (30j)"
+                : paymentMethod === "virement_b2b"
+                ? "Virement Bancaire (LME 30j)"
+                : "Carte Bancaire / SEPA (Stripe)"}
             </span>
           </div>
-          <div className="flex justify-between items-center border-b border-gray-200 pb-2.5">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Règlement choisi
-            </span>
-            <span className="text-xs font-bold text-gray-700 uppercase">
-              {paymentMethod === "mandat"
-                ? "Mandat Administratif (30j)"
-                : "Stripe B2B"}
-            </span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Montant total engagé
-            </span>
-            <span className="text-base font-black text-gray-900">
-              {totalCartAmount.toFixed(2)} €
-            </span>
+          <div className="flex justify-between pt-1">
+            <span className="font-bold text-slate-500">Montant Total Engagé :</span>
+            <span className="font-black text-emerald-800 text-sm">{totalTTC.toFixed(2)} € TTC</span>
           </div>
         </div>
 
-        {/* Actions de redirection */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
-          <a
-            href="/pieces-comptables"
-            className="flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider transition-all shadow-sm"
-          >
-            <FileText size={16} /> Consulter mes pièces comptables
-          </a>
-          <a
-            href="/boutique"
-            className="flex items-center justify-center gap-2 border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider transition-all"
-          >
-            Retourner à l'accueil <ArrowRight size={16} />
-          </a>
-        </div>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold py-3 rounded-xl transition-all cursor-pointer shadow-md"
+        >
+          Retourner au Tableau de Bord
+        </button>
       </div>
     );
   }
 
+  // --- VUE FORMULAIRE DE CHECKOUT ---
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in">
+    <form onSubmit={handleCheckoutSubmit} className="max-w-5xl mx-auto p-4 sm:p-6 space-y-6 text-xs font-sans text-slate-800">
       {/* En-tête principal */}
-      <div className="border-b border-gray-150 pb-5">
-        <h1 className="text-3xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
-          <span className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg">
-            <ShoppingBag size={28} />
-          </span>
-          Validation de votre Commande
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-1 shadow-sm">
+        <h1 className="text-xl font-black text-slate-900 flex items-center gap-2">
+          <ShoppingBag className="text-emerald-700" size={24} />
+          Validation & Finalisation de Commande
         </h1>
-        <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1.5">
-          Finalisez vos achats en direct des maraîchers locaux de notre
-          coopérative.
+        <p className="text-xs text-slate-500">
+          Vérifiez vos articles, sélectionnez votre date de livraison et confirmez le règlement.
         </p>
       </div>
 
+      {/* Alerte d'erreur */}
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-sm flex items-center gap-2.5">
-          <AlertCircle size={18} className="flex-shrink-0" />
-          <span className="font-semibold">{error}</span>
+        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl font-bold flex items-center gap-2 text-xs">
+          <AlertCircle size={18} className="shrink-0 text-red-600" />
+          <span>{error}</span>
         </div>
       )}
 
-      <form
-        onSubmit={handleCheckoutSubmit}
-        className="grid grid-cols-1 lg:grid-cols-3 gap-8"
-      >
-        {/* COLONNE GAUCHE/CENTRE : Options de facturation et de paiement */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* 1. SELECTION DU MODE DE PAIEMENT */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-4">
-            <h2 className="text-base font-extrabold text-gray-800 flex items-center gap-2">
-              <span className="w-1.5 h-4 bg-emerald-600 rounded-full"></span>
-              1. Choix du mode de règlement
-            </h2>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* COLONNE GAUCHE (8 Cols) : Détails Logistiques & Facturation */}
+        <div className="lg:col-span-7 space-y-6">
+          {/* 1. SÉLECTEUR DE DATE & INSTRUCTIONS DE LIVRAISON */}
+          <CheckoutDeliverySelector
+            onDeliveryChange={(details) => setDeliveryDetails(details)}
+          />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Option Mandat Administratif (B2G public) */}
-              <label
-                className={`flex items-start gap-3.5 p-4 border rounded-xl cursor-pointer transition ${
-                  paymentMethod === "mandat"
-                    ? "border-emerald-600 bg-emerald-50/10 shadow-sm"
-                    : "border-gray-200 hover:bg-gray-50/50"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="paymentMethod"
-                  checked={paymentMethod === "mandat"}
-                  onChange={() => setPaymentMethod("mandat")}
-                  className="mt-1 text-emerald-600 focus:ring-green-500 border-gray-300"
-                />
-                <div className="space-y-1">
-                  <span className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
-                    <Building size={16} className="text-gray-500" /> Mandat
-                    Administratif (30j)
-                  </span>
-                  <p className="text-[11px] text-gray-500 leading-relaxed">
-                    Réservé aux collectivités territoriales, cantines scolaires
-                    et hôpitaux. Dématérialisation Chorus Pro obligatoire.
+          {/* 2. MODE DE RÈGLEMENT */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-sm">
+            <h3 className="font-extrabold text-slate-900 text-xs flex items-center gap-2 uppercase tracking-wider border-b border-slate-150 pb-2.5">
+              <CreditCard className="text-emerald-700" size={16} />
+              Mode de Règlement B2B / B2G
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Option 1 : Carte Bancaire / SEPA Stripe */}
+              {!isPublicSector && (
+                <label
+                  onClick={() => setPaymentMethod("stripe_b2b")}
+                  className={`p-3.5 border rounded-xl cursor-pointer transition-all flex flex-col justify-between space-y-2 ${
+                    paymentMethod === "stripe_b2b"
+                      ? "border-emerald-600 bg-emerald-50/50 text-emerald-950 shadow-xs"
+                      : "border-slate-200 bg-slate-50/50 hover:bg-slate-100"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-xs flex items-center gap-1.5">
+                      <CreditCard size={15} className="text-emerald-700" /> Carte / SEPA (Stripe)
+                    </span>
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      checked={paymentMethod === "stripe_b2b"}
+                      onChange={() => setPaymentMethod("stripe_b2b")}
+                      className="text-emerald-600"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+                    Paiement sécurisé immédiatement scellé.
                   </p>
-                </div>
-              </label>
-
-              {/* Option Carte Bancaire (Stripe B2B) */}
-              <label
-                className={`flex items-start gap-3.5 p-4 border rounded-xl cursor-pointer transition ${
-                  paymentMethod === "stripe"
-                    ? "border-emerald-600 bg-emerald-50/10 shadow-sm"
-                    : "border-gray-200 hover:bg-gray-50/50"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="paymentMethod"
-                  checked={paymentMethod === "stripe"}
-                  onChange={() => setPaymentMethod("stripe")}
-                  className="mt-1 text-emerald-600 focus:ring-green-500 border-gray-300"
-                />
-                <div className="space-y-1">
-                  <span className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
-                    <CreditCard size={16} className="text-gray-500" /> Carte
-                    Bancaire (Stripe B2B)
-                  </span>
-                  <p className="text-[11px] text-gray-500 leading-relaxed">
-                    Débit immédiat après validation. Idéal pour les restaurants
-                    privés, comités d'entreprise et associations.
-                  </p>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          {/* 2. FORMULAIRE D'IDENTIFICATION COMPTABLE & CHORUS PRO */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-6">
-            <h2 className="text-base font-extrabold text-gray-800 flex items-center gap-2">
-              <span className="w-1.5 h-4 bg-emerald-600 rounded-full"></span>
-              2. Informations obligatoires de facturation
-            </h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* E-mail de contact facturation */}
-              <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">
-                  E-mail Référent Comptabilité *
                 </label>
-                <input
-                  type="email"
-                  required
-                  className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500"
-                  placeholder="exemple: compta@mairie-votreville.fr"
-                  value={billingInfo.billingContact}
-                  onChange={(e) =>
-                    setBillingInfo({
-                      ...billingInfo,
-                      billingContact: e.target.value,
-                    })
-                  }
-                />
-                <p className="text-[10px] text-gray-400 mt-1.5">
-                  Adresse e-mail à laquelle sera envoyée la notification de
-                  dépôt et vos fiches de livraison.
-                </p>
-              </div>
+              )}
 
-              {/* SIRET (Conditionnel B2G Public) */}
-              {paymentMethod === "mandat" && (
-                <>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">
-                      Numéro de SIRET Établissement *
-                    </label>
+              {/* Option 2 : Virement Bancaire 30 jours (Privé) */}
+              {!isPublicSector && (
+                <label
+                  onClick={() => setPaymentMethod("virement_b2b")}
+                  className={`p-3.5 border rounded-xl cursor-pointer transition-all flex flex-col justify-between space-y-2 ${
+                    paymentMethod === "virement_b2b"
+                      ? "border-emerald-600 bg-emerald-50/50 text-emerald-950 shadow-xs"
+                      : "border-slate-200 bg-slate-50/50 hover:bg-slate-100"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-xs flex items-center gap-1.5">
+                      <Building size={15} className="text-blue-700" /> Virement (LME 30j)
+                    </span>
                     <input
-                      type="text"
-                      required
-                      maxLength={14}
-                      className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 font-mono"
-                      placeholder="14 chiffres requis"
-                      value={billingInfo.siret}
-                      onChange={(e) =>
-                        setBillingInfo({
-                          ...billingInfo,
-                          siret: e.target.value,
-                        })
-                      }
+                      type="radio"
+                      name="paymentMethod"
+                      checked={paymentMethod === "virement_b2b"}
+                      onChange={() => setPaymentMethod("virement_b2b")}
+                      className="text-emerald-600"
                     />
-                    <p className="text-[10px] text-gray-400 mt-1.5">
-                      Identification DGFIP requise pour valider le virement du
-                      Trésor Public.
-                    </p>
                   </div>
+                  <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+                    Émission d'un Bon de Commande officiel pour règlement différé.
+                  </p>
+                </label>
+              )}
 
-                  {/* Code de service */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">
-                      Code Service Chorus Pro (Optionnel)
-                    </label>
+              {/* Option 3 : Mandat Public Chorus Pro (B2G) */}
+              {(isPublicSector || paymentMethod === "mandat_public") && (
+                <label
+                  onClick={() => setPaymentMethod("mandat_public")}
+                  className={`p-3.5 border rounded-xl cursor-pointer transition-all flex flex-col justify-between space-y-2 sm:col-span-2 ${
+                    paymentMethod === "mandat_public"
+                      ? "border-blue-600 bg-blue-50/50 text-blue-950 shadow-xs"
+                      : "border-slate-200 bg-slate-50/50 hover:bg-slate-100"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-xs flex items-center gap-1.5">
+                      <FileText size={15} className="text-blue-700" /> Mandat Administratif Chorus Pro (30j)
+                    </span>
                     <input
-                      type="text"
-                      className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500"
-                      placeholder="ex: CANTINE-CENTRALE"
-                      value={billingInfo.codeService}
-                      onChange={(e) =>
-                        setBillingInfo({
-                          ...billingInfo,
-                          codeService: e.target.value,
-                        })
-                      }
+                      type="radio"
+                      name="paymentMethod"
+                      checked={paymentMethod === "mandat_public"}
+                      onChange={() => setPaymentMethod("mandat_public")}
+                      className="text-blue-600"
                     />
-                    <p className="text-[10px] text-gray-400 mt-1.5">
-                      Utile pour orienter automatiquement la facture vers le bon
-                      service interne.
-                    </p>
                   </div>
-
-                  {/* N° Engagement Public */}
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">
-                      Numéro d'Engagement / Bon de commande interne *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500"
-                      placeholder="ex: BC-2026-908"
-                      value={billingInfo.refEngagement}
-                      onChange={(e) =>
-                        setBillingInfo({
-                          ...billingInfo,
-                          refEngagement: e.target.value,
-                        })
-                      }
-                    />
-                    <p className="text-[10px] text-gray-400 mt-1.5">
-                      Mention légale obligatoire pour le rapprochement et le
-                      paiement de la facture par la comptabilité publique.
-                    </p>
-                  </div>
-                </>
+                  <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+                    Facturation publique avec télétransmission automatique vers Chorus Pro.
+                  </p>
+                </label>
               )}
             </div>
-          </div>
-        </div>
 
-        {/* COLONNE DROITE : Récapitulatif du Panier & Lancement de l'action */}
-        <div className="space-y-6">
-          <div className="bg-gray-50 border border-gray-250 rounded-2xl p-6 shadow-sm sticky top-6 space-y-6">
-            <h2 className="text-sm font-extrabold text-gray-900 uppercase tracking-wider flex items-center gap-2">
-              <ShoppingBag size={18} className="text-emerald-700" />
-              Récapitulatif de votre Panier
-            </h2>
-
-            {/* Articles */}
-            <div className="divide-y divide-gray-200 max-h-60 overflow-y-auto pr-1">
-              {cartItems.map((item, index) => (
-                <div
-                  key={index}
-                  className="py-3.5 flex justify-between gap-4 text-xs"
-                >
+            {/* Champs spécifiques Chorus Pro B2G */}
+            {(isPublicSector || paymentMethod === "mandat_public") && (
+              <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-xl space-y-3">
+                <span className="font-bold text-blue-900 text-[11px] uppercase tracking-wider block">
+                  Identifiants Requis Chorus Pro (B2G)
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <p className="font-bold text-gray-900">{item.name}</p>
-                    <p className="text-[10px] text-gray-400">
-                      Maraîcher : {item.producerName}
-                    </p>
+                    <label className="font-semibold text-slate-700 text-[10px]">
+                      SIRET Public (14 chiffres) *
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={14}
+                      value={billingInfo.siret}
+                      onChange={(e) =>
+                        setBillingInfo({ ...billingInfo, siret: e.target.value })
+                      }
+                      placeholder="Ex: 21310555400018"
+                      className="w-full p-2 border border-slate-300 rounded bg-white text-xs font-mono font-bold"
+                    />
                   </div>
-                  <div className="text-right flex-shrink-0 font-semibold text-gray-950">
-                    <p>{(item.price * item.quantity).toFixed(2)} €</p>
-                    <p className="text-[10px] text-gray-400">
-                      Qté : {item.quantity}
-                    </p>
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700 text-[10px]">
+                      N° Engagement Budgétaire *
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={30}
+                      value={billingInfo.refEngagement}
+                      onChange={(e) =>
+                        setBillingInfo({ ...billingInfo, refEngagement: e.target.value })
+                      }
+                      placeholder="Ex: ENG-2026-908"
+                      className="w-full p-2 border border-slate-300 rounded bg-white text-xs font-mono font-bold"
+                    />
                   </div>
                 </div>
-              ))}
-            </div>
-
-            {/* Totaux */}
-            <div className="border-t border-gray-200 pt-4 space-y-2.5">
-              <div className="flex justify-between text-xs text-gray-500 font-semibold">
-                <span>Régime TVA moyen</span>
-                <span>5.5 %</span>
               </div>
-              <div className="flex justify-between items-center text-sm font-black text-gray-900 border-t border-dashed border-gray-200 pt-3">
-                <span>Total TTC à engager</span>
-                <span className="text-lg">{totalCartAmount.toFixed(2)} €</span>
-              </div>
-            </div>
-
-            {/* Certification de confiance et bouton de validation */}
-            <div className="space-y-3.5">
-              <div className="flex items-start gap-2 text-[10px] text-emerald-800 bg-emerald-50/50 border border-emerald-150 p-3 rounded-xl leading-relaxed">
-                <ShieldCheck
-                  size={16}
-                  className="text-emerald-700 flex-shrink-0 mt-0.5"
-                />
-                <span>
-                  <strong>Certifié sécurisé</strong> : L'ajustement de vos
-                  stocks maraîchers et la génération fiscale de vos pièces
-                  justificatives s'opèrent de manière transactionnelle côté
-                  serveur.
-                </span>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white font-bold py-3.5 px-6 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md cursor-pointer"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Validation en cours...
-                  </>
-                ) : (
-                  <>
-                    {paymentMethod === "mandat"
-                      ? "Engager le Mandat Public (30j)"
-                      : "Payer par Stripe B2B"}
-                    <ArrowRight size={16} />
-                  </>
-                )}
-              </button>
-            </div>
+            )}
           </div>
         </div>
-      </form>
-    </div>
+
+        {/* COLONNE DROITE (5 Cols) : Récapitulatif du Panier & Bouton de Validation */}
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-5 space-y-5 shadow-sm">
+          <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider border-b border-slate-150 pb-2.5 flex items-center justify-between">
+            <span>Résumé de la Commande ({cartItems.length})</span>
+            <span className="font-mono text-emerald-800 text-sm font-black">
+              {totalTTC.toFixed(2)} € TTC
+            </span>
+          </h3>
+
+          {/* Liste condensée des articles */}
+          <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto pr-1 space-y-2">
+            {cartItems.map((item, idx) => {
+              const pHT = Number(item.priceHT ?? item.price ?? 0);
+              const qty = Number(item.quantity || 1);
+              return (
+                <div key={idx} className="pt-2 flex justify-between items-center text-[11px]">
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-slate-900">{item.title || item.name}</p>
+                    <p className="text-slate-400 text-[10px]">
+                      {qty}x {pHT.toFixed(2)} € HT ({item.producerName || "Maraîcher"})
+                    </p>
+                  </div>
+                  <span className="font-extrabold text-slate-900 font-mono">
+                    {(pHT * qty).toFixed(2)} €
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Totaux financiers */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-1.5 text-xs font-bold">
+            <div className="flex justify-between text-slate-600">
+              <span>Sous-total Produits HT :</span>
+              <span className="font-mono">{totalHT.toFixed(2)} €</span>
+            </div>
+            <div className="flex justify-between text-slate-600">
+              <span>TVA Alimentaire (5.5%) :</span>
+              <span className="font-mono">{totalVAT.toFixed(2)} €</span>
+            </div>
+            <div className="flex justify-between text-slate-900 font-black text-sm pt-2 border-t border-slate-200">
+              <span>Total Général TTC :</span>
+              <span className="font-mono text-emerald-800">{totalTTC.toFixed(2)} €</span>
+            </div>
+          </div>
+
+          {/* Rappel de la date choisie */}
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] font-semibold text-emerald-900 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Truck size={14} className="text-emerald-700" /> Date de Livraison :
+            </span>
+            <strong className="font-extrabold font-mono">
+              {deliveryDetails.selectedDate || "Non sélectionnée"}
+            </strong>
+          </div>
+
+          {/* Bouton de confirmation final */}
+          <button
+            type="submit"
+            disabled={loading || cartItems.length === 0 || !deliveryDetails.selectedDate}
+            className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black py-3.5 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+          >
+            {loading ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                <span>Validation sécurisée...</span>
+              </>
+            ) : (
+              <>
+                <ShieldCheck size={16} />
+                <span>
+                  {isPublicSector ? "Valider le Mandat Public (30j)" : "Confirmer et Payer la Commande"}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </form>
   );
 }
