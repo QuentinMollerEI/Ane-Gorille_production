@@ -1,153 +1,297 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { ListTodo, AlertCircle } from "lucide-react";
+import { collection, query, where, onSnapshot, doc, updateDoc, getDocs } from "firebase/firestore";
+import { db } from "../../config/firebase";
 import { useAuth } from "../../context/AuthContext";
-import { db } from "../../services/firestore.service";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
-import {
-  ListTodo,
-  Sprout,
-  PackageCheck,
-  RefreshCw,
-  ShieldCheck,
-  Package,
-  Calendar
-} from "lucide-react";
+import { OrderDocumentGenerator } from "../../services/OrderDocumentGenerator";
 
 import ToHarvestCompartment from "./components/ToHarvestCompartment";
-import ReadyToShipCompartment from "./components/ReadyToShipCompartment";
+import PreparationSlipModal from "./components/PreparationSlipModal";
+import OrderTrackingFilters from "../SuiviDesCommandes/components/OrderTrackingFilters";
+import OrderTrackingPagination from "../SuiviDesCommandes/components/OrderTrackingPagination";
 
-/**
- * 🌾 COMPOSANT : OrderPreparation.jsx
- * Espace "Ordres de Préparation & Bons de Récolte" pour les producteurs / maraîchers.
- * 
- * Responsabilités :
- * - Synchronisation Firestore en temps réel des sous-commandes (sub_orders) du producteur.
- * - Navigation par onglets entre :
- *   1. À Récolter / En Préparation (ToHarvestCompartment) : Synthèse globale des quantités à cueillir + validation du N° de Lot Sanitaire.
- *   2. Prêt à Expédier / Colis Scellés (ReadyToShipCompartment) : Consultations des colis préparés, impression du Bon de Récolte (BP).
- */
 export default function OrderPreparation() {
-  const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState("harvest"); // 'harvest' | 'ready'
+  const { user, userProfile } = useAuth();
   const [subOrders, setSubOrders] = useState([]);
+  const [parentOrdersMap, setParentOrdersMap] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const producerUid = user?.uid;
+  // État Modal Fiche de Préparation
+  const [selectedOrderForModal, setSelectedOrderForModal] = useState(null);
 
-  // Synchronisation Firestore en temps réel des sous-commandes affectées au maraîcher
+  // ÉTATS DES FILTRES & PAGINATION
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [dateFilter, setDateFilter] = useState("");
+  const [sortBy, setSortBy] = useState("createdAt");
+  const [sortOrder, setSortOrder] = useState("desc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  const role = userProfile?.role || user?.role || "producteur";
+
+  // Synchronisation Firestore en temps réel
   useEffect(() => {
-    if (!producerUid) {
+    if (!user?.uid) {
       setLoading(false);
       return;
     }
+    setLoading(true);
 
-    const q = query(
-      collection(db, "sub_orders"),
-      where("producerId", "==", producerUid)
-    );
+    const isProducer = role === "producteur" || role === "producer";
+    const subOrdersRef = collection(db, "sub_orders");
+    const qSubs = isProducer 
+      ? query(subOrdersRef, where("producerId", "==", user.uid))
+      : subOrdersRef;
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const loadedSubs = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        }));
-        setSubOrders(loadedSubs);
+    const unsubSubs = onSnapshot(
+      qSubs,
+      (snap) => {
+        const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setSubOrders(data);
         setLoading(false);
       },
-      (error) => {
-        console.error("Erreur de synchronisation des ordres de préparation :", error);
+      (err) => {
+        console.error("Erreur chargement ordres de préparation :", err);
+        setError("Impossible de charger les ordres de préparation.");
         setLoading(false);
       }
     );
 
-    return () => unsubscribe();
-  }, [producerUid]);
+    const unsubParents = onSnapshot(
+      collection(db, "orders"),
+      (snap) => {
+        const map = {};
+        snap.docs.forEach((docSnap) => {
+          map[docSnap.id] = docSnap.data();
+        });
+        setParentOrdersMap(map);
+      },
+      (err) => console.error("Erreur chargement commandes parentes :", err)
+    );
 
-  // Filtrage des comptages par statut
-  const toHarvestOrders = subOrders.filter(
-    (s) => !s.status || s.status === "A_PREPARER" || s.status === "PENDING"
-  );
+    return () => {
+      unsubSubs();
+      unsubParents();
+    };
+  }, [user?.uid, role]);
 
-  const readyOrders = subOrders.filter(
-    (s) =>
-      s.status === "A_RAMASSER" ||
-      s.status === "PRET_A_EXPEDIER" ||
-      s.status === "EXPEDIE" ||
-      s.status === "EN_COURS_DE_LIVRAISON" ||
-      s.status === "DELIVERED" ||
-      s.status === "TERMINE"
-  );
+  const enrichedSubOrders = useMemo(() => {
+    return subOrders.map((sub) => {
+      const parent = parentOrdersMap[sub.parentOrderId || sub.orderId] || {};
+      return {
+        ...sub,
+        buyerName: sub.buyerName || parent.buyerName || "Acheteur Client",
+        buyerCompany: parent.buyerCompany || parent.companyName || sub.buyerName || "Client Pro",
+        deliveryAddress: sub.deliveryAddress || parent.deliveryAddress || "Adresse de livraison",
+        selectedDate: sub.selectedDate || parent.selectedDate || parent.deliveryDate || parent.deliveryDetails?.selectedDate || "",
+        parentStatus: parent.status || "VALIDÉE",
+        parentCreatedAt: parent.createdAt
+      };
+    });
+  }, [subOrders, parentOrdersMap]);
+
+  const filteredOrders = enrichedSubOrders.filter((ord) => {
+    const searchLower = searchTerm.toLowerCase().trim();
+    const matchesSearch =
+      !searchLower ||
+      (ord.id || "").toLowerCase().includes(searchLower) ||
+      (ord.parentOrderId || "").toLowerCase().includes(searchLower) ||
+      (ord.buyerName || "").toLowerCase().includes(searchLower) ||
+      (ord.buyerCompany || "").toLowerCase().includes(searchLower) ||
+      (ord.lotNumber || "").toLowerCase().includes(searchLower) ||
+      (ord.items || []).some((item) =>
+        (item.name || item.title || "").toLowerCase().includes(searchLower)
+      );
+
+    let matchesStatus = true;
+    if (statusFilter !== "ALL") {
+      matchesStatus = ord.status === statusFilter;
+    }
+
+    const reqDate = ord.selectedDate || "";
+    const matchesDate = !dateFilter || reqDate === dateFilter;
+
+    return matchesSearch && matchesStatus && matchesDate;
+  });
+
+  const sortedOrders = [...filteredOrders].sort((a, b) => {
+    let valA, valB;
+    if (sortBy === "createdAt") {
+      valA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt || 0).getTime();
+      valB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt || 0).getTime();
+    } else if (sortBy === "selectedDate") {
+      valA = a.selectedDate || "";
+      valB = b.selectedDate || "";
+    } else if (sortBy === "buyerName") {
+      valA = (a.buyerName || "").toLowerCase();
+      valB = (b.buyerName || "").toLowerCase();
+    } else {
+      valA = a[sortBy] || "";
+      valB = b[sortBy] || "";
+    }
+
+    if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+    if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const totalPages = Math.ceil(sortedOrders.length / (itemsPerPage >= 999999 ? 1 : itemsPerPage)) || 1;
+  const paginatedOrders = itemsPerPage >= 999999 
+    ? sortedOrders 
+    : sortedOrders.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const handleResetFilters = () => {
+    setSearchTerm("");
+    setStatusFilter("ALL");
+    setDateFilter("");
+    setSortBy("createdAt");
+    setSortOrder("desc");
+    setCurrentPage(1);
+  };
+
+  const handleOpenPreparationModal = (subOrder) => {
+    setSelectedOrderForModal(subOrder);
+  };
+
+  const handleMarkAsReadyToShip = async (subOrderId, lotNumber, crateCount, updatedItems = null, notes = "") => {
+    try {
+      const subRef = doc(db, "sub_orders", subOrderId);
+      const generatedLot = lotNumber || `LOT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
+      
+      const subToUpdate = subOrders.find(s => s.id === subOrderId) || {};
+      const parentOrderId = subToUpdate.parentOrderId || subToUpdate.orderId;
+
+      await updateDoc(subRef, {
+        status: "A_RAMASSER",
+        lotNumber: generatedLot,
+        crateCount: Number(crateCount) || 1,
+        ...(updatedItems ? { items: updatedItems } : {}),
+        preparationNotes: notes || "",
+        preparedAt: new Date(),
+        readyForPickup: true
+      });
+
+      if (parentOrderId) {
+        const parentRef = doc(db, "orders", parentOrderId);
+        const qSubs = query(collection(db, "sub_orders"), where("parentOrderId", "==", parentOrderId));
+        const snap = await getDocs(qSubs);
+        const allSubs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        const allReady = allSubs.every(s => 
+          s.id === subOrderId ? true : ["A_RAMASSER", "PRET_A_EXPEDIER", "EXPEDIE", "DELIVERED", "ready_for_pickup"].includes(s.status)
+        );
+
+        if (allReady) {
+          await updateDoc(parentRef, {
+            status: "ready_for_pickup",
+            subOrdersStatus: "A_RAMASSER",
+            updatedAt: new Date()
+          });
+        } else {
+          await updateDoc(parentRef, {
+            status: "preparing",
+            updatedAt: new Date()
+          });
+        }
+      }
+
+    } catch (err) {
+      console.error("Erreur validation préparation :", err);
+      alert("Erreur lors de la validation de la préparation.");
+    }
+  };
+
+  const handlePrintPreparationSlip = (subOrder) => {
+    const parent = parentOrdersMap[subOrder.parentOrderId || subOrder.orderId] || null;
+    const html = OrderDocumentGenerator.generatePreparationSlipHTML(subOrder, parent);
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      win.print();
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-2 text-xs font-semibold text-emerald-800">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-700"></div>
+        <span>Chargement des ordres de récolte &amp; préparation...</span>
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-5 animate-fade-in text-xs">
-      {/* Barre d'information supérieure */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+    <div className="w-full max-w-7xl mx-auto p-3 sm:p-5 space-y-5 text-xs font-sans text-slate-800 transition-all animate-fade-in">
+      
+      {/* EN-TÊTE HARMONISÉ */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 gap-3">
         <div>
-          <h1 className="text-base font-black text-gray-900 flex items-center gap-2">
-            <ListTodo size={18} className="text-emerald-700" />
-            <span>Ordres de Préparation & Bons de Récolte</span>
+          <h1 className="text-lg font-black text-slate-900 flex items-center gap-2">
+            <ListTodo className="text-emerald-700" size={22} /> Ordres de Préparation &amp; Cueillette
           </h1>
-          <p className="text-gray-500 font-medium text-[11px] mt-0.5">
-            Organisez vos tournées de cueillette au champ, générez vos numéros de lots HACCP et préparez vos caisses consignées.
+          <p className="text-xs text-slate-500">
+            Gestion des bacs, étiquetage sanitaire HACCP et synchronisation directe avec la flotte de livraison <strong className="text-slate-900">Âne &amp; Gorille</strong>.
           </p>
         </div>
-
-        <div className="flex items-center gap-2 text-[11px] font-extrabold text-emerald-900 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-md shrink-0">
-          <ShieldCheck size={15} className="text-emerald-700" />
-          <span>Producteur : {user?.companyName || user?.displayName || "Exploitation Locale"}</span>
-        </div>
       </div>
 
-      {/* Navigation par Onglets */}
-      <div className="flex border-b border-gray-200 space-x-2 overflow-x-auto pb-0.5">
-        <button
-          onClick={() => setActiveTab("harvest")}
-          className={`pb-2.5 px-3.5 text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === "harvest"
-              ? "border-emerald-700 text-emerald-800 bg-emerald-50/60 rounded-t-md"
-              : "border-transparent text-gray-500 hover:text-gray-800"
-          }`}
-        >
-          <Sprout size={15} />
-          <span>À Récolter / À Préparer ({toHarvestOrders.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("ready")}
-          className={`pb-2.5 px-3.5 text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === "ready"
-              ? "border-emerald-700 text-emerald-800 bg-emerald-50/60 rounded-t-md"
-              : "border-transparent text-gray-500 hover:text-gray-800"
-          }`}
-        >
-          <PackageCheck size={15} />
-          <span>Prêt à Expédier / Colis Scellés ({readyOrders.length})</span>
-        </button>
-      </div>
-
-      {/* Zone de contenu dynamique */}
-      {loading ? (
-        <div className="flex flex-col justify-center items-center py-20 min-h-[300px] gap-2">
-          <RefreshCw className="animate-spin text-emerald-700" size={26} />
-          <span className="text-gray-500 font-bold text-xs">Chargement des sous-commandes...</span>
-        </div>
-      ) : (
-        <div className="pt-1">
-          {activeTab === "harvest" && (
-            <ToHarvestCompartment
-              subOrders={toHarvestOrders}
-              onRefresh={() => {}}
-            />
-          )}
-          {activeTab === "ready" && (
-            <ReadyToShipCompartment
-              subOrders={readyOrders}
-              onRefresh={() => {}}
-            />
-          )}
+      {error && (
+        <div className="p-3.5 bg-red-50 border border-red-200 text-red-800 rounded-xl font-semibold flex items-center gap-2">
+          <AlertCircle size={16} /> {error}
         </div>
       )}
+
+      {/* BARRE DE FILTRES IDENTIQUE AU SUIVI DES COMMANDES */}
+      <OrderTrackingFilters
+        searchTerm={searchTerm}
+        setSearchTerm={(val) => { setSearchTerm(val); setCurrentPage(1); }}
+        statusFilter={statusFilter}
+        setStatusFilter={(val) => { setStatusFilter(val); setCurrentPage(1); }}
+        paymentFilter="ALL"
+        setPaymentFilter={() => {}}
+        dateFilter={dateFilter}
+        setDateFilter={(val) => { setDateFilter(val); setCurrentPage(1); }}
+        sortBy={sortBy}
+        setSortBy={setSortBy}
+        sortOrder={sortOrder}
+        setSortOrder={setSortOrder}
+        itemsPerPage={itemsPerPage}
+        setItemsPerPage={(val) => { setItemsPerPage(val); setCurrentPage(1); }}
+        totalItems={enrichedSubOrders.length}
+        filteredCount={sortedOrders.length}
+        onResetFilters={handleResetFilters}
+      />
+
+      {/* TABLEAU DES COMMANDES À RÉCOLTER ET EN PRÉPARATION */}
+      <ToHarvestCompartment
+        orders={paginatedOrders}
+        onMarkAsReady={handleMarkAsReadyToShip}
+        onOpenModal={handleOpenPreparationModal}
+        onPrintSlip={handlePrintPreparationSlip}
+      />
+
+      {/* PAGINATION REUTILISABLE */}
+      <OrderTrackingPagination
+        currentPage={currentPage}
+        totalPages={totalPages}
+        totalItems={sortedOrders.length}
+        itemsPerPage={itemsPerPage}
+        onPageChange={(p) => setCurrentPage(p)}
+      />
+
+      {/* MODAL BON DE PRÉPARATION INTERACTIF */}
+      {selectedOrderForModal && (
+        <PreparationSlipModal
+          order={selectedOrderForModal}
+          parentOrder={parentOrdersMap[selectedOrderForModal.parentOrderId || selectedOrderForModal.orderId]}
+          onClose={() => setSelectedOrderForModal(null)}
+          onValidateSuccess={handleMarkAsReadyToShip}
+        />
+      )}
+
     </div>
   );
 }
