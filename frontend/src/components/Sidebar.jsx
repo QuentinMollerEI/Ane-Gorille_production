@@ -74,6 +74,13 @@ export default function Sidebar({ isCollapsed, setIsCollapsed }) {
       >
         {isCollapsed ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronLeft size={14} strokeWidth={2} />}
       </button>
+      {/* Deuxième Bouton de rétraction de la Sidebar */}
+      <button
+        onClick={() => setIsCollapsed(!isCollapsed)}
+        className="absolute -right-3 bottom-7 bg-white border border-gray-200 text-gray-400 hover:text-emerald-800 hover:border-emerald-600 hover:shadow-sm rounded-full p-1.5 transition-all z-50 cursor-pointer"
+      >
+        {isCollapsed ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronLeft size={14} strokeWidth={2} />}
+      </button>
 
       {/* En-tête simplifié : Uniquement "MENU" */}
       <div className={`flex items-center mb-6 mt-1 transition-all ${isCollapsed ? "justify-center" : "px-3"}`}>
