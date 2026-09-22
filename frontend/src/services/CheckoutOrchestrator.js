@@ -61,7 +61,7 @@ export const CheckoutOrchestrator = {
       throw new Error("La facturation publique Chorus Pro exige un N° d'Engagement Budgétaire valide.");
     }
 
-    // Récupération sécurisée et garantie de la DATE DE LIVRAISON SOUHAITÉE (11j livrables selon date et heure)
+    // Récupération sécurisée de la DATE DE LIVRAISON SOUHAITÉE
     let requestedDeliveryDate = 
       checkoutOptions.deliveryDetails?.selectedDate || 
       checkoutOptions.selectedDate || 
@@ -123,13 +123,14 @@ export const CheckoutOrchestrator = {
           globalTotalHT += priceHT * requestedQty;
         }
 
-        // ÉTAPE C : Calculs financiers
+        // ÉTAPE C : Calculs financiers exhaustifs
         const deliveryFee = calculateDeliveryFee(globalTotalHT);
-        const totalVAT = globalTotalHT * 0.055;
-        const totalTTC = globalTotalHT + totalVAT + deliveryFee;
+        const vatProducts = globalTotalHT * 0.055;  // TVA Alimentation 5.5%
+        const vatDelivery = deliveryFee * 0.20;      // TVA Prestation Transport 20.0%
+        const totalVAT = vatProducts + vatDelivery;
+        const totalTTC = globalTotalHT + deliveryFee + totalVAT;
 
         // ÉTAPE D : Écritures atomiques
-        // 1. Décrémentation physique des stocks
         for (const { item, productRef, snap } of productSnaps) {
           const pData = snap.data();
           const currentStock = Number(pData.stock || 0);
@@ -143,7 +144,7 @@ export const CheckoutOrchestrator = {
           });
         }
 
-        // 2. Création de la commande parente globale (orders)
+        // Création de la commande parente globale (orders)
         const globalOrder = {
           id: orderId,
           orderNumber: `CMD-${orderId.substring(0, 8).toUpperCase()}`,
@@ -155,6 +156,9 @@ export const CheckoutOrchestrator = {
           paymentMethod: paymentMethod,
           totalHT: Number(globalTotalHT.toFixed(2)),
           deliveryFee: Number(deliveryFee.toFixed(2)),
+          deliveryFeeHT: Number(deliveryFee.toFixed(2)),
+          vatProducts: Number(vatProducts.toFixed(2)),
+          vatDelivery: Number(vatDelivery.toFixed(2)),
           totalVAT: Number(totalVAT.toFixed(2)),
           totalTTC: Number(totalTTC.toFixed(2)),
           amountHT: Number(globalTotalHT.toFixed(2)),
@@ -163,7 +167,7 @@ export const CheckoutOrchestrator = {
           amount: Number(totalTTC.toFixed(2)),
           commissionRate: 12,
           status: "paid",
-          selectedDate: requestedDeliveryDate, // ✅ Date scellée à 100%
+          selectedDate: requestedDeliveryDate,
           deliveryDate: requestedDeliveryDate,
           deliveryDetails: deliveryDetailsObj,
           deliveryAddress: checkoutOptions.deliveryAddress || buyerProfile.address || "Adresse de livraison",
@@ -184,7 +188,7 @@ export const CheckoutOrchestrator = {
         };
         transaction.set(orderRef, globalOrder);
 
-        // 3. Création des sous-commandes individuelles par maraîcher (sub_orders)
+        // Création des sous-commandes individuelles par maraîcher (sub_orders)
         for (const [producerId, group] of Object.entries(itemsByProducer)) {
           const subOrderRef = doc(collection(db, "sub_orders"));
           const subAmountHT = group.totalAmountHT;
@@ -200,7 +204,7 @@ export const CheckoutOrchestrator = {
             buyerId: buyerProfile.uid,
             buyerName: globalOrder.buyerName,
             status: "A_PREPARER",
-            selectedDate: requestedDeliveryDate, // ✅ Date scellée à 100%
+            selectedDate: requestedDeliveryDate,
             deliveryDate: requestedDeliveryDate,
             deliveryDetails: deliveryDetailsObj,
             deliveryAddress: globalOrder.deliveryAddress,
@@ -293,7 +297,7 @@ export const CheckoutOrchestrator = {
   },
 
   /**
-   * 4. ESPACE LIVREUR : REMISE PHYSIQUE, HACCP & GÉNÉRATION COMPTABLE (BL, FAC-VTE, FAC-COM, Chorus Pro)
+   * 4. ESPACE LIVREUR : REMISE PHYSIQUE, HACCP & GÉNÉRATION COMPTABLE
    */
   async validateDelivery(orderId, tempHaccp, signatureBase64, recipientName = "") {
     if (!orderId) throw new Error("L'identifiant de la commande est requis.");
@@ -312,7 +316,6 @@ export const CheckoutOrchestrator = {
     const isMandatPublic = orderData.paymentMethod === "mandat_public" || orderData.buyerRole === "acheteur_public";
 
     await runTransaction(db, async (transaction) => {
-      // 1. Clôture de la commande globale
       transaction.update(orderRef, {
         status: "delivered",
         deliveredAt: serverTimestamp(),
@@ -322,7 +325,6 @@ export const CheckoutOrchestrator = {
         updatedAt: serverTimestamp()
       });
 
-      // 2. Clôture des sous-commandes producteurs
       subOrders.forEach((so) => {
         const soRef = doc(db, "sub_orders", so.id);
         transaction.update(soRef, {
@@ -334,7 +336,6 @@ export const CheckoutOrchestrator = {
         });
       });
 
-      // 3. Génération du Bon de Livraison (BL)
       const blDocId = `BL-${orderId.substring(0, 8).toUpperCase()}`;
       const blRef = doc(db, "documents", blDocId);
       transaction.set(blRef, {
@@ -352,7 +353,6 @@ export const CheckoutOrchestrator = {
         createdAt: serverTimestamp()
       }, { merge: true });
 
-      // 4. Génération des Factures de Vente (FAC-VTE) et de Commissions (FAC-COM)
       subOrders.forEach((so) => {
         const vteDocId = `FAC-VTE-${so.id.substring(0, 8).toUpperCase()}`;
         const vteRef = doc(db, "documents", vteDocId);
@@ -376,7 +376,6 @@ export const CheckoutOrchestrator = {
           createdAt: serverTimestamp()
         });
 
-        // Facture de frais de service (Commission 12 %)
         const comDocId = `FAC-COM-${so.id.substring(0, 8).toUpperCase()}`;
         const comRef = doc(db, "documents", comDocId);
         const commissionHT = subAmountHT * 0.12;
@@ -400,7 +399,6 @@ export const CheckoutOrchestrator = {
         });
       });
 
-      // 5. File d'attente Chorus Pro (B2G)
       if (isMandatPublic) {
         const chorusQueueRef = doc(collection(db, "chorus_queue"));
         transaction.set(chorusQueueRef, {

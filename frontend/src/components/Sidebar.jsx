@@ -62,11 +62,11 @@ export default function Sidebar({ isCollapsed, setIsCollapsed }) {
   };
 
   return (
-    <aside 
-      className={`bg-white border-r border-gray-100 h-screen flex flex-col gap-1 sticky top-0 transition-all duration-300 z-40 shadow-[4px_0_24px_rgba(0,0,0,0.01)] ${
-        isCollapsed ? "w-20 p-3 pt-5" : "w-64 p-4 pt-5"
-      }`}
-    >
+        <aside 
+  className={`bg-white border-r border-gray-100 h-[calc(100vh-4rem)] flex flex-col gap-1 fixed top-16 left-0 transition-all duration-300 z-40 shadow-[4px_0_24px_rgba(0,0,0,0.01)] ${
+    isCollapsed ? "w-20 p-3 pt-5" : "w-64 p-4 pt-5"
+  }`}
+>
       {/* Bouton de rétraction de la Sidebar */}
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}

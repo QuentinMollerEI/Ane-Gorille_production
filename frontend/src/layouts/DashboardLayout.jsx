@@ -23,7 +23,12 @@ export default function DashboardLayout({ children }) {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
       />
-      <main className="flex-1 overflow-hidden transition-all duration-300 p-6 md:p-8 bg-gray-50/50">
+      {/* 🛠️ Marge dynamique ml-20 / ml-64 + min-w-0 pour l'adaptation écran */}
+      <main 
+        className={`flex-1 min-w-0 transition-all duration-300 p-6 md:p-8 bg-gray-50/50 ${
+          isCollapsed ? "ml-20" : "ml-64"
+        }`}
+      >
         {childrenWithProps}
       </main>
     </div>

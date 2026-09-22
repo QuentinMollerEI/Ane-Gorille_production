@@ -1,0 +1,89 @@
+import React from "react";
+import { Truck, CheckCircle2, Clock, PackageCheck, AlertCircle } from "lucide-react";
+
+/**
+ * 🌾 COMPOSANT : TrackingSubOrderDetails.jsx
+ * Emplacement : src/pages/SuiviDesCommandes/components/TrackingSubOrderDetails.jsx
+ * 
+ * Responsabilité Unique (SRP) :
+ * Afficher l'avancement individuel par maraîcher (sous-commandes),
+ * avec traçabilité sanitaire HACCP (Numéro de lot) et cagettes réutilisables.
+ */
+export default function TrackingSubOrderDetails({ subOrders = [] }) {
+  if (!subOrders || subOrders.length === 0) {
+    return (
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-500 text-[11px] italic">
+        En cours de ventilation et traitement par les maraîchers partenaires...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2 text-xs font-sans text-slate-800">
+      <div className="flex items-center justify-between">
+        <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+          <Truck size={14} className="text-emerald-700" /> Avancement de la Récolte par Maraîcher :
+        </span>
+        <span className="text-[10px] text-slate-500 font-medium">
+          {subOrders.length} exploitation{subOrders.length > 1 ? "s" : ""} partenaire{subOrders.length > 1 ? "s" : ""}
+        </span>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 shadow-xs overflow-hidden">
+        {subOrders.map((sub, idx) => {
+          const isReady = ["A_RAMASSER", "PRET_A_EXPEDIER", "EXPEDIE", "DELIVERED"].includes(sub.status);
+          const isHarvesting = sub.status === "HARVESTING" || sub.status === "preparing";
+          const lotNum = sub.lotNumber || sub.batchNumber || "HACCP-EN-COURS";
+
+          return (
+            <div key={sub.id || idx} className="p-3 space-y-2 hover:bg-slate-50/60 transition-colors">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-900 font-extrabold text-[10px] flex items-center justify-center shrink-0">
+                    {idx + 1}
+                  </span>
+                  <span className="font-extrabold text-slate-900 text-xs">
+                    {sub.producerName || "Exploitation Agricole"}
+                  </span>
+                </div>
+
+                <div>
+                  {isReady ? (
+                    <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-md font-bold text-[10px] shadow-xs">
+                      <CheckCircle2 size={12} className="text-emerald-700" />
+                      <span>Prêt en Cagette (Lot: <strong className="font-mono text-emerald-950">{lotNum}</strong>)</span>
+                    </span>
+                  ) : isHarvesting ? (
+                    <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-md font-bold text-[10px]">
+                      <Clock size={12} className="text-amber-700 animate-spin" />
+                      <span>Récolte en cours aux champs...</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-md font-medium text-[10px]">
+                      <PackageCheck size={12} />
+                      <span>Transmis au maraîcher</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Produits de ce maraîcher */}
+              {sub.items && sub.items.length > 0 && (
+                <div className="pl-7 space-y-1 bg-slate-50/50 p-2 rounded-lg border border-slate-100 text-[11px]">
+                  {sub.items.map((it, itemIdx) => (
+                    <div key={itemIdx} className="flex justify-between items-center text-slate-700">
+                      <span>• <strong>{it.name || it.title}</strong></span>
+                      <span className="font-mono font-bold text-slate-900">
+                        {it.quantity || it.qty} {it.unit || "kg"} × {Number(it.priceHT ?? it.price ?? 0).toFixed(2)} €
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

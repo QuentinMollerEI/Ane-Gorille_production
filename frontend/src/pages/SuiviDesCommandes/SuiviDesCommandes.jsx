@@ -1,11 +1,14 @@
 import React from "react";
-import OrderTracking from "./components/OrderTracking";
+import OrderTracking from "./OrderTracking";
 
 /**
- * 🛒 COMPOSANT PAGE : SuiviDesCommandes.jsx
- * Emplacement : src/pages/suivisDesCommandes/SuiviDesCommandes.jsx
- * Vue principale pour l'espace Suivi des Commandes Acheteur.
+ * 🛒 PAGE : SuiviDesCommandes.jsx
+ * Emplacement : src/pages/SuiviDesCommandes/SuiviDesCommandes.jsx
  */
 export default function SuiviDesCommandes() {
-  return <OrderTracking />;
+  return (
+    <div className="w-full animate-fade-in">
+      <OrderTracking />
+    </div>
+  );
 }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../services/firestore.service";
 import { collection, onSnapshot } from "firebase/firestore";
@@ -6,7 +7,7 @@ import FilterBar from "./components/FilterBar";
 import ProductGrid from "./components/ProductGrid";
 import ProductDetailPage from "./components/ProductDetailPage";
 import CartContainer from "./components/CartContainer";
-import { CheckCircle } from "lucide-react";
+import { ShoppingCart, Store, CheckCircle2, X } from "lucide-react";
 
 /**
  * 🛒 COMPOSANT : ShopContainer.jsx
@@ -15,23 +16,42 @@ import { CheckCircle } from "lucide-react";
  */
 export default function ShopContainer() {
   const { user } = useAuth();
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const initialViewParam = params.get("view"); // 'cart' | 'grid' | 'detail'
+
   const [productsList, setProductsList] = useState([]);
   const [usersMap, setUsersMap] = useState({});
   const [loading, setLoading] = useState(true);
-  const [notification, setNotification] = useState(null);
+
+  // Notification flottante d'ajout au panier
+  const [addedNotification, setAddedNotification] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [bioOnly, setBioOnly] = useState(false);
 
-  const [activeView, setActiveView] = useState("grid"); // 'grid' | 'detail' | 'cart'
+  // Gestion de la vue active
+  const [activeView, setActiveView] = useState(() => {
+    return initialViewParam === "cart" ? "cart" : "grid";
+  });
   const [selectedProduct, setSelectedProduct] = useState(null);
 
+  // Écoute des changements de paramètres d'URL (ex: ?view=cart)
+  useEffect(() => {
+    const currentViewParam = new URLSearchParams(location.search).get("view");
+    if (currentViewParam === "cart") {
+      setActiveView("cart");
+    } else if (currentViewParam === "grid") {
+      setActiveView("grid");
+    }
+  }, [location.search]);
+
   // Clé de stockage unique par utilisateur (cloisonnement RGPD)
-  const cartKey = user?.uid ? "ane_gorille_cart_" + user.uid : "ane_gorille_cart_guest";
+  const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
 
   // Initialisation réactive du panier
-  const [cart, setCart] = useState(function () {
+  const [cart, setCart] = useState(() => {
     try {
       const savedCart = localStorage.getItem(cartKey);
       return savedCart ? JSON.parse(savedCart) : [];
@@ -67,11 +87,25 @@ export default function ShopContainer() {
       }
     };
 
+    const handleOpenCartEvent = () => {
+      setActiveView("cart");
+    };
+
+    const handleViewChangeEvent = (e) => {
+      if (e && e.detail && e.detail.view) {
+        setActiveView(e.detail.view);
+      }
+    };
+
     window.addEventListener("ane_gorille_cart_updated", handleCartSync);
+    window.addEventListener("ane_gorille_open_cart", handleOpenCartEvent);
+    window.addEventListener("ane_gorille_view_changed", handleViewChangeEvent);
     window.addEventListener("storage", handleCartSync);
 
     return () => {
       window.removeEventListener("ane_gorille_cart_updated", handleCartSync);
+      window.removeEventListener("ane_gorille_open_cart", handleOpenCartEvent);
+      window.removeEventListener("ane_gorille_view_changed", handleViewChangeEvent);
       window.removeEventListener("storage", handleCartSync);
     };
   }, [cartKey]);
@@ -136,7 +170,7 @@ export default function ShopContainer() {
     return matchesSearch && matchesCategory && matchesBio;
   });
 
-  // 🚀 AJOUT AU PANIER AVEC MISE À JOUR INSTANTANÉE DU COMPTEUR
+  // 🚀 AJOUT AU PANIER AVEC VISUEL INTUITIF ET SYNCHRONISATION INSTANTANÉE
   const handleAddToCart = (product, qty = 1) => {
     const existingIndex = cart.findIndex((item) => item.id === product.id);
     let updatedCart = [];
@@ -145,18 +179,24 @@ export default function ShopContainer() {
       updatedCart = [...cart];
       updatedCart[existingIndex] = {
         ...updatedCart[existingIndex],
-        quantity: updatedCart[existingIndex].quantity + qty
+        quantity: (updatedCart[existingIndex].quantity || 1) + qty
       };
     } else {
       updatedCart = [...cart, { ...product, quantity: qty }];
     }
 
     broadcastCartChange(updatedCart);
-    setNotification({
-      title: product.title || product.name || "Produit",
-      qty: qty
+
+    // Visuel de confirmation intuitif
+    const newTotal = updatedCart.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
+    setAddedNotification({
+      productTitle: product.title || product.name || "Produit",
+      totalCount: newTotal
     });
-    setTimeout(() => setNotification(null), 4000);
+
+    setTimeout(() => {
+      setAddedNotification(null);
+    }, 4000);
   };
 
   const handleUpdateQuantity = (productId, newQty) => {
@@ -176,24 +216,6 @@ export default function ShopContainer() {
     broadcastCartChange([]);
   };
 
-  // 4. ÉCOUTEUR D'ÉVÉNEMENTS POUR LA BASCULE DE VUE / OUVERTURE DU PANIER DEPUIS CARTBUTTON
-  useEffect(() => {
-    const handleOpenCart = () => setActiveView("cart");
-    const handleViewChange = (e) => {
-      if (e?.detail?.view) {
-        setActiveView(e.detail.view);
-      }
-    };
-
-    window.addEventListener("ane_gorille_open_cart", handleOpenCart);
-    window.addEventListener("ane_gorille_view_changed", handleViewChange);
-
-    return () => {
-      window.removeEventListener("ane_gorille_open_cart", handleOpenCart);
-      window.removeEventListener("ane_gorille_view_changed", handleViewChange);
-    };
-  }, []);
-
   if (loading) {
     return (
       <div className="flex justify-center items-center py-20 min-h-[350px]">
@@ -203,36 +225,35 @@ export default function ShopContainer() {
   }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12 animate-fade-in text-xs font-sans text-slate-800">
-      {/* Toast Notification Visuelle d'ajout au panier */}
-      {notification && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900/95 backdrop-blur-md text-white rounded-2xl p-4 shadow-2xl border border-emerald-500/30 flex items-center gap-4 animate-fade-in max-w-md">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-            <CheckCircle size={22} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-extrabold text-xs text-emerald-400 uppercase tracking-wider">
-              Ajouté au panier !
-            </p>
-            <p className="font-bold text-xs text-white truncate mt-0.5">
-              {notification.title}
-            </p>
+    <div className="space-y-6 max-w-7xl mx-auto pb-12 animate-fade-in text-xs font-sans text-slate-800 relative">
+      
+      {/* 🟢 VISUEL DE CONFIRMATION D'AJOUT AU PANIER (BARRE FLOTTANTE DISCRÈTE) */}
+      {addedNotification && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-4 border border-slate-700">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={20} className="text-emerald-400 shrink-0" />
+            <div>
+              <p className="font-extrabold text-xs leading-tight">
+                "{addedNotification.productTitle}" ajouté au panier !
+              </p>
+              <p className="text-[10px] text-slate-400 font-medium">
+                {addedNotification.totalCount} article{addedNotification.totalCount > 1 ? "s" : ""} dans votre panier
+              </p>
+            </div>
           </div>
           <button
-            onClick={() => {
-              setActiveView("cart");
-              setNotification(null);
-            }}
-            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] rounded-xl transition-all shadow-xs shrink-0 cursor-pointer"
+            type="button"
+            onClick={() => setActiveView("cart")}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white font-black px-3 py-1.5 rounded-xl text-[11px] uppercase tracking-wider transition-all cursor-pointer shadow-sm"
           >
-            Voir panier
+            Voir Panier
           </button>
           <button
-            onClick={() => setNotification(null)}
-            className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors ml-1 font-bold"
-            title="Fermer"
+            type="button"
+            onClick={() => setAddedNotification(null)}
+            className="text-slate-400 hover:text-white p-1 transition-colors"
           >
-            ✕
+            <X size={16} />
           </button>
         </div>
       )}

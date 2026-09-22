@@ -58,7 +58,7 @@ export default function Navbar({ activeView, onToggleView, onOpenCart }) {
   };
 
   return (
-    <header className="bg-white border-b border-slate-200 sticky top-0 z-40 text-xs font-sans shadow-2xs">
+    <header className="bg-white border-b border-slate-200 sticky top-0 z-50 w-full text-xs font-sans shadow-2xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
         
         {/* LOGO & NOM OFFICIEL - CLIQUABLE VERS L'ACCUEIL */}
