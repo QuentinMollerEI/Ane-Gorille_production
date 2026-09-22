@@ -6,6 +6,7 @@ import FilterBar from "./components/FilterBar";
 import ProductGrid from "./components/ProductGrid";
 import ProductDetailPage from "./components/ProductDetailPage";
 import CartContainer from "./components/CartContainer";
+import { CheckCircle } from "lucide-react";
 
 /**
  * 🛒 COMPOSANT : ShopContainer.jsx
@@ -17,6 +18,7 @@ export default function ShopContainer() {
   const [productsList, setProductsList] = useState([]);
   const [usersMap, setUsersMap] = useState({});
   const [loading, setLoading] = useState(true);
+  const [notification, setNotification] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -26,10 +28,10 @@ export default function ShopContainer() {
   const [selectedProduct, setSelectedProduct] = useState(null);
 
   // Clé de stockage unique par utilisateur (cloisonnement RGPD)
-  const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
+  const cartKey = user?.uid ? "ane_gorille_cart_" + user.uid : "ane_gorille_cart_guest";
 
   // Initialisation réactive du panier
-  const [cart, setCart] = useState(() => {
+  const [cart, setCart] = useState(function () {
     try {
       const savedCart = localStorage.getItem(cartKey);
       return savedCart ? JSON.parse(savedCart) : [];
@@ -52,7 +54,7 @@ export default function ShopContainer() {
     }
   }, [cartKey, user?.uid]);
 
-  // 2. SYNCHRONISATION ÉVÉNEMENTIELLE INSTANTANÉE ET BASCULE DE VUE VIA NAVBAR
+  // 2. SYNCHRONISATION ÉVÉNEMENTIELLE INSTANTANÉE EN TEMPS RÉEL (CUSTOM EVENT + STORAGE)
   useEffect(() => {
     const handleCartSync = () => {
       try {
@@ -65,22 +67,11 @@ export default function ShopContainer() {
       }
     };
 
-    const handleOpenCart = () => setActiveView("cart");
-    const handleViewChange = (e) => {
-      if (e?.detail?.view) {
-        setActiveView(e.detail.view);
-      }
-    };
-
     window.addEventListener("ane_gorille_cart_updated", handleCartSync);
-    window.addEventListener("ane_gorille_open_cart", handleOpenCart);
-    window.addEventListener("ane_gorille_view_changed", handleViewChange);
     window.addEventListener("storage", handleCartSync);
 
     return () => {
       window.removeEventListener("ane_gorille_cart_updated", handleCartSync);
-      window.removeEventListener("ane_gorille_open_cart", handleOpenCart);
-      window.removeEventListener("ane_gorille_view_changed", handleViewChange);
       window.removeEventListener("storage", handleCartSync);
     };
   }, [cartKey]);
@@ -145,7 +136,7 @@ export default function ShopContainer() {
     return matchesSearch && matchesCategory && matchesBio;
   });
 
-  // 🚀 AJOUT AU PANIER AVEC MISE À JOUR INSTANTANÉE
+  // 🚀 AJOUT AU PANIER AVEC MISE À JOUR INSTANTANÉE DU COMPTEUR
   const handleAddToCart = (product, qty = 1) => {
     const existingIndex = cart.findIndex((item) => item.id === product.id);
     let updatedCart = [];
@@ -161,6 +152,11 @@ export default function ShopContainer() {
     }
 
     broadcastCartChange(updatedCart);
+    setNotification({
+      title: product.title || product.name || "Produit",
+      qty: qty
+    });
+    setTimeout(() => setNotification(null), 4000);
   };
 
   const handleUpdateQuantity = (productId, newQty) => {
@@ -180,6 +176,24 @@ export default function ShopContainer() {
     broadcastCartChange([]);
   };
 
+  // 4. ÉCOUTEUR D'ÉVÉNEMENTS POUR LA BASCULE DE VUE / OUVERTURE DU PANIER DEPUIS CARTBUTTON
+  useEffect(() => {
+    const handleOpenCart = () => setActiveView("cart");
+    const handleViewChange = (e) => {
+      if (e?.detail?.view) {
+        setActiveView(e.detail.view);
+      }
+    };
+
+    window.addEventListener("ane_gorille_open_cart", handleOpenCart);
+    window.addEventListener("ane_gorille_view_changed", handleViewChange);
+
+    return () => {
+      window.removeEventListener("ane_gorille_open_cart", handleOpenCart);
+      window.removeEventListener("ane_gorille_view_changed", handleViewChange);
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="flex justify-center items-center py-20 min-h-[350px]">
@@ -190,6 +204,39 @@ export default function ShopContainer() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12 animate-fade-in text-xs font-sans text-slate-800">
+      {/* Toast Notification Visuelle d'ajout au panier */}
+      {notification && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900/95 backdrop-blur-md text-white rounded-2xl p-4 shadow-2xl border border-emerald-500/30 flex items-center gap-4 animate-fade-in max-w-md">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+            <CheckCircle size={22} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-extrabold text-xs text-emerald-400 uppercase tracking-wider">
+              Ajouté au panier !
+            </p>
+            <p className="font-bold text-xs text-white truncate mt-0.5">
+              {notification.title}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setActiveView("cart");
+              setNotification(null);
+            }}
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] rounded-xl transition-all shadow-xs shrink-0 cursor-pointer"
+          >
+            Voir panier
+          </button>
+          <button
+            onClick={() => setNotification(null)}
+            className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors ml-1 font-bold"
+            title="Fermer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* VUE CONDITIONNELLE : PANIER */}
       {activeView === "cart" && (
         <CartContainer
