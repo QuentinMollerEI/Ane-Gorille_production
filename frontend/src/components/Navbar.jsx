@@ -1,38 +1,46 @@
 import React from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { LogOut } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { useCart } from "../context/CartContext";
-import { LogOut, ShoppingCart, Store, LayoutDashboard } from "lucide-react";
+import CartButton from "./CartButton";
 
-export default function Navbar() {
-  const auth = useAuth() || {};
-  const user = auth.user;
-  const logout = auth.logout;
-
-  // Récupération dynamique du panier
-  const cartContext = useCart() || {};
-
-  // Calcul du nombre d'articles dans le panier
-  const itemCount = cartContext.getTotalItems
-    ? cartContext.getTotalItems()
-    : (() => {
-        try {
-          const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
-          const savedCart = localStorage.getItem(cartKey) || localStorage.getItem("ane_gorille_cart");
-          const parsed = savedCart ? JSON.parse(savedCart) : [];
-          return parsed.reduce((acc, item) => acc + (item.quantity || 1), 0);
-        } catch (e) {
-          return 0;
-        }
-      })();
-
+/**
+ * 🧭 COMPOSANT : Navbar.jsx
+ * Emplacement : src/components/Navbar.jsx
+ * Barre de navigation principale officielle avec Logo cliquable, profil et bouton dynamique.
+ */
+export default function Navbar({ activeView, onToggleView, onOpenCart }) {
+  const { user, userProfile, logout } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
 
-  // 🔍 Détection de la page active
-  const searchParams = new URLSearchParams(location.search);
-  const isHomePage = location.pathname === "/";
-  const isCartView = searchParams.get("view") === "cart";
+  const profile = userProfile || user || {};
+
+  // Libellé officiel du rôle utilisateur
+  const getRoleLabel = () => {
+    const role = profile.role || profile.buyerRole || "";
+    if (role === "acheteur_public" || role === "client_public" || profile.buyerProfile === "B2G") {
+      return "Secteur Public (B2G)";
+    }
+    if (role === "producteur" || role === "producer" || role === "fournisseur" || role === "maraicher") {
+      return "Producteur Maraîcher";
+    }
+    if (role === "livreur" || role === "carrier") {
+      return "Livreur Logistique";
+    }
+    if (role === "admin") {
+      return "Administrateur";
+    }
+    return "Professionnel B2B";
+  };
+
+  const getUserDisplayName = () => {
+    return profile.companyName || profile.displayName || profile.name || "Acheteur Client";
+  };
+
+  const getUserInitial = () => {
+    const name = getUserDisplayName();
+    return name.charAt(0).toUpperCase();
+  };
 
   const handleLogout = async () => {
     try {
@@ -45,193 +53,82 @@ export default function Navbar() {
     }
   };
 
-  // 🔄 Navigation multi-contexte adaptative (Acheteurs & Fournisseurs/Producteurs)
-  const handleButtonClick = () => {
-    const role = user?.role;
-    const isSupplier = role === "producer" || role === "producteur" || role === "fournisseur";
-    const isCarrier = role === "carrier" || role === "livreur";
-
-    if (isHomePage) {
-      if (isSupplier) {
-        navigate("/dashboard?module=rayon");
-      } else if (isCarrier) {
-        navigate("/dashboard?module=route");
-      } else {
-        navigate("/dashboard?module=boutique");
-      }
-    } else if (isCartView) {
-      if (isSupplier) {
-        navigate("/dashboard?module=rayon");
-      } else {
-        navigate("/dashboard?module=boutique&view=grid");
-      }
-    } else {
-      if (isSupplier) {
-        navigate("/dashboard?module=rayon");
-      } else {
-        navigate("/dashboard?module=boutique&view=cart");
-      }
-    }
-  };
-
-  // 👤 Redirection au clic vers la page Mon Profil
   const handleProfileClick = () => {
     navigate("/dashboard?module=profil");
   };
 
-  // 👤 Formattage du nom d'affichage de l'utilisateur
-  const getUserDisplayName = () => {
-    if (!user) return "";
-    return (
-      user.companyName ||
-      user.displayName ||
-      (user.email ? user.email.split("@")[0] : "Utilisateur")
-    );
-  };
-
-  const getUserInitial = () => {
-    const name = getUserDisplayName();
-    return name ? name.charAt(0).toUpperCase() : "U";
-  };
-
-  const getRoleLabel = () => {
-    if (!user?.role) return null;
-    switch (user.role) {
-      case "producer":
-      case "producteur":
-      case "fournisseur":
-        return "Producteur";
-      case "buyer_public":
-      case "acheteur_public":
-      case "client_public":
-        return "Acheteur Public";
-      case "buyer_private":
-      case "acheteur_prive":
-      case "client_pro":
-        return "Acheteur Privé";
-      case "carrier":
-      case "livreur":
-        return "Livreur";
-      case "admin":
-        return "Admin";
-      default:
-        return user.role;
-    }
-  };
-
-  const role = user?.role;
-  const isSupplier = role === "producer" || role === "producteur" || role === "fournisseur";
-
   return (
-    <header className="bg-white border-b border-gray-100 sticky top-0 z-50 shadow-sm">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        {/* 1. LOGO & MARQUE */}
-        <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 rounded-xl overflow-hidden bg-emerald-50 border border-emerald-100 flex items-center justify-center p-0.5 group-hover:scale-105 transition-transform">
-            <img
-              src="/logo.png"
-              alt="Logo Âne & Gorille"
-              className="w-full h-full object-contain"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = "/Logo.png";
-              }}
-            />
-          </div>
-          <div className="flex flex-col">
-            <span className="font-extrabold text-gray-900 text-base leading-tight tracking-tight">
-              Âne & Gorille
+    <header className="bg-white border-b border-slate-200 sticky top-0 z-40 text-xs font-sans shadow-2xs">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        
+        {/* LOGO & NOM OFFICIEL - CLIQUABLE VERS L'ACCUEIL */}
+        <Link 
+          to="/" 
+          className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition-opacity group"
+          title="Retour à l'accueil de présentation"
+        >
+          <img 
+            src="/Logo.png" 
+            alt="Âne & Gorille" 
+            className="h-10 w-auto object-contain group-hover:scale-105 transition-transform"
+            onError={(e) => {
+              e.target.onerror = null;
+              e.target.src = "/Logo.png";
+            }}
+          />
+          <div>
+            <span className="font-black text-slate-900 text-base block leading-none tracking-tight">
+              Âne &amp; Gorille
             </span>
-            <span className="text-[10px] text-gray-400 font-semibold tracking-wider uppercase">
-              Plateforme et Transport
+            <span className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-wider block mt-0.5">
+              Plateforme &amp; Transport
             </span>
           </div>
         </Link>
 
-        {/* 2. ACTIONS & IDENTIFICATION UTILISATEUR */}
+        {/* ACTIONS & BOUTON DYNAMIQUE */}
         <div className="flex items-center gap-3">
-          {user ? (
-            <>
-              {/* 🚀 BOUTON DYNAMIQUE (Affiché uniquement si connecté) */}
-              <button
-                onClick={handleButtonClick}
-                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer"
-              >
-                {isHomePage ? (
-                  <>
-                    <LayoutDashboard size={16} />
-                    <span>Espace Pro</span>
-                  </>
-                ) : isCartView ? (
-                  <>
-                    <Store size={16} />
-                    <span>{isSupplier ? "Gestion des Stocks" : "Voir la Boutique"}</span>
-                  </>
-                ) : (
-                  <>
-                    {isSupplier ? (
-                      <>
-                        <Store size={16} />
-                        <span>Mise en Rayon</span>
-                      </>
-                    ) : (
-                      <>
-                        <ShoppingCart size={16} />
-                        <span>Mon Panier ({itemCount})</span>
-                      </>
-                    )}
-                  </>
-                )}
-              </button>
+          
+          {/* 🛒 BOUTON DYNAMIQUE CONTEXTUEL AUTONOME */}
+          <CartButton 
+            activeView={activeView} 
+            onToggleView={onToggleView} 
+            onOpenCart={onOpenCart} 
+          />
 
-              {/* BLOC PROFIL & DÉCONNEXION */}
-              <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
-                <button
-                  onClick={handleProfileClick}
-                  className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded-xl transition-colors text-left cursor-pointer"
-                  title="Accéder à Mon Profil"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 font-black text-xs flex items-center justify-center border border-emerald-200">
-                    {getUserInitial()}
-                  </div>
-                  <div className="hidden sm:flex flex-col">
-                    <span className="text-xs font-bold text-gray-900 leading-tight">
-                      {getUserDisplayName()}
-                    </span>
-                    {getRoleLabel() && (
-                      <span className="text-[10px] text-emerald-700 font-semibold">
-                        {getRoleLabel()}
-                      </span>
-                    )}
-                  </div>
-                </button>
-
-                <button
-                  onClick={handleLogout}
-                  className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
-                  title="Déconnexion"
-                >
-                  <LogOut size={18} />
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Link
-                to="/login"
-                className="px-4 py-2 text-xs font-bold text-gray-700 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-colors"
-              >
-                Connexion
-              </Link>
-              <Link
-                to="/register"
-                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-colors shadow-sm"
-              >
-                Inscription
-              </Link>
+          {/* PROFIL UTILISATEUR CLIQUABLE */}
+          <div 
+            onClick={handleProfileClick}
+            className="flex items-center gap-2.5 pl-3 border-l border-slate-200 cursor-pointer group hover:opacity-90 transition-opacity"
+            title="Accéder à mon profil"
+          >
+            <div className="w-8 h-8 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-900 flex items-center justify-center font-black text-xs group-hover:bg-emerald-200 transition-colors shadow-2xs">
+              {getUserInitial()}
             </div>
+            <div className="hidden lg:block text-left">
+              <p className="font-extrabold text-slate-900 leading-tight group-hover:text-emerald-800 transition-colors">
+                {getUserDisplayName()}
+              </p>
+              <p className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-wider">
+                {getRoleLabel()}
+              </p>
+            </div>
+          </div>
+
+          {/* BOUTON DÉCONNEXION */}
+          {user && (
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Se déconnecter"
+              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer ml-1"
+            >
+              <LogOut size={16} />
+            </button>
           )}
+
         </div>
+
       </div>
     </header>
   );
