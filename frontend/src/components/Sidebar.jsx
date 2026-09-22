@@ -63,7 +63,7 @@ export default function Sidebar({ isCollapsed, setIsCollapsed }) {
 
   return (
         <aside 
-  className={`bg-white border-r border-gray-100 h-[calc(100vh-4rem)] flex flex-col gap-1 fixed top-16 left-0 transition-all duration-300 z-40 shadow-[4px_0_24px_rgba(0,0,0,0.01)] ${
+  className={`bg-white border-r border-slate-200 h-[calc(100vh-4rem)] flex flex-col gap-1 sticky top-16 transition-all duration-300 z-30 shadow-xs ${
     isCollapsed ? "w-20 p-3 pt-5" : "w-64 p-4 pt-5"
   }`}
 >
