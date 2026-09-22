@@ -1,6 +1,7 @@
 import React from "react";
 import { Calendar, FileText, Printer, ChevronDown, ChevronRight } from "lucide-react";
 import { OrderSlipGenerator } from "../../../services/documents/OrderSlipGenerator";
+import { DeliverySlipGenerator } from "../../../services/documents/DeliverySlipGenerator";
 import { OrderDocumentGenerator } from "../../../services/OrderDocumentGenerator";
 import { formatFrenchDate, getCalculatedDeliveryDate } from "../../../utils/deliveryCalendar.js";
 import TrackingStepper from "./TrackingStepper";
@@ -57,7 +58,7 @@ export default function OrderTrackingCard({
   // Impression Bon de Livraison (BL)
   const handlePrintDeliverySlip = (e) => {
     e.stopPropagation();
-    const html = OrderDocumentGenerator.generateDeliverySlipHTML(order);
+    const html = DeliverySlipGenerator && typeof DeliverySlipGenerator.generateHTML === "function" ? DeliverySlipGenerator.generateHTML(order) : OrderDocumentGenerator.generateDeliverySlipHTML(order);
     const win = window.open("", "_blank");
     if (win) {
       win.document.write(html);
