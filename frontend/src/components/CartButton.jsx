@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { ShoppingCart, ShoppingBag, Store } from "lucide-react";
+import { ShoppingCart, ShoppingBag, Store, Layers } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 /**
@@ -8,10 +8,11 @@ import { useAuth } from "../context/AuthContext";
  * Emplacement : src/components/CartButton.jsx
  *
  * Responsabilité Unique (SRP) :
- * Adapter dynamiquement le libellé, l'icône et l'action du bouton selon le contexte :
- * 1. Sur la page d'accueil ("/")                      -> "Mon Espace Pro"
- * 2. Quand le panier est vide (0) ou en vue Panier   -> "Voir la Boutique"
- * 3. Quand le panier contient des articles (>0)      -> "Mon Panier" + Badge d'articles réactif
+ * Adapter dynamiquement le libellé, l'icône et l'action du bouton selon le contexte et le rôle :
+ * 1. Utilisateur connecté Fournisseur / Producteur -> "Voir mon Stock" (vers /dashboard?module=rayon)
+ * 2. Sur la page d'accueil ("/") -> "Mon Espace Pro"
+ * 3. Quand le panier est vide (0) ou en vue Panier -> "Voir la boutique"
+ * 4. Quand le panier contient des articles (>0) en vue Boutique -> "Mon Panier" + Badge d'articles réactif
  */
 export default function CartButton({
   activeView: propActiveView,
@@ -25,14 +26,21 @@ export default function CartButton({
   const location = useLocation();
 
   const profile = userProfile || user || {};
-  const role = profile.role || profile.buyerRole || "";
+  const role = (profile.role || profile.buyerRole || user?.role || "").toLowerCase();
 
-  // Détection du contexte de page et rôle
+  // Détection du rôle Fournisseur / Producteur / Maraîcher
+  const isSupplier = [
+    "producteur",
+    "producer",
+    "fournisseur",
+    "maraicher"
+  ].includes(role);
+
   const isHomePage = location.pathname === "/";
   const searchParams = new URLSearchParams(location.search);
   const isCartViewParam = searchParams.get("view") === "cart";
 
-  // Vue active dynamique
+  // Vue active dynamique (Prop -> URL query -> state local)
   const [currentView, setCurrentView] = useState(() => {
     if (propActiveView) return propActiveView;
     return isCartViewParam ? "cart" : "grid";
@@ -88,7 +96,6 @@ export default function CartButton({
         setCartCount(0);
       }
     };
-
     updateCount();
   }, [cartKey, user?.uid]);
 
@@ -99,7 +106,6 @@ export default function CartButton({
           setCartCount(calculateTotalItems(event.detail.cart));
           return;
         }
-
         const saved = localStorage.getItem(cartKey) || localStorage.getItem("ane_gorille_cart");
         if (!saved) {
           setCartCount(0);
@@ -110,15 +116,43 @@ export default function CartButton({
         console.error("Erreur sync panier CartButton :", e);
       }
     };
-
     window.addEventListener("ane_gorille_cart_updated", handleCartSync);
     window.addEventListener("storage", handleCartSync);
-
     return () => {
       window.removeEventListener("ane_gorille_cart_updated", handleCartSync);
       window.removeEventListener("storage", handleCartSync);
     };
   }, [cartKey]);
+
+  // --- RENDU SPÉCIFIQUE : Utilisateur est un Fournisseur / Producteur ---
+  if (isSupplier) {
+    const handleGoToStock = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      if (typeof onToggleView === "function") {
+        onToggleView("rayon");
+      }
+      try {
+        window.dispatchEvent(new CustomEvent("ane_gorille_view_changed", { detail: { view: "rayon" } }));
+      } catch (err) {}
+      navigate("/dashboard?module=rayon");
+    };
+
+    return (
+      <button
+        type="button"
+        onClick={handleGoToStock}
+        className={`px-4 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shadow-xs bg-emerald-700 hover:bg-emerald-800 text-white ${className}`}
+        title="Accéder à la gestion de mon stock"
+        {...props}
+      >
+        <Layers size={18} className="shrink-0 text-emerald-200" />
+        <span>Voir mon Stock</span>
+      </button>
+    );
+  }
 
   // --- RENDU 1 : Page d'accueil ("/") -> "Mon Espace Pro" ---
   if (isHomePage) {
@@ -137,16 +171,16 @@ export default function CartButton({
       <button
         type="button"
         onClick={handleGoToPro}
-        className={`bg-slate-900 hover:bg-slate-800 text-white font-extrabold px-4 py-2 rounded-xl transition-all cursor-pointer shadow-xs flex items-center gap-2 text-xs hover:scale-[1.02] active:scale-[0.98] ${className}`}
+        className={`px-4 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shadow-xs bg-slate-900 hover:bg-black text-white ${className}`}
         {...props}
       >
-        <Store size={16} />
+        <Store size={18} className="shrink-0 text-emerald-400" />
         <span>Mon Espace Pro</span>
       </button>
     );
   }
 
-  // --- RENDU 2 : Panier VIDE (0) OU Vue Panier Active -> "Voir la Boutique" ---
+  // --- RENDU 2 : Panier VIDE (0) OU Vue Panier Active -> "Voir la boutique" ---
   if (cartCount === 0 || currentView === "cart") {
     const handleGoToShop = (e) => {
       if (e) {
@@ -166,11 +200,11 @@ export default function CartButton({
       <button
         type="button"
         onClick={handleGoToShop}
-        className={`bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold px-4 py-2 rounded-xl transition-all cursor-pointer shadow-xs flex items-center gap-2 text-xs hover:scale-[1.02] active:scale-[0.98] ${className}`}
+        className={`px-4 py-2.5 rounded-2xl font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 shadow-2xs ${className}`}
         {...props}
       >
-        <ShoppingBag size={16} />
-        <span className="hidden sm:inline">Voir la Boutique</span>
+        <Store size={18} className="shrink-0 text-emerald-700" />
+        <span>Voir la boutique</span>
       </button>
     );
   }
@@ -198,16 +232,16 @@ export default function CartButton({
     <button
       type="button"
       onClick={handleOpenCart}
-      className={`relative bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold px-4 py-2 rounded-xl transition-all cursor-pointer shadow-sm flex items-center gap-2.5 hover:scale-[1.02] active:scale-[0.98] ${className}`}
+      className={`relative px-4 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2.5 cursor-pointer shadow-sm bg-emerald-700 hover:bg-emerald-800 text-white ${className}`}
       {...props}
     >
-      <ShoppingCart size={18} />
-      <span className="hidden sm:inline">Mon Panier</span>
-
-      {/* BADGE COMPTEUR RÉACTIF ANIMÉ */}
-      <span className="px-2 py-0.5 rounded-full font-mono text-[11px] font-black transition-all bg-amber-400 text-slate-950 animate-pulse">
-        {cartCount}
-      </span>
+      <ShoppingCart size={18} className="shrink-0" />
+      <span>Mon Panier</span>
+      {cartCount > 0 && (
+        <span className="bg-amber-400 text-slate-950 font-extrabold px-2 py-0.5 rounded-full text-[10px] min-w-[20px] text-center shadow-xs animate-scale-in">
+          {cartCount}
+        </span>
+      )}
     </button>
   );
 }

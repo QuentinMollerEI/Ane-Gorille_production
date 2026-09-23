@@ -1,15 +1,11 @@
 import React, { useState } from "react";
 import { 
   CheckCircle2, 
-  Clock, 
   Calendar, 
   Printer, 
   X, 
   ShieldCheck, 
-  Thermometer, 
-  Box, 
   FileText, 
-  AlertCircle,
   CheckSquare,
   Square
 } from "lucide-react";
@@ -21,10 +17,10 @@ import { OrderDocumentGenerator } from "../../../services/OrderDocumentGenerator
  * Emplacement : src/pages/Preparation/components/PreparationSlipModal.jsx
  * 
  * Fiche de Récolte & Bon de Préparation Interactif :
- * - Pointage ligne par ligne des produits cueillis aux champs
+ * - Pointage ligne par ligne des produits cueillis aux champs (Produits décochés par défaut = 0%)
+ * - Extraction robuste des quantités (item.quantity ?? item.qty ?? item.count)
  * - Saisie dynamique du N° de Lot HACCP & Nombre de cagettes consignées
- * - Validation en 1 clic avec mise à jour automatique Firestore (sub_orders + parent orders)
- * - Impression immédiate A4 conforme aux normes HACCP / AGEC / CE 178/2002
+ * - Validation en 1 clic avec mise à jour automatique Firestore (sub_orders)
  */
 export default function PreparationSlipModal({ order, parentOrder, onClose, onValidateSuccess }) {
   if (!order) return null;
@@ -35,10 +31,24 @@ export default function PreparationSlipModal({ order, parentOrder, onClose, onVa
   const [remarks, setRemarks] = useState(order.preparationNotes || "");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // État local de pointage des articles
+  // Helper d'extraction robuste de la quantité
+  const getItemQty = (item) => {
+    if (!item) return 0;
+    const val = item.quantity ?? item.qty ?? item.count ?? item.preparedQty ?? item.qtyPrepared ?? item.orderedQty;
+    const num = Number(val);
+    return isNaN(num) ? 0 : num;
+  };
+
+  // Helper d'extraction d'unité
+  const getItemUnit = (item) => {
+    if (!item) return "kg";
+    return item.unit || item.unite || item.unitLabel || "kg";
+  };
+
+  // État local de pointage des articles (décochés par défaut = prepared: false)
   const initialItemsState = (order.items || []).map((item) => ({
     ...item,
-    prepared: item.prepared !== undefined ? item.prepared : true
+    prepared: item.prepared !== undefined ? Boolean(item.prepared) : false
   }));
 
   const [items, setItems] = useState(initialItemsState);
@@ -65,11 +75,15 @@ export default function PreparationSlipModal({ order, parentOrder, onClose, onVa
     ? (reqDate.includes('-') ? reqDate.split('-').reverse().join('/') : reqDate) 
     : "À définir";
 
-  const buyerName = order.buyerCompany || order.buyerName || parentOrder?.buyerName || "Acheteur Client Pro";
+  const buyerName = order.buyerCompany || order.buyerName || parentOrder?.buyerCompany || parentOrder?.buyerName || "Acheteur Client Pro";
   const deliveryAddress = order.deliveryAddress || parentOrder?.deliveryAddress || "Adresse de livraison non renseignée";
 
   // Validation finale & Mise à jour automatique de la commande
-  const handleValidateAndSubmit = async () => {
+  const handleValidateAndSubmit = async (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     setIsSubmitting(true);
     try {
       const finalLot = lotNumber.trim() || defaultLot;
@@ -88,7 +102,11 @@ export default function PreparationSlipModal({ order, parentOrder, onClose, onVa
   };
 
   // Impression de la fiche A4
-  const handlePrint = () => {
+  const handlePrint = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     try {
       const html = OrderDocumentGenerator.generatePreparationSlipHTML({
         ...order,
@@ -220,34 +238,38 @@ export default function PreparationSlipModal({ order, parentOrder, onClose, onVa
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {items.map((item, idx) => (
-                <tr 
-                  key={idx} 
-                  onClick={() => toggleItemPrepared(idx)}
-                  className={`cursor-pointer transition-colors ${
-                    item.prepared ? "bg-emerald-50/50 hover:bg-emerald-50" : "hover:bg-slate-50"
-                  }`}
-                >
-                  <td className="p-2.5 text-center">
-                    {item.prepared ? (
-                      <CheckSquare size={18} className="text-emerald-700 inline-block" />
-                    ) : (
-                      <Square size={18} className="text-slate-300 inline-block" />
-                    )}
-                  </td>
-                  <td className="p-2.5 font-bold text-slate-900">
-                    <span className={item.prepared ? "line-through text-slate-500" : ""}>
-                      {item.name || item.title}
-                    </span>
-                  </td>
-                  <td className="p-2.5 text-center font-black text-emerald-900 font-mono text-sm">
-                    {item.quantity || item.qty} {item.unit || "kg"}
-                  </td>
-                  <td className="p-2.5 text-slate-600 font-medium">
-                    Cagette Plastique Pro Consignée (HACCP)
-                  </td>
-                </tr>
-              ))}
+              {items.map((item, idx) => {
+                const qty = getItemQty(item);
+                const unit = getItemUnit(item);
+                return (
+                  <tr 
+                    key={idx} 
+                    onClick={() => toggleItemPrepared(idx)}
+                    className={`cursor-pointer transition-colors ${
+                      item.prepared ? "bg-emerald-50/50 hover:bg-emerald-50" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <td className="p-2.5 text-center">
+                      {item.prepared ? (
+                        <CheckSquare size={18} className="text-emerald-700 inline-block" />
+                      ) : (
+                        <Square size={18} className="text-slate-300 inline-block" />
+                      )}
+                    </td>
+                    <td className="p-2.5 font-bold text-slate-900">
+                      <span className={item.prepared ? "line-through text-slate-500" : ""}>
+                        {item.name || item.title}
+                      </span>
+                    </td>
+                    <td className="p-2.5 text-center font-black text-emerald-900 font-mono text-sm">
+                      {qty} {unit}
+                    </td>
+                    <td className="p-2.5 text-slate-600 font-medium">
+                      Cagette Plastique Pro Consignée (HACCP)
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
