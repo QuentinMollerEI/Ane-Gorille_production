@@ -16,16 +16,6 @@ const {
   sendWelcomeEmail, // 👈 Ajout de l'import pour l'e-mail de bienvenue
 } = require("./services/emailService");
 
-// Import sécurisé du service PDF
-let generateOrderPdf = null;
-let generateSubOrderPdf = null;
-try {
-  const pdfService = require("./services/pdfService");
-  generateOrderPdf = pdfService.generateOrderPdf;
-  generateSubOrderPdf = pdfService.generateSubOrderPdf;
-} catch (e) {
-  console.warn("⚠️ [WARN] pdfService non disponible (envoi d'e-mail sans PJ) :", e.message);
-}
 
 // Région globale europe-west9
 setGlobalOptions({ region: "europe-west9" });
@@ -220,15 +210,26 @@ const onOrderCreatedTrigger = onDocumentCreated(
     document: "orders/{orderId}",
     database: "ane-et-gorille-v2",
     region: "europe-west9",
+    memory: "512MiB",
+    timeoutSeconds: 60,
   },
   async (event) => {
     const snap = event.data;
     if (!snap) return;
-
     const orderData = snap.data();
     const orderId = event.params.orderId;
+    console.log(`  Nouvelle commande détectée [ID: ${orderId}] – Traitement e-mails Brevo...`);
 
-    console.log(`📦 Nouvelle commande détectée [ID: ${orderId}] — Traitement e-mails Brevo...`);
+    // LAZY LOADING : On charge pdfkit uniquement quand la fonction tourne !
+    let generateOrderPdf = null;
+    let generateSubOrderPdf = null;
+    try {
+      const pdfService = require("./services/pdfService");
+      generateOrderPdf = pdfService.generateOrderPdf;
+      generateSubOrderPdf = pdfService.generateSubOrderPdf;
+    } catch (e) {
+      console.warn("  [WARN] pdfService non disponible (envoi d'e-mail sans PJ) :", e.message);
+    }
 
     try {
       const buyerEmail = orderData.buyerEmail || orderData.customerEmail;
@@ -238,18 +239,17 @@ const onOrderCreatedTrigger = onDocumentCreated(
           try {
             bcPdfBuffer = await generateOrderPdf({ id: orderId, ...orderData });
           } catch (pdfErr) {
-            console.error(`❌ Erreur génération PDF BC pour #${orderId}:`, pdfErr);
+            console.error(`  Erreur génération PDF BC pour #${orderId}:`, pdfErr);
           }
         }
-
         await sendOrderConfirmation(buyerEmail, orderId, bcPdfBuffer);
       }
-
+      
       const subOrdersSnap = await db
         .collection("sub_orders")
         .where("parentOrderId", "==", orderId)
         .get();
-
+        
       if (!subOrdersSnap.empty) {
         for (const subDoc of subOrdersSnap.docs) {
           const subOrderData = subDoc.data();
@@ -259,10 +259,9 @@ const onOrderCreatedTrigger = onDocumentCreated(
               try {
                 bpPdfBuffer = await generateSubOrderPdf(subOrderData);
               } catch (pdfErr) {
-                console.error(`❌ Erreur génération PDF BP pour sub_order #${subDoc.id}:`, pdfErr);
+                console.error(`  Erreur génération PDF BP pour sub_order #${subDoc.id}:`, pdfErr);
               }
             }
-
             await sendHarvestAlertToProducer(
               subOrderData.producerEmail,
               subDoc.id,
@@ -273,12 +272,12 @@ const onOrderCreatedTrigger = onDocumentCreated(
         }
       }
     } catch (error) {
-      console.error(`❌ Erreur lors du traitement e-mail/PDF pour la commande #${orderId} :`, error);
+      console.error(`  Erreur lors du traitement e-mail/PDF pour la commande #${orderId} :`, error);
     }
   }
 );
 
-// 7. Déclencheur Firestore : Envoi automatique de l'e-mail de bienvenue Brevo à la création de compte
+// 7. Déclencheur Firestore : Initialisation sécurité (Custom Claims) & E-mail de bienvenue
 const onUserCreatedTrigger = onDocumentCreated(
   {
     document: "users/{userId}",
@@ -288,17 +287,27 @@ const onUserCreatedTrigger = onDocumentCreated(
   async (event) => {
     const snap = event.data;
     if (!snap) return;
-
+    
     const userData = snap.data();
+    const userId = event.params.userId;
     const email = userData.email;
     const name = userData.companyName || userData.displayName || "Nouveau Membre";
     const role = userData.role || "acheteur_prive";
 
-    if (email) {
-      console.log(`👤 Nouveau profil détecté [${email}] — Envoi de l'e-mail de bienvenue Brevo...`);
-      await sendWelcomeEmail(email, name, role);
-    } else {
-      console.warn(`⚠️ [WARN] Aucun e-mail trouvé pour le profil utilisateur ${event.params.userId}`);
+    try {
+      // ÉTAPE A : Sécurité - Injection du rôle directement dans le jeton (token) de l'utilisateur
+      await admin.auth().setCustomUserClaims(userId, { role: role });
+      console.log(`[SECURITE] Custom claim 'role: ${role}' injecté pour l'utilisateur ${userId}`);
+
+      // ÉTAPE B : Communication - Envoi de l'e-mail via Brevo
+      if (email) {
+        console.log(`[BREVO] Envoi de l'e-mail de bienvenue à ${email}...`);
+        await sendWelcomeEmail(email, name, role);
+      } else {
+        console.warn(`[WARN] Aucun e-mail trouvé pour le profil utilisateur ${userId}`);
+      }
+    } catch (error) {
+      console.error(`[CRITIQUE] Échec lors de l'initialisation de l'utilisateur ${userId} :`, error);
     }
   }
 );
@@ -316,3 +325,9 @@ exports.getAdminDashboardStatsServer = getAdminDashboardStatsServer;
 exports.processCheckoutServer = processCheckoutServer;
 exports.onOrderCreatedTrigger = onOrderCreatedTrigger;
 exports.onUserCreatedTrigger = onUserCreatedTrigger;
+
+// Import de la fonction webhook Stripe depuis son fichier dédié
+const { stripeWebhook } = require("./stripe-webhook-handler");
+
+// Export de la fonction pour Firebase
+exports.stripeWebhook = stripeWebhook;

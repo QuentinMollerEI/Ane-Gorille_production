@@ -38,13 +38,20 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
     case "payment_intent.succeeded": {
       const paymentIntent = event.data.object;
       const orderId = paymentIntent.metadata.orderId;
-
       console.log(
-        `💰 Paiement réussi détecté pour le PaymentIntent : ${paymentIntent.id}`,
+        `  Paiement réussi détecté pour le PaymentIntent : ${paymentIntent.id}`,
       );
 
       if (orderId) {
         try {
+          // --- CONTRÔLE D'IDEMPOTENCE (Nouveau) ---
+          const orderDoc = await db.collection("orders").doc(orderId).get();
+          if (orderDoc.exists && orderDoc.data().status === "PAYE") {
+            console.log(`  La commande ${orderId} est déjà marquée comme PAYE. Traitement ignoré pour éviter les doublons.`);
+            return res.json({ received: true, message: "Déjà traité" });
+          }
+          // ----------------------------------------
+
           // Rapprochement comptable atomique
           const batch = db.batch();
           const orderRef = db.collection("orders").doc(orderId);
@@ -72,23 +79,23 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
 
           await batch.commit();
           console.log(
-            `✅ Commande globale ${orderId} et ses sous-commandes maraîchers passées au statut "PAYE" / "A_PREPARER"`,
+            `  Commande globale ${orderId} et ses sous-commandes maraîchers passées au statut "PAYE" / "A_PREPARER"`,
           );
         } catch (error) {
           console.error(
-            `❌ Erreur lors de la mise à jour de la commande ${orderId} dans Firestore :`,
+            `  Erreur lors de la mise à jour de la commande ${orderId} dans Firestore :`,
             error,
           );
           return res.status(500).send("Erreur d'écriture en base de données.");
         }
       } else {
         console.warn(
-          `⚠️ PaymentIntent ${paymentIntent.id} réussi, mais aucun 'orderId' trouvé dans les métadonnées.`,
+          `  PaymentIntent ${paymentIntent.id} réussi, mais aucun 'orderId' trouvé dans les métadonnées.`,
         );
       }
       break;
     }
-
+    
     // Cas secondaire : Échec du paiement (ex: carte refusée, provision insuffisante)
     case "payment_intent.payment_failed": {
       const paymentIntent = event.data.object;

@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "ane-et-gorille-v2"
-  }
+    "default": "ane-et-gorille-v2",
+    "dev": "ane-et-gorille-dev"
+  },
+  "targets": {},
+  "etags": {}
 }

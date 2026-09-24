@@ -8,6 +8,7 @@ import Register from "./components/auth/Register";
 import Login from "./components/auth/Login";
 import Workspace from "./components/Workspace";
 import DashboardLayout from "./layouts/DashboardLayout";
+import ErrorBoundary from "./components/Shared/ErrorBoundary";
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -34,22 +35,25 @@ export default function App() {
         <div className="min-h-screen bg-gray-50 font-sans text-gray-900 flex flex-col">
           <Navbar />
           <main className="flex-1 w-full">
-            <Routes>
-              <Route path="/" element={<Hero />} />
-              <Route path="/register" element={<PublicOnlyRoute><Register /></PublicOnlyRoute>} />
-              <Route path="/login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
-              <Route
-                path="/dashboard"
-                element={
-                  <PrivateRoute>
-                    <DashboardLayout>
-                      <Workspace />
-                    </DashboardLayout>
-                  </PrivateRoute>
-                }
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+            {/* 2. ENVELOPPEMENT DES ROUTES */}
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Hero />} />
+                <Route path="/register" element={<PublicOnlyRoute><Register /></PublicOnlyRoute>} />
+                <Route path="/login" element={<PublicOnlyRoute><Login /></PublicOnlyRoute>} />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <PrivateRoute>
+                      <DashboardLayout>
+                        <Workspace />
+                      </DashboardLayout>
+                    </PrivateRoute>
+                  }
+                />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </ErrorBoundary>
           </main>
           <Footer />
         </div>

@@ -2,55 +2,36 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+   // =========================================================================
+    //   1. FONCTIONS UTILITAIRES & CONTRÔLE D'ACCÈS SÉCURISÉ (RBAC VIA TOKEN)
     // =========================================================================
-    // 🧠 1. FONCTIONS UTILITAIRES & CONTRÔLE D'ACCÈS SÉCURISÉ (RBAC)
-    // =========================================================================
-
+    
     // Vérifie si l'utilisateur est authentifié
     function isSignedIn() {
       return request.auth != null && request.auth.uid != null;
     }
-
-    // Vérifie si l'utilisateur accède à sa propre ressource par son UID
+    
+    // Vérifie si l'utilisateur accède à sa propre ressource
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
-
-    // Récupération sécurisée des données utilisateur (Empêche les crashs si le document n'existe pas encore)
-    function getUserData() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
-        : {};
-    }
-
-    // Récupération sécurisée du rôle principal
+    
+    // LECTURE DIRECTE DU RÔLE DEPUIS LE TOKEN (Zéro coût de lecture Firestore)
     function getUserRole() {
-      return getUserData().get('role', '');
+      return request.auth.token != null ? request.auth.token.role : '';
     }
 
-    // Vérificateur de rôle Administrateur
+    // Vérificateurs de rôles ultra-rapides
     function isAdmin() {
-      return isSignedIn() && (
-        getUserRole() == 'admin' || 
-        getUserRole() == 'administrator' ||
-        (request.auth.token != null && request.auth.token.get('role', '') == 'admin')
-      );
+      return isSignedIn() && (getUserRole() == 'admin' || getUserRole() == 'administrator');
     }
 
-    // Vérificateurs de rôles spécifiques
     function isProducer() {
-      return isSignedIn() && (
-        getUserRole() == 'producteur' || 
-        getUserRole() == 'producer' || 
-        getUserRole() == 'fournisseur'
-      );
+      return isSignedIn() && (getUserRole() == 'producteur' || getUserRole() == 'producer' || getUserRole() == 'fournisseur');
     }
 
     function isCarrier() {
-      return isSignedIn() && (
-        getUserRole() == 'livreur' || 
-        getUserRole() == 'carrier'
-      );
+      return isSignedIn() && (getUserRole() == 'livreur' || getUserRole() == 'carrier');
     }
 
     function isBuyer() {
@@ -61,7 +42,6 @@ service cloud.firestore {
         getUserRole() == 'client_public'
       );
     }
-
 
     // =========================================================================
     // 👤 2. COLLECTION : USERS (Profils & Paramètres Utilisateurs)
