@@ -1,5 +1,7 @@
 /**
  * 📅 UTILITAIRE : deliveryCalendar.js
+ * Emplacement : frontend/src/utils/deliveryCalendar.js
+ * 
  * RÈGLES MÉTIERS LOGISTIQUES ÂNE & GORILLE :
  * 1. Jours fermés (Aucune collecte ni livraison) : Jeudi (4), Samedi (6), Dimanche (0).
  * 2. Jours ouverts : Lundi (1), Mardi (2), Mercredi (3), Vendredi (5).
@@ -7,112 +9,101 @@
  * 4. Plage d'ouverture : 11 jours livrables autorisés à compter de la commande.
  */
 
-/**
- * Formate un objet Date local en chaîne YYYY-MM-DD neutre vis-à-vis des fuseaux horaires (sans conversion UTC).
- */
-export function formatDateToYYYYMMDD(d = new Date()) {
-  if (!d) return '';
-  const dateObj = d instanceof Date ? d : new Date(d);
-  if (isNaN(dateObj.getTime())) return '';
-  const year = dateObj.getFullYear();
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const day = String(dateObj.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
+// Jours ouverts : 1 = Lundi, 2 = Mardi, 3 = Mercredi, 5 = Vendredi
+const OPEN_DAYS = [1, 2, 3, 5];
 
 /**
- * Formate une chaîne YYYY-MM-DD en date française littérale (ex: "Mardi 22 septembre 2026").
- */
-export function formatFrenchDate(dateStr) {
-  if (!dateStr || dateStr === 'Non spécifiée' || dateStr === 'Date en attente' || dateStr === 'ALL') {
-    return 'Non spécifiée';
-  }
-  const str = String(dateStr).trim();
-  const parts = str.split('T')[0].split('-');
-  if (parts.length === 3) {
-    const [y, m, d] = parts.map(Number);
-    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
-      const dateObj = new Date(y, m - 1, d, 12, 0, 0); // Midi heure locale
-      if (!isNaN(dateObj.getTime())) {
-        const formatted = dateObj.toLocaleDateString('fr-FR', {
-          weekday: 'long',
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric'
-        });
-        return formatted.charAt(0).toUpperCase() + formatted.slice(1);
-      }
-    }
-  }
-  return str;
-}
-
-/**
- * Calcule la fenêtre de livraison (11 jours livrables à compter de l'heure du jour).
+ * Calcule la liste des 11 prochaines dates de livraison autorisées.
+ * @param {Date} orderDate Date et heure de validation de la commande (par défaut : Date courante)
+ * @returns {Object} { availableDates: Date[], minDate: Date, maxDate: Date }
  */
 export function calculateDeliveryWindow(orderDate = new Date()) {
-  const dateObj = orderDate instanceof Date ? orderDate : new Date(orderDate);
-  const validDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
-  
-  const hour = validDate.getHours();
-  const day = validDate.getDay();
+  const current = new Date(orderDate);
+  const hour = current.getHours();
 
-  let leadDaysMin = 1;
-
-  if ([1, 2, 3].includes(day)) {
-    leadDaysMin = hour < 12 ? 1 : 2;
-  } else if (day === 4) {
-    leadDaysMin = 1;
-  } else if (day === 5) {
-    leadDaysMin = hour < 12 ? 3 : 4;
-  } else if (day === 6) {
-    leadDaysMin = 3;
-  } else if (day === 0) {
-    leadDaysMin = 2;
-  }
-
-  const minDate = new Date(validDate);
-  minDate.setDate(minDate.getDate() + leadDaysMin);
-  minDate.setHours(0, 0, 0, 0);
-
-  while ([0, 4, 6].includes(minDate.getDay())) {
-    minDate.setDate(minDate.getDate() + 1);
-  }
+  // Règle du Cut-off à 12h00 :
+  // Avant 12h00 -> Premier délai possible à J+1
+  // Après 12h00 (ou égal) -> Premier délai possible à J+2
+  const leadDaysMin = hour < 12 ? 1 : 2;
 
   const availableDates = [];
-  let currentDate = new Date(minDate);
+  const checkDate = new Date(current);
+  checkDate.setHours(0, 0, 0, 0);
+  
+  // Avancer du nombre de jours de délai minimum
+  checkDate.setDate(checkDate.getDate() + leadDaysMin);
 
+  // Boucle de recherche des 11 jours livrables autorisés
   while (availableDates.length < 11) {
-    if (![0, 4, 6].includes(currentDate.getDay())) {
-      availableDates.push(new Date(currentDate));
+    const dayOfWeek = checkDate.getDay(); // 0: Dimanche, 1: Lundi, ..., 6: Samedi
+    
+    // On vérifie si c'est un jour ouvert (Lundi, Mardi, Mercredi, Vendredi)
+    if (OPEN_DAYS.includes(dayOfWeek)) {
+      availableDates.push(new Date(checkDate));
     }
-    currentDate.setDate(currentDate.getDate() + 1);
+    
+    // Passer au jour suivant
+    checkDate.setDate(checkDate.getDate() + 1);
   }
 
-  const firstAvailable = availableDates.length > 0 ? availableDates[0] : minDate;
-
   return {
-    minDate,
     availableDates,
-    firstAvailableDateStr: formatDateToYYYYMMDD(firstAvailable)
+    minDate: availableDates[0] || null,
+    maxDate: availableDates[availableDates.length - 1] || null
   };
 }
 
-export function getCalculatedDeliveryDate(createdAtDate) {
-  const windowData = calculateDeliveryWindow(createdAtDate);
-  return windowData.firstAvailableDateStr;
+/**
+ * Retourne la première date disponible au format YYYY-MM-DD.
+ */
+export function getCalculatedDeliveryDate(orderDate = new Date()) {
+  const { availableDates } = calculateDeliveryWindow(orderDate);
+  if (availableDates.length > 0) {
+    return availableDates[0].toISOString().split("T")[0];
+  }
+  return new Date().toISOString().split("T")[0];
 }
 
-export function isWeekend(dateStr) {
-  if (!dateStr || dateStr === 'ALL') return false;
-  const parts = String(dateStr).split('T')[0].split('-');
-  if (parts.length === 3) {
-    const [y, m, d] = parts.map(Number);
-    const dateObj = new Date(y, m - 1, d, 12, 0, 0);
-    if (!isNaN(dateObj.getTime())) {
-      const day = dateObj.getDay();
-      return day === 0 || day === 4 || day === 6;
-    }
-  }
-  return false;
+/**
+ * Formate une date en YYYY-MM-DD.
+ */
+export function formatDateToYYYYMMDD(dateObj) {
+  if (!dateObj) return "";
+  const d = new Date(dateObj);
+  if (isNaN(d.getTime())) return "";
+  return d.toISOString().split("T")[0];
 }
+
+/**
+ * Formate une date en français lisible (ex: "Vendredi 25 septembre 2026").
+ * @param {Date|string|number} dateInput 
+ * @param {Object} options Options de formatage (optionnel)
+ * @returns {string}
+ */
+export function formatFrenchDate(dateInput, options = {}) {
+  if (!dateInput) return "";
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return String(dateInput);
+
+  const defaultOptions = {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    ...options
+  };
+
+  try {
+    const formatted = d.toLocaleDateString("fr-FR", defaultOptions);
+    return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+  } catch (err) {
+    return d.toISOString().split("T")[0];
+  }
+}
+
+export default {
+  calculateDeliveryWindow,
+  getCalculatedDeliveryDate,
+  formatDateToYYYYMMDD,
+  formatFrenchDate
+};
