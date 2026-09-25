@@ -1,111 +1,167 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { TaxAndFeeCalculator } from '../utils/TaxAndFeeCalculator';
+import React, { createContext, useContext, useState, useEffect, useMemo } from "react";
+import { useAuth } from "./AuthContext.jsx";
+import TaxAndFeeCalculator from "../utils/TaxAndFeeCalculator.js";
 
 const CartContext = createContext(null);
 
-/**
- * 🛒 CONTEXTE DE GESTION DU PANIER & CALCULS FINANCIERS CERTIFIÉS
- * Emplacement : frontend/src/context/CartContext.jsx
- * 
- * Responsabilité :
- * - Stockage des articles du panier dans localStorage
- * - Calcul certifié en temps réel via TaxAndFeeCalculator :
- *   1. Sous-total Produits HT
- *   2. TVA Alimentaire (5.5% / 20%)
- *   3. Frais de Livraison B2B Dégressifs (15€ HT / 8€ HT / Franco dès 300€ HT)
- *   4. TVA Transport (20%)
- *   5. Grand Total TTC certifié (ex: 31.08 € TTC au lieu des 13.08 € bruts)
- */
 export const CartProvider = ({ children }) => {
+  const { user } = useAuth();
+  const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
+
   const [cartItems, setCartItems] = useState(() => {
     try {
-      const savedCart = localStorage.getItem('ane_gorille_cart');
-      return savedCart ? JSON.parse(savedCart) : [];
+      const saved = localStorage.getItem(cartKey);
+      return saved ? JSON.parse(saved) : [];
     } catch (e) {
-      console.warn("Erreur chargement panier local :", e);
       return [];
     }
   });
 
-  // Synchronisation automatique dans localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('ane_gorille_cart', JSON.stringify(cartItems));
-    } catch (e) {
-      console.error("Erreur sauvegarde panier local :", e);
-    }
-  }, [cartItems]);
+      const saved = localStorage.getItem(cartKey);
+      setCartItems(saved ? JSON.parse(saved) : []);
+    } catch (e) {}
+  }, [cartKey]);
 
-  // Ajouter un produit au panier avec contrôle du stock disponible
+  useEffect(() => {
+    try {
+      localStorage.setItem(cartKey, JSON.stringify(cartItems));
+    } catch (e) {}
+  }, [cartItems, cartKey]);
+
   const addToCart = (product, quantityToAdd = 1) => {
-    setCartItems(prevItems => {
-      const existingIndex = prevItems.findIndex(item => item.id === product.id);
-      const stockMax = Number(product.stockQuantity ?? product.stock ?? 999);
+    if (!product || !product.id) return;
+
+    setCartItems((prevItems) => {
+      const existingIndex = prevItems.findIndex((item) => item.id === product.id);
+      const requestedQty = Math.max(1, Number(quantityToAdd) || 1);
+      const availableStock = Number(
+        product.stock ?? product.quantity ?? product.stockQuantity ?? 999
+      );
 
       if (existingIndex > -1) {
         const updated = [...prevItems];
         const currentQty = updated[existingIndex].quantity || 1;
-        const newQty = Math.min(currentQty + quantityToAdd, stockMax);
-        updated[existingIndex] = { ...updated[existingIndex], quantity: newQty };
+        const newQty = Math.min(availableStock, currentQty + requestedQty);
+        
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          quantity: newQty,
+          stock: availableStock
+        };
         return updated;
-      } else {
-        const initialQty = Math.min(quantityToAdd, stockMax);
-        return [...prevItems, { ...product, quantity: initialQty }];
       }
+
+      const initialQty = Math.min(availableStock, requestedQty);
+      return [
+        ...prevItems,
+        {
+          id: product.id,
+          name: product.name || product.title || "Produit sans nom",
+          title: product.title || product.name || "Produit sans nom",
+          priceHT: Number(product.priceHT ?? product.price ?? 0),
+          vatRate: Number(product.vatRate ?? (product.category === "artisanat" ? 20 : 5.5)),
+          unit: product.unit || "kg",
+          producerId: product.producerId || product.userId || "fournisseur_general",
+          producerName: product.producerName || product.farmName || product.companyName || "Producteur Partenaire",
+          stripeAccountId: product.stripeAccountId || null,
+          category: product.category || "maraichage",
+          imageUrl: product.imageUrl || product.image || "/placeholder.png",
+          quantity: initialQty,
+          stock: availableStock,
+          batchNumber: product.batchNumber || "L-2026-001"
+        }
+      ];
     });
   };
 
-  // Modifier la quantité d'un article
   const updateQuantity = (productId, newQuantity) => {
-    if (newQuantity <= 0) {
-      removeFromCart(productId);
-      return;
-    }
-    setCartItems(prevItems =>
-      prevItems.map(item => {
-        if (item.id === productId) {
-          const stockMax = Number(item.stockQuantity ?? item.stock ?? 999);
-          return { ...item, quantity: Math.min(newQuantity, stockMax) };
-        }
-        return item;
-      })
-    );
+    setCartItems((prev) => {
+      const target = prev.find((i) => i.id === productId);
+      if (!target) return prev;
+
+      const qty = Number(newQuantity);
+      if (qty <= 0) {
+        return prev.filter((i) => i.id !== productId);
+      }
+
+      const maxStock = Number(target.stock ?? 999);
+      const safeQty = Math.min(maxStock, qty);
+
+      return prev.map((item) =>
+        item.id === productId ? { ...item, quantity: safeQty } : item
+      );
+    });
   };
 
-  // Supprimer un article du panier
   const removeFromCart = (productId) => {
-    setCartItems(prevItems => prevItems.filter(item => item.id !== productId));
+    setCartItems((prev) => prev.filter((item) => item.id !== productId));
   };
 
-  // Vider totalement le panier
   const clearCart = () => {
     setCartItems([]);
-    localStorage.removeItem('ane_gorille_cart');
+    try {
+      localStorage.removeItem(cartKey);
+    } catch (e) {}
   };
 
-  // 🧮 CALCUL DES TOTAUX FINANCIERS CERTIFIÉS
-  const totals = useMemo(() => {
-    return TaxAndFeeCalculator.computeOrderTotals(cartItems);
+  const itemsCount = useMemo(() => {
+    return cartItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
   }, [cartItems]);
 
-  const value = {
-    cartItems,
-    addToCart,
-    updateQuantity,
-    removeFromCart,
-    clearCart,
-    totals,
-    // Raccourcis pour l'affichage direct dans vos boutons et récapitulatifs :
-    itemsTotalHT: totals.itemsTotalHT || 0,
-    itemsVAT: totals.itemsVAT || 0,
-    shippingFeeHT: totals.shippingFeeHT || 0,
-    shippingVAT: totals.shippingVAT || 0,
-    grandTotalTTC: totals.grandTotalTTC || 0,
-    formattedGrandTotalTTC: (totals.grandTotalTTC || 0).toFixed(2),
-    itemCount: cartItems.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0)
-  };
+  const totals = useMemo(() => {
+    return TaxAndFeeCalculator.calculateCartTotals(cartItems);
+  }, [cartItems]);
 
-  return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
+  const subOrdersGrouped = useMemo(() => {
+    const map = {};
+    cartItems.forEach((item) => {
+      const pId = item.producerId || "fournisseur_general";
+      if (!map[pId]) {
+        map[pId] = {
+          producerId: pId,
+          producerName: item.producerName || "Producteur Partenaire",
+          stripeAccountId: item.stripeAccountId || null,
+          items: [],
+          totalHT: 0,
+          totalVAT: 0
+        };
+      }
+
+      const pHT = Number(item.priceHT) || 0;
+      const qty = Number(item.quantity) || 1;
+      const vRate = Number(item.vatRate) || 5.5;
+
+      const lineHT = pHT * qty;
+      const lineVAT = lineHT * (vRate / 100);
+
+      map[pId].items.push({
+        ...item,
+        lineHT
+      });
+      map[pId].totalHT += lineHT;
+      map[pId].totalVAT += lineVAT;
+    });
+    return map;
+  }, [cartItems]);
+
+  return (
+    <CartContext.Provider
+      value={{
+        cartItems,
+        addToCart,
+        updateQuantity,
+        removeFromCart,
+        clearCart,
+        itemsCount,
+        subOrdersGrouped,
+        ...totals
+      }}
+    >
+      {children}
+    </CartContext.Provider>
+  );
 };
 
 export const useCart = () => {

@@ -1,117 +1,158 @@
-import { db } from "../config/firebase";
+import { db } from "../config/firebase.js";
 import { collection, doc, runTransaction, serverTimestamp } from "firebase/firestore";
-import { getCalculatedDeliveryDate } from "../utils/deliveryCalendar.js";
+import TaxAndFeeCalculator from "../utils/TaxAndFeeCalculator.js";
 
-/**
- * 🚚 Calculateur des Frais de Livraison B2B Dégressifs
- * - < 150 € HT : 15 € HT[cite: 7]
- * - 150 € à 299,99 € HT : 8 € HT[cite: 7]
- * - >= 300 € HT : 0 € (Franco de port)[cite: 7]
- */
-export function calculateDeliveryFee(subtotalHT) {
-  const amount = Number(subtotalHT || 0);
-  if (amount >= 300) return 0;
-  if (amount >= 150) return 8;
-  return 15;
-}
-
-/**
- * 🌾 SERVICE CENTRAL : CheckoutOrchestrator
- * Gère la ventilation financière (DSP2), la validation des stocks et l'injection Chorus Pro.
- */
 export const CheckoutOrchestrator = {
-  
   async processCheckout(buyerProfile, cartItems, checkoutOptions = {}) {
-    if (!buyerProfile?.uid || !cartItems || cartItems.length === 0) {
-      throw new Error("Données de commande invalides ou panier vide.");
+    if (!buyerProfile || !buyerProfile.uid) {
+      throw new Error("Profil acheteur non authentifié.");
+    }
+    if (!Array.isArray(cartItems) || cartItems.length === 0) {
+      throw new Error("Le panier est vide.");
     }
 
-    const role = buyerProfile.role || buyerProfile.buyerRole || "acheteur_prive";
-    const isPublicSector = role === "acheteur_public" || role === "client_public" || buyerProfile.buyerProfile === "B2G";
-    const paymentMethod = isPublicSector ? "mandat_public" : (checkoutOptions.paymentMethod || "stripe_b2b");
+    const totals = TaxAndFeeCalculator.calculateCartTotals(cartItems);
+    const orderId = `PO-CMD-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
 
-    // Validation stricte B2G : Numéro d'engagement budgétaire obligatoire[cite: 17]
-    if (isPublicSector && (!checkoutOptions.refEngagement || checkoutOptions.refEngagement.trim() === "")) {
-      throw new Error("La facturation publique Chorus Pro exige un N° d'Engagement Budgétaire valide.");
-    }
-
-    const requestedDeliveryDate = checkoutOptions.deliveryDetails?.selectedDate || getCalculatedDeliveryDate(new Date());
-    const orderRef = doc(collection(db, "orders"));
-    const orderId = orderRef.id;
-
-    try {
-      await runTransaction(db, async (transaction) => {
-        let globalTotalProductsHT = 0;
-        const productRefs = [];
-
-        // 1. Vérification atomique des stocks (Anti-Overselling)
-        for (const item of cartItems) {
-          const pRef = doc(db, "products", item.id);
-          const snap = await transaction.get(pRef);
-          
-          if (!snap.exists()) throw new Error(`Le produit ${item.title} est indisponible.`);
-          
-          const currentStock = Number(snap.data().stock || 0);
-          const requestedQty = Number(item.quantity || 1);
-          
-          if (currentStock < requestedQty) throw new Error(`Stock insuffisant pour ${item.title}.`);
-          
-          const priceHT = Number(snap.data().priceHT || item.priceHT || 0);
-          globalTotalProductsHT += priceHT * requestedQty;
-          
-          productRefs.push({ ref: pRef, newStock: currentStock - requestedQty });
-        }
-
-        // 2. Modèle Économique & Ventilation Financière (Conformité DSP2)
-        const deliveryFeeHT = calculateDeliveryFee(globalTotalProductsHT);
-        const globalTotalHT = globalTotalProductsHT + deliveryFeeHT;
-        
-        // Ségrégation des fonds : 12% pour le Hub, 88% pour le Producteur[cite: 17, 18]
-        const platformCommissionHT = globalTotalProductsHT * 0.12; 
-        const producerPayoutHT = globalTotalProductsHT * 0.88; 
-
-        // 3. Décrémentation des stocks
-        for (const { ref, newStock } of productRefs) {
-          transaction.update(ref, { stock: newStock, isAvailable: newStock > 0 });
-        }
-
-        // 4. Création de la Commande Globale
-        const orderData = {
-          id: orderId,
-          buyerId: buyerProfile.uid,
-          buyerName: buyerProfile.companyName || buyerProfile.displayName || "Acheteur",
-          siretBuyer: buyerProfile.siret || "-",
-          refEngagement: checkoutOptions.refEngagement || "-",
-          paymentMethod,
-          totalProductsHT: globalTotalProductsHT,
-          deliveryFeeHT,
-          totalHT: globalTotalHT,
-          platformCommissionHT,     // Trace comptable de la commission[cite: 11]
-          producerPayoutHT,         // Montant à transférer via Stripe Connect
-          status: "A_PREPARER",
-          deliveryDate: requestedDeliveryDate,
-          createdAt: serverTimestamp()
+    const subOrders = {};
+    cartItems.forEach((item) => {
+      const pId = item.producerId || "fournisseur_general";
+      if (!subOrders[pId]) {
+        subOrders[pId] = {
+          producerId: pId,
+          producerName: item.producerName || "Producteur Partenaire",
+          stripeAccountId: item.stripeAccountId || null,
+          items: [],
+          totalHT: 0,
+          totalVAT: 0,
+          commissionHT: 0
         };
-        transaction.set(orderRef, orderData);
+      }
 
-        // 5. Injection Chorus Pro pour le Secteur Public (B2G)[cite: 17, 18]
-        if (isPublicSector) {
-          const chorusRef = doc(collection(db, "chorus_queue"));
-          transaction.set(chorusRef, {
-            orderId,
-            buyerSiret: orderData.siretBuyer,
-            refEngagement: orderData.refEngagement,
-            totalAmountHT: globalTotalHT,
-            status: "pending_transmission",
-            createdAt: serverTimestamp()
-          });
+      const itemHT = (Number(item.priceHT) || 0) * (Number(item.quantity) || 1);
+      const itemVATRate = Number(item.vatRate) || 5.5;
+      const itemVAT = itemHT * (itemVATRate / 100);
+
+      subOrders[pId].items.push({
+        id: item.id,
+        name: item.name || item.title,
+        priceHT: item.priceHT,
+        vatRate: itemVATRate,
+        quantity: item.quantity || 1,
+        unit: item.unit || "kg",
+        batchNumber: item.batchNumber || "L-2026-001"
+      });
+      subOrders[pId].totalHT += itemHT;
+      subOrders[pId].totalVAT += itemVAT;
+      subOrders[pId].commissionHT += itemHT * 0.12;
+    });
+
+    await runTransaction(db, async (transaction) => {
+      // PHASE 1 : READS
+      const stockUpdates = [];
+
+      for (const item of cartItems) {
+        if (item.id) {
+          const productRef = doc(db, "products", item.id);
+          const productSnap = await transaction.get(productRef);
+
+          if (productSnap.exists()) {
+            const data = productSnap.data();
+
+            // 💡 Détection universelle multi-champs du stock (stock, quantity, stockQuantity)
+            const rawStock = data.stock ?? data.quantity ?? data.stockQuantity ?? data.stock_quantity;
+            const currentStock = (rawStock !== undefined && rawStock !== null) ? Number(rawStock) : 999;
+            const requestedQty = Number(item.quantity) || 1;
+
+            if (currentStock < requestedQty) {
+              throw new Error(
+                `Stock insuffisant pour "${item.name || item.title}" (${currentStock} disponible(s)).`
+              );
+            }
+
+            const stockField = (data.stock !== undefined) ? "stock" :
+                               (data.quantity !== undefined) ? "quantity" :
+                               (data.stockQuantity !== undefined) ? "stockQuantity" : "stock";
+
+            stockUpdates.push({
+              ref: productRef,
+              field: stockField,
+              newStock: Math.max(0, currentStock - requestedQty)
+            });
+          }
         }
+      }
+
+      // PHASE 2 : WRITES
+      for (const update of stockUpdates) {
+        transaction.update(update.ref, { 
+          [update.field]: update.newStock,
+          isAvailable: update.newStock > 0
+        });
+      }
+
+      const orderRef = doc(db, "orders", orderId);
+      transaction.set(orderRef, {
+        orderId,
+        buyerId: buyerProfile.uid,
+        buyerName: buyerProfile.displayName || buyerProfile.companyName || "Client B2B",
+        buyerCompany: buyerProfile.companyName || "-",
+        buyerSiret: buyerProfile.siret || "-",
+        buyerRole: buyerProfile.role || "acheteur_prive",
+        isPublicSector: buyerProfile.role === "acheteur_public",
+        refEngagement: checkoutOptions.refEngagement || null,
+        paymentMethod: checkoutOptions.paymentMethod || "stripe_card",
+        paymentStatus: checkoutOptions.paymentMethod === "mandat_public" ? "PENDING_CHORUS" : "PAID_ESCROW",
+        deliveryDate: checkoutOptions.deliveryDate || new Date().toISOString(),
+        deliveryInstructions: checkoutOptions.deliveryInstructions || "",
+        status: "A_PREPARER",
+        totals,
+        subOrders,
+        createdAt: serverTimestamp()
       });
 
-      return { success: true, orderId, paymentMethod };
-    } catch (error) {
-      console.error("[CheckoutOrchestrator] Échec :", error);
-      throw new Error(error.message || "Échec de la transaction sécurisée.");
-    }
+      Object.entries(subOrders).forEach(([producerId, subData]) => {
+        const subOrderRef = doc(collection(db, "sub_orders"));
+        transaction.set(subOrderRef, {
+          subOrderId: `${orderId}-${producerId.substring(0, 5)}`,
+          parentOrderId: orderId,
+          producerId,
+          producerName: subData.producerName,
+          stripeAccountId: subData.stripeAccountId,
+          buyerName: buyerProfile.companyName || buyerProfile.displayName,
+          buyerSiret: buyerProfile.siret,
+          items: subData.items,
+          totalHT: subData.totalHT,
+          totalVAT: subData.totalVAT,
+          totalTTC: subData.totalHT + subData.totalVAT,
+          marketplaceCommissionHT: subData.commissionHT,
+          deliveryDate: checkoutOptions.deliveryDate,
+          deliveryInstructions: checkoutOptions.deliveryInstructions,
+          status: "A_PREPARER",
+          createdAt: serverTimestamp()
+        });
+      });
+
+      if (buyerProfile.role === "acheteur_public") {
+        const chorusRef = doc(collection(db, "chorus_queue"));
+        transaction.set(chorusRef, {
+          orderId,
+          refEngagement: checkoutOptions.refEngagement,
+          buyerSiret: buyerProfile.siret,
+          amountTTC: totals.grandTotalTTC,
+          status: "PENDING_TRANSMISSION",
+          createdAt: serverTimestamp()
+        });
+      }
+    });
+
+    return {
+      success: true,
+      orderId,
+      amountTTC: totals.grandTotalTTC,
+      paymentMethod: checkoutOptions.paymentMethod
+    };
   }
 };
+
+export default CheckoutOrchestrator;

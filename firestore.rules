@@ -2,16 +2,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-   // =========================================================================
-    //   1. FONCTIONS UTILITAIRES & CONTRÔLE D'ACCÈS SÉCURISÉ (RBAC VIA TOKEN)
+    // =========================================================================
+    // 🛡️ 1. FONCTIONS UTILITAIRES & CONTRÔLE D'ACCÈS SÉCURISÉ (RBAC VIA TOKEN)
     // =========================================================================
     
-    // Vérifie si l'utilisateur est authentifié
     function isSignedIn() {
       return request.auth != null && request.auth.uid != null;
     }
     
-    // Vérifie si l'utilisateur accède à sa propre ressource
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -21,145 +19,62 @@ service cloud.firestore {
       return request.auth.token != null ? request.auth.token.role : '';
     }
 
-    // Vérificateurs de rôles ultra-rapides
-    function isAdmin() {
-      return isSignedIn() && (getUserRole() == 'admin' || getUserRole() == 'administrator');
-    }
+    // Vérificateurs de la matrice des rôles
+    function isAdmin() { return isSignedIn() && (getUserRole() == 'admin' || getUserRole() == 'administrator'); }
+    function isProducer() { return isSignedIn() && (getUserRole() == 'producteur' || getUserRole() == 'producer'); }
+    function isArtisan() { return isSignedIn() && getUserRole() == 'artisan'; }
+    function isCarrier() { return isSignedIn() && (getUserRole() == 'livreur' || getUserRole() == 'carrier'); }
+    function isPublicBuyer() { return isSignedIn() && (getUserRole() == 'acheteur_public' || getUserRole() == 'client_public'); }
+    function isPrivateBuyer() { return isSignedIn() && (getUserRole() == 'acheteur_prive' || getUserRole() == 'client_pro'); }
 
-    function isProducer() {
-      return isSignedIn() && (getUserRole() == 'producteur' || getUserRole() == 'producer' || getUserRole() == 'fournisseur');
-    }
-
-    function isCarrier() {
-      return isSignedIn() && (getUserRole() == 'livreur' || getUserRole() == 'carrier');
-    }
-
-    function isBuyer() {
-      return isSignedIn() && (
-        getUserRole() == 'acheteur_prive' || 
-        getUserRole() == 'acheteur_public' || 
-        getUserRole() == 'client_pro' || 
-        getUserRole() == 'client_public'
-      );
-    }
+    function isSeller() { return isProducer() || isArtisan(); }
+    function isBuyer() { return isPublicBuyer() || isPrivateBuyer(); }
 
     // =========================================================================
-    // 👤 2. COLLECTION : USERS (Profils & Paramètres Utilisateurs)
+    // 👤 2. COLLECTION : USERS
     // =========================================================================
     match /users/{userId} {
-      // Lecture : Tout utilisateur authentifié peut consulter son profil et les profils utiles
       allow read: if isSignedIn();
-      
-      // Création : Un utilisateur inscrit crée son profil initial à la connexion
       allow create: if isSignedIn() && request.auth.uid == userId;
-      
-      // Mise à jour : L'utilisateur met à jour son profil (sans modifier son rôle) ou l'admin
-      allow update: if (
-        isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
-      ) || isAdmin();
-      
-      // Suppression : Réservé aux administrateurs
+      // Bloque la modification du rôle par l'utilisateur lui-même
+      allow update: if (isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))) || isAdmin();
       allow delete: if isAdmin();
     }
 
-
     // =========================================================================
-    // 🥕 3. COLLECTION : PRODUCTS (Catalogue Produit & Stocks)
+    // 🛒 3. COLLECTION : PRODUCTS (Catalogue Dual Âne/Gorille)
     // =========================================================================
     match /products/{productId} {
-      // Lecture : Publique / Accessible à tous pour la boutique et la gestion
       allow read: if true;
-      
-      // Création / Modification / Suppression : Tout utilisateur connecté
-      allow create, update, delete: if isSignedIn();
+      allow create, update, delete: if isSeller() || isAdmin();
     }
 
-
     // =========================================================================
-    // 📦 4. COLLECTION : ORDERS (Commandes Globales)
+    // 📦 4. COLLECTION : ORDERS & SUB_ORDERS
     // =========================================================================
     match /orders/{orderId} {
-      // Lecture : L'acheteur de la commande, le producteur concerné, le livreur ou l'admin
-      allow read: if isSignedIn() && (
-        resource.data.buyerId == request.auth.uid ||
-        resource.data.producerId == request.auth.uid ||
-        (resource.data.producerIds != null && request.auth.uid in resource.data.producerIds) ||
-        (resource.data.producerIds != null && resource.data.producerIds.hasAny([request.auth.uid])) ||
-        isProducer() ||
-        isCarrier() ||
-        isAdmin()
-      );
-      
-      // Création : Tout utilisateur connecté lors de la validation du panier
-      allow create: if isSignedIn();
-      
-      // Mise à jour : Tout utilisateur connecté concerné
-      allow update: if isSignedIn();
-      
-      // Suppression : Réservé aux administrateurs
+      allow read: if isSignedIn() && (resource.data.buyerId == request.auth.uid || isSeller() || isCarrier() || isAdmin());
+      allow create: if isBuyer() || isAdmin();
+      allow update: if isSignedIn(); 
       allow delete: if isAdmin();
     }
 
-
-    // =========================================================================
-    // 🚜 5. COLLECTION : SUB_ORDERS (Sous-Commandes par Producteur)
-    // =========================================================================
     match /sub_orders/{subOrderId} {
-      // Lecture : Le producteur concerné, l'acheteur, le livreur ou tout producteur/admin connecté
-      allow read: if isSignedIn() && (
-        resource.data.producerId == request.auth.uid ||
-        resource.data.buyerId == request.auth.uid ||
-        isProducer() ||
-        isCarrier() ||
-        isAdmin()
-      );
-      
-      // Création : Généré lors du checkout
-      allow create: if isSignedIn();
-      
-      // Mise à jour (Lot HACCP, statut A_RAMASSER, etc.) : Tout utilisateur connecté concerné
-      allow update: if isSignedIn();
-      
-      // Suppression : Administrateurs uniquement
+      allow read: if isSignedIn() && (resource.data.producerId == request.auth.uid || resource.data.buyerId == request.auth.uid || isCarrier() || isAdmin());
+      allow create, update: if isSignedIn();
       allow delete: if isAdmin();
     }
 
+    // =========================================================================
+    // 📄 5. DOCUMENTS, ROUTES, CHORUS & CARTS
+    // =========================================================================
+    match /documents/{docId} { allow read, write: if isSignedIn(); }
+    match /routes/{routeId} { allow read, write: if isCarrier() || isAdmin(); }
+    match /chorus_queue/{queueId} { allow read, write: if isPublicBuyer() || isAdmin(); }
+    match /carts/{cartUserId} { allow read, write: if isOwner(cartUserId); }
 
     // =========================================================================
-    // 📄 6. COLLECTION : DOCUMENTS (Bons de Livraison & Factures Factur-X)
-    // =========================================================================
-    match /documents/{docId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
-    }
-
-
-    // =========================================================================
-    // 🚚 7. COLLECTION : ROUTES / TOURS (Feuilles de Route Logistiques)
-    // =========================================================================
-    match /routes/{routeId} {
-      allow read, write: if isSignedIn();
-    }
-
-
-    // =========================================================================
-    // 🏛️ 8. COLLECTION : CHORUS_QUEUE (File de Télétransmission B2G Chorus Pro)
-    // =========================================================================
-    match /chorus_queue/{queueId} {
-      allow read, write: if isSignedIn();
-    }
-
-
-    // =========================================================================
-    // 🛒 9. COLLECTION : CARTS (Paniers Individuels Réseau)
-    // =========================================================================
-    match /carts/{cartUserId} {
-      allow read, write: if isSignedIn();
-    }
-
-
-    // =========================================================================
-    // 🔒 10. VERROUILLAGE SÉCURITÉ GÉNÉRAL PAR DÉFAUT
+    // 🔒 6. VERROUILLAGE SÉCURITÉ GÉNÉRAL PAR DÉFAUT
     // =========================================================================
     match /{document=**} {
       allow read, write: if false;

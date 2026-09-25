@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-// ⚠️ CORRECTION : Le chemin remonte de deux niveaux depuis components/navigation/
-import { useAuth } from "../../context/AuthContext";
-import ShopContainer from "../../pages/Boutique/ShopContainer";
-import MiseEnRayon from "../../pages/MiseEnRayon/MiseEnRayon";
-import OrderPreparation from "../../pages/Preparation/OrderPreparation";
-import RoutePlanner from "../../pages/FeuilleDeRoute/RoutePlanner";
-import OrderTracking from "../../pages/SuiviDesCommandes/OrderTracking";
-import PiecesComptables from "../../pages/PiecesComptables/PiecesComptables";
-import MonProfilContainer from "../../pages/MonProfil/MonProfilContainer";
+import { useAuth } from "../../context/AuthContext.jsx";
+import ShopContainer from "../../pages/Boutique/ShopContainer.jsx";
+import MiseEnRayon from "../../pages/MiseEnRayon/MiseEnRayon.jsx";
+import OrderPreparation from "../../pages/Preparation/OrderPreparation.jsx";
+import RoutePlanner from "../../pages/FeuilleDeRoute/RoutePlanner.jsx";
+import OrderTracking from "../../pages/SuiviDesCommandes/OrderTracking.jsx";
+import PiecesComptables from "../../pages/PiecesComptables/PiecesComptables.jsx";
+import MonProfilContainer from "../../pages/MonProfil/MonProfilContainer.jsx";
 
 export default function Workspace() {
   const { user, userProfile } = useAuth();
@@ -23,20 +22,25 @@ export default function Workspace() {
     if (module) setCurrentModule(module);
   }, [location.search]);
 
+  // Moteur de Contrôle d'Accès Strict (RBAC)
   const renderAuthorizedModule = () => {
     switch (role) {
+      // PRODUCTEURS / MARAÎCHERS
       case "producteur":
       case "producer":
+      case "artisan":
         if (currentModule === "prep") return <OrderPreparation />;
         if (currentModule === "compta") return <PiecesComptables />;
         if (currentModule === "profil") return <MonProfilContainer />;
         return <MiseEnRayon />;
 
+      // LIVREURS / LOGISTIQUE
       case "livreur":
       case "carrier":
         if (currentModule === "profil") return <MonProfilContainer />;
         return <RoutePlanner />;
 
+      // ADMINISTRATEURS
       case "admin":
       case "administrator":
         if (currentModule === "rayon") return <MiseEnRayon />;
@@ -47,6 +51,7 @@ export default function Workspace() {
         if (currentModule === "profil") return <MonProfilContainer />;
         return <ShopContainer />;
 
+      // ACHETEURS PRIVÉS (B2B) ET PUBLICS (B2G)
       case "acheteur_public":
       case "client_public":
       case "acheteur_prive":

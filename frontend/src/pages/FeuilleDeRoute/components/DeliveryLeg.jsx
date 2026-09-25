@@ -1,17 +1,24 @@
 import React, { useState } from 'react';
-import { OrderWorkflowService } from '../../../services/OrderWorkflowService';
-import { MapPinCheck, Thermometer, UserCheck, Loader2 } from 'lucide-react';
+import { OrderWorkflowService } from '../../../services/OrderWorkflowService.js';
+import { MapPinCheck, Thermometer, UserCheck, Loader2, AlertTriangle } from 'lucide-react';
 
 export default function DeliveryLeg({ order, onDeliveryComplete }) {
   const [tempHaccp, setTempHaccp] = useState("");
   const [recipientName, setRecipientName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleFinalDelivery = async () => {
-    if (!tempHaccp) return alert("HACCP : La température du caisson frigorifique est obligatoire.");
-    if (!recipientName) return alert("Veuillez indiquer le nom de la personne qui réceptionne la commande.");
+    setError("");
+    const numTemp = Number(tempHaccp);
     
-    // Simulation de la signature numérique du client (Canvas à implémenter plus tard)
+    if (!tempHaccp) return setError("HACCP : La température du caisson est obligatoire.");
+    if (numTemp < 10 || numTemp > 15) {
+      return setError(`HACCP Non Conforme : La température de ${numTemp}°C est hors tolérance (10°C - 15°C). Veuillez déclencher la procédure de retrait/rappel.`);
+    }
+    if (!recipientName) return setError("Veuillez indiquer le nom du réceptionnaire.");
+    
+    // Simulation POD
     const digitalSignature = "SIGNATURE_BASE_64_PLACEHOLDER";
 
     try {
@@ -22,10 +29,10 @@ export default function DeliveryLeg({ order, onDeliveryComplete }) {
         digitalSignature, 
         recipientName
       );
-      alert("Livraison validée avec succès ! Les documents comptables ont été générés.");
+      alert("Livraison validée ! Les documents comptables ont été générés.");
       if (onDeliveryComplete) onDeliveryComplete();
-    } catch (error) {
-      alert("Erreur critique de livraison : " + error.message);
+    } catch (err) {
+      setError("Erreur critique : " + err.message);
     } finally {
       setLoading(false);
     }
@@ -36,10 +43,17 @@ export default function DeliveryLeg({ order, onDeliveryComplete }) {
       <div className="flex justify-between items-center border-b border-emerald-100 pb-3">
         <div>
           <h4 className="font-bold text-emerald-950 text-xs uppercase tracking-wider">Livraison Finale</h4>
-          <p className="text-sm font-black text-slate-800 mt-1">{order.buyerName}</p>
+          <p className="text-sm font-black text-slate-800 mt-1">{order.buyerName || "Client inconnu"}</p>
         </div>
         <MapPinCheck className="text-emerald-600" size={28} />
       </div>
+
+      {error && (
+        <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl flex items-start gap-2">
+          <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
 
       <div className="space-y-3 pt-1">
         <div className="relative">
@@ -69,16 +83,10 @@ export default function DeliveryLeg({ order, onDeliveryComplete }) {
       <button 
         onClick={handleFinalDelivery}
         disabled={loading || !tempHaccp || !recipientName}
-        className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white font-black py-3 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2"
+        className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white font-black py-3 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
       >
-        {loading ? (
-          <>
-            <Loader2 size={16} className="animate-spin" />
-            <span>Clôture et Facturation...</span>
-          </>
-        ) : (
-          "Valider la remise au client"
-        )}
+        {loading ? <Loader2 size={16} className="animate-spin" /> : null}
+        {loading ? "Clôture et Facturation..." : "Valider la remise au client"}
       </button>
     </div>
   );
