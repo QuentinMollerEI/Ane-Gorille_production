@@ -1,380 +1,477 @@
-import React, { useMemo } from "react";
-import { 
-  ShoppingCart, 
-  Trash2, 
-  ArrowLeft, 
-  Package, 
-  Minus, 
-  Plus, 
-  Truck, 
-  Percent, 
-  CheckCircle2, 
-  Store, 
-  Layers,
+/**
+ * 🛒 VUE UNIFIÉE DE CHECKOUT : CheckoutView.jsx
+ * Emplacement : frontend/src/pages/Checkout/components/CheckoutView.jsx
+ */
+import React, { useState, useEffect } from "react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
+import { useAuth } from "../../../context/AuthContext";
+import { CheckoutOrchestrator } from "../../../services/CheckoutOrchestrator";
+import { TaxAndFeeCalculator } from "../../../utils/TaxAndFeeCalculator";
+import { calculateDeliveryWindow } from "../../../utils/deliveryCalendar";
+import {
+  CreditCard,
+  Building,
+  ShieldCheck,
+  Loader2,
+  AlertTriangle,
+  FileText,
+  Truck,
+  CheckCircle2,
+  Calendar,
+  Lock,
 } from "lucide-react";
-import CheckoutView from "../../../components/Checkout/CheckoutView";
-import { calculateDeliveryFee } from "../../../services/CheckoutOrchestrator";
+
+// Initialisation sécurisée de Stripe
+const rawStripeKey = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
+const stripePromise = (typeof rawStripeKey === "string" && rawStripeKey.trim().length > 0)
+  ? loadStripe(rawStripeKey.trim())
+  : null;
 
 /**
- * 🌾 COMPOSANT : CartContainer.jsx
- * Panier d'approvisionnement B2B / B2G.
- * - Commande unique 1 producteur : Présentation classique sans découpage ni message spécifique.
- * - Commande multi-producteurs : Découpage explicite par sous-commandes et message logistique.
- * - Tarification dégressive B2B (15€ HT / 8€ HT / Franco dès 300€ HT) et double ventilation de TVA (5.5% et 20%).
+ * 🚚 SÉLECTEUR DE LIVRAISON CONFORME AUX RÈGLES MÉTIERS LOGISTIQUES ÂNE & GORILLE
  */
-export default function CartContainer({
-  cart = [],
-  onUpdateQuantity,
-  onRemoveItem,
-  onClearCart,
-  onBackToShop,
-}) {
-  // 1. Regroupement par Producteur / Fournisseur
-  const subOrdersGrouped = useMemo(() => {
-    const map = {};
+function IntegratedDeliverySelector({ onDeliveryChange }) {
+  const [availableDates, setAvailableDates] = useState([]);
+  const [selectedDate, setSelectedDate] = useState("");
+  const [instructions, setInstructions] = useState("");
 
-    cart.forEach((item) => {
-      const pId = item.producerId || item.producer || item.producerUid || item.supplierId || item.userId || "PROD_LOCAL";
-      const pName = item.producerCompany || item.producerName || item.producer || item.supplierName || "Exploitation Locale";
-      
-      if (!map[pId]) {
-        map[pId] = {
-          producerId: pId,
-          producerName: pName,
-          producerCity: item.producerCity || item.city || "Local",
-          items: [],
-          subtotalHT: 0,
-        };
+  useEffect(() => {
+    // Calcul dynamique des 11 jours livrables autorisés selon la date/heure actuelle
+    const windowData = calculateDeliveryWindow(new Date());
+    const dates = windowData.availableDates || [];
+    setAvailableDates(dates);
+
+    if (dates.length > 0) {
+      const defaultDateStr = dates[0].toISOString().split("T")[0];
+      setSelectedDate(defaultDateStr);
+      if (onDeliveryChange) {
+        onDeliveryChange({
+          selectedDate: defaultDateStr,
+          deliveryWindow: "Matin (06h00 - 08h00)",
+          instructions: ""
+        });
       }
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-      const pHT = Number(item.priceHT ?? item.price ?? 0);
-      const qty = Number(item.quantity ?? item.qty ?? 1);
-      const lineHT = pHT * qty;
-
-      map[pId].items.push({
-        ...item,
-        priceHT: pHT,
-        quantity: qty,
-        lineHT: lineHT,
+  const handleDateSelect = (e) => {
+    const val = e.target.value;
+    setSelectedDate(val);
+    if (onDeliveryChange) {
+      onDeliveryChange({
+        selectedDate: val,
+        deliveryWindow: "Matin (06h00 - 08h00)",
+        instructions
       });
+    }
+  };
 
-      map[pId].subtotalHT += lineHT;
-    });
+  const handleInstructionsChange = (e) => {
+    const val = e.target.value;
+    setInstructions(val);
+    if (onDeliveryChange) {
+      onDeliveryChange({
+        selectedDate,
+        deliveryWindow: "Matin (06h00 - 08h00)",
+        instructions: val
+      });
+    }
+  };
 
-    return Object.values(map);
-  }, [cart]);
+  return (
+    <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+      <div className="flex items-center gap-2 text-slate-900 font-extrabold text-xs uppercase tracking-wider border-b border-slate-200 pb-2">
+        <Truck size={16} className="text-emerald-700" />
+        <span>Planification Logistique & Tournée de Livraison</span>
+      </div>
+      
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+            <Calendar size={13} /> Date de livraison souhaitée *
+          </label>
+          <select 
+            value={selectedDate} 
+            onChange={handleDateSelect}
+            className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none"
+          >
+            {availableDates.map((d, i) => (
+              <option key={i} value={d.toISOString().split("T")[0]}>
+                {d.toLocaleDateString("fr-FR", { weekday: 'long', day: 'numeric', month: 'long' })}
+              </option>
+            ))}
+          </select>
+        </div>
 
-  const isMultiProducer = subOrdersGrouped.length > 1;
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-slate-700">Instructions pour le livreur (Optionnel)</label>
+          <textarea
+            value={instructions}
+            onChange={handleInstructionsChange}
+            placeholder="Ex: Code portail 1234, livrer au niveau du quai B..."
+            className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-xs text-slate-900 resize-none h-20 focus:ring-2 focus:ring-emerald-500 outline-none"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  // 2. Calcul des totaux généraux consolidés
-  const globalSubtotalHT = useMemo(() => {
-    return subOrdersGrouped.reduce((sum, group) => sum + group.subtotalHT, 0);
-  }, [subOrdersGrouped]);
+/**
+ * 💳 FORMULAIRE STRIPE SÉCURISÉ (Sous-composant)
+ */
+function StripeCardForm({ cartItems, totals, deliveryDetails, onCheckoutSuccess, buyerProfile, refEngagement }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [cardError, setCardError] = useState(null);
 
-  // 3. Calcul des frais de livraison B2B dégressifs
-  const deliveryFeeHT = typeof calculateDeliveryFee === "function"
-    ? calculateDeliveryFee(globalSubtotalHT)
-    : globalSubtotalHT >= 300 ? 0 : globalSubtotalHT >= 150 ? 8 : 15;
+  const { totalProductsHT, vatProductsTotal, deliveryFeeHT, vatDelivery, grandTotalTTC } = totals;
 
-  // 4. Calculs de TVA (TVA 5.5% Alimentation + TVA 20% Transport en Régime Réel)
-  const foodVAT = globalSubtotalHT * 0.055;
-  const deliveryFeeVAT = deliveryFeeHT * 0.20;
-  const totalTTC = globalSubtotalHT + foodVAT + deliveryFeeHT + deliveryFeeVAT;
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
 
-  // 5. Progression vers le Franco de port (300 € HT)
-  const remainingForFreeShipping = Math.max(0, 300 - globalSubtotalHT);
-  const progressPercent = Math.min(100, (globalSubtotalHT / 300) * 100);
+    setIsProcessing(true);
+    setCardError(null);
 
-  if (cart.length === 0) {
+    try {
+      // 1. Appel de l'orchestrateur (qui devrait générer un PaymentIntent côté serveur puis confirmer ici)
+      // Pour l'instant, on simule l'orchestration directe telle que définie dans votre structure :
+      const checkoutOptions = {
+        paymentMethod: "stripe_card",
+        refEngagement: refEngagement || "-",
+        deliveryAddress: buyerProfile.address || "Adresse d'exploitation",
+        deliveryDetails,
+      };
+
+      const result = await CheckoutOrchestrator.processCheckout(buyerProfile, cartItems, checkoutOptions);
+      
+      if (result.success && onCheckoutSuccess) {
+        onCheckoutSuccess(result.orderId);
+      }
+    } catch (err) {
+      setCardError(err.message || "Une erreur est survenue lors du paiement.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Récapitulatif Financier Certifié */}
+      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs font-sans text-slate-700">
+        <div className="flex justify-between items-center text-slate-600">
+          <span>Sous-total Produits HT :</span>
+          <span className="font-mono font-bold">{totalProductsHT?.toFixed(2)} €</span>
+        </div>
+        <div className="flex justify-between items-center text-slate-600">
+          <span>TVA Alimentaire (5.5%) :</span>
+          <span className="font-mono font-bold">{vatProductsTotal?.toFixed(2)} €</span>
+        </div>
+        <div className="flex justify-between items-center text-slate-600 pt-1 border-t border-slate-200/60">
+          <span>Frais de Port B2B (Dégressifs) :</span>
+          <span className="font-mono font-bold text-amber-900">{deliveryFeeHT === 0 ? "Offert" : `${deliveryFeeHT?.toFixed(2)} €`}</span>
+        </div>
+        <div className="flex justify-between items-center text-slate-600">
+          <span>TVA Transport (20.0%) :</span>
+          <span className="font-mono font-bold">{vatDelivery?.toFixed(2)} €</span>
+        </div>
+
+        <div className="flex justify-between items-center text-slate-900 font-black text-sm pt-2 border-t border-slate-300">
+          <span>Montant Total à Régler TTC :</span>
+          <span className="font-mono text-emerald-700 text-base">{grandTotalTTC?.toFixed(2)} € TTC</span>
+        </div>
+      </div>
+
+      {/* Saisie de Carte Sécurisée */}
+      <div className="p-4 bg-white border border-slate-300 rounded-xl shadow-xs space-y-2">
+        <label className="flex items-center gap-1.5 text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+          <Lock size={13} className="text-emerald-700" />
+          Coordonnées de Carte Bancaire (SSL)
+        </label>
+        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+          <CardElement
+            options={{
+              style: {
+                base: {
+                  fontSize: "14px",
+                  color: "#0f172a",
+                  fontFamily: "sans-serif",
+                  "::placeholder": { color: "#94a3b8" },
+                },
+                invalid: { color: "#dc2626" },
+              },
+            }}
+            onChange={(e) => setCardError(e.error ? e.error.message : null)}
+          />
+        </div>
+      </div>
+
+      {cardError && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 font-bold rounded-xl text-xs">
+          ⚠️ {cardError}
+        </div>
+      )}
+
+      {/* Bouton de Paiement avec le Prix VRAI (Grand Total TTC) */}
+      <button
+        type="submit"
+        disabled={isProcessing || !stripe || cartItems.length === 0}
+        className="w-full py-3.5 bg-gradient-to-r from-yellow-300 via-amber-300 to-yellow-400 hover:from-yellow-400 hover:to-amber-400 text-amber-950 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-[0.99]"
+      >
+        {isProcessing ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+        <span>
+          {isProcessing
+            ? "Traitement sécurisé en cours..."
+            : `Payer Maintenant par Carte (${grandTotalTTC?.toFixed(2)} € TTC)`}
+        </span>
+      </button>
+    </form>
+  );
+}
+
+/**
+ * 🛒 VUE PRINCIPALE DE CHECKOUT : CheckoutView
+ */
+export default function CheckoutView({ cartItems = [], clearCart, onCheckoutSuccess }) {
+  const { user, userProfile } = useAuth();
+  const profile = userProfile || user || {};
+
+  const isPublicBuyer =
+    profile.role === "acheteur_public" ||
+    profile.role === "client_public" ||
+    profile.buyerProfile === "B2G";
+
+  const [paymentMethod, setPaymentMethod] = useState(isPublicBuyer ? "mandat_public" : "stripe_card");
+  const [refEngagement, setRefEngagement] = useState(profile.refEngagement || profile.defaultEngagement || "");
+  const [deliveryDetails, setDeliveryDetails] = useState({
+    selectedDate: "",
+    deliveryWindow: "Matin (06h00 - 08h00)",
+    instructions: "",
+  });
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [successOrderId, setSuccessOrderId] = useState(null);
+
+  // Totaux financiers
+  const totals = TaxAndFeeCalculator.calculateTotals ? TaxAndFeeCalculator.calculateTotals(cartItems) : { grandTotalTTC: 0 };
+  const displayTotalTTC = totals.grandTotalTTC ? totals.grandTotalTTC.toFixed(2) : totals.totalTTC?.toFixed(2) || "0.00";
+
+  const handleDirectCheckout = async (e) => {
+    if (e && typeof e.preventDefault === "function") e.preventDefault();
+    setError(null);
+
+    if (!deliveryDetails?.selectedDate) {
+      setError("Veuillez sélectionner une date de livraison valide dans le calendrier.");
+      return;
+    }
+
+    if (paymentMethod === "mandat_public" && (!refEngagement || refEngagement.trim() === "")) {
+      setError("Le numéro d'engagement budgétaire est obligatoire pour Chorus Pro (B2G).");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const checkoutOptions = {
+        paymentMethod,
+        refEngagement: refEngagement || "-",
+        deliveryAddress: profile.address || "Adresse d'exploitation",
+        deliveryDetails,
+      };
+
+      const result = await CheckoutOrchestrator.processCheckout(profile, cartItems, checkoutOptions);
+
+      if (result.success) {
+        setSuccessOrderId(result.orderId);
+        if (clearCart) clearCart();
+        if (onCheckoutSuccess) onCheckoutSuccess(result.orderId);
+      }
+    } catch (err) {
+      console.error("[CheckoutView] Erreur checkout :", err);
+      setError(err.message || "Erreur lors de la validation de votre commande.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- RENDU SUCCÈS ---
+  if (successOrderId) {
     return (
-      <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center space-y-4">
-        <Package size={48} className="mx-auto text-gray-300" />
-        <h3 className="text-lg font-bold text-gray-800">Votre panier est actuellement vide</h3>
-        <p className="text-gray-500 max-w-sm mx-auto">
-          Explorez notre catalogue pour vous approvisionner directement auprès des maraîchers.
+      <div className="p-8 bg-emerald-50 border border-emerald-200 rounded-3xl text-center space-y-4 animate-fade-in">
+        <CheckCircle2 size={48} className="mx-auto text-emerald-600" />
+        <h2 className="text-xl font-black text-emerald-950">Commande Validée avec Succès !</h2>
+        <p className="text-xs text-emerald-800 font-medium">
+          Référence : <strong>#{successOrderId}</strong> — Montant : <strong>{displayTotalTTC} € TTC</strong>
         </p>
-        <button
-          onClick={onBackToShop}
-          className="px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-black rounded-2xl text-xs uppercase tracking-wider transition-colors inline-block cursor-pointer shadow-sm"
-        >
-          Découvrir les produits
-        </button>
+        <p className="text-xs text-emerald-700">
+          Livraison prévue le <strong>{deliveryDetails.selectedDate}</strong>.
+        </p>
       </div>
     );
   }
 
+  // --- RENDU PRINCIPAL ---
   return (
-    <div className="space-y-6 animate-fade-in max-w-6xl mx-auto pb-12 text-xs">
-      {/* En-tête de navigation du panier */}
-      <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
-            <ShoppingCart size={26} />
-          </div>
-          <div>
-            <h2 className="text-xl font-black text-gray-900">Votre Panier d'Approvisionnement</h2>
-            <p className="text-xs text-gray-500 font-semibold">
-              {isMultiProducer ? (
-                <>Commande groupée divisée en <strong className="text-emerald-800 font-bold">{subOrdersGrouped.length} sous-commandes producteurs</strong></>
-              ) : (
-                <>Commande directe auprès de <strong className="text-emerald-800 font-bold">{subOrdersGrouped[0]?.producerName || "Exploitation Locale"}</strong></>
-              )}
-            </p>
-          </div>
+    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6 text-xs text-slate-800">
+      <h2 className="text-base font-black text-slate-900 border-b border-slate-150 pb-3 flex items-center justify-between">
+        <span>Validation & Règlement Logistique</span>
+        <span className="font-mono text-emerald-700 text-sm font-black">{displayTotalTTC} € TTC</span>
+      </h2>
+
+      {error && (
+        <div className="p-3.5 bg-red-50 border border-red-200 text-red-800 rounded-xl font-bold flex items-center gap-2">
+          <AlertTriangle size={16} className="shrink-0 text-red-600" />
+          <span>{error}</span>
         </div>
-        <button
-          onClick={onBackToShop}
-          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-2xl transition-colors flex items-center gap-2 cursor-pointer"
-        >
-          <ArrowLeft size={16} />
-          <span>Continuer vos achats</span>
-        </button>
-      </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* COLONNE GAUCHE : DÉTAIL DU PANIER / SOUS-COMMANDES */}
-        <div className="lg:col-span-7 space-y-5">
-          {/* 🚚 BARRE DE PROGRESSION INCITATIVE VERS LE FRANCO DE PORT */}
-          <div className="bg-emerald-50/70 border border-emerald-200 rounded-3xl p-4 space-y-2.5 shadow-sm">
-            <div className="flex items-center justify-between font-extrabold text-[11px]">
-              <span className="flex items-center gap-1.5 text-emerald-900">
-                <Truck size={16} className="text-emerald-700" />
-                {globalSubtotalHT >= 300 ? (
-                  <span className="text-emerald-800 font-black flex items-center gap-1">
-                    <CheckCircle2 size={14} className="text-emerald-600" />
-                    Livraison OFFERTE (Franco de port atteint) !
-                  </span>
-                ) : (
-                  <span>
-                    Plus que <strong className="text-emerald-950 font-mono">{remainingForFreeShipping.toFixed(2)} € HT</strong> pour la livraison OFFERTE !
-                  </span>
-                )}
-              </span>
-              <span className="text-emerald-800 font-mono text-[10px]">{progressPercent.toFixed(0)}%</span>
-            </div>
+      {/* 1. Sélecteur de livraison logistique conforme */}
+      <IntegratedDeliverySelector onDeliveryChange={(details) => setDeliveryDetails(details)} />
 
-            {/* Jauge visuelle */}
-            <div className="w-full bg-emerald-200/60 rounded-full h-2.5 overflow-hidden">
-              <div
-                className="bg-emerald-700 h-full rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
+      {/* 2. Mode de paiement */}
+      <div className="space-y-4">
+        <h3 className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">
+          Mode de Règlement ({displayTotalTTC} € TTC)
+        </h3>
 
-            {/* Repères des paliers */}
-            <div className="flex justify-between text-[9px] font-bold text-gray-500 pt-0.5">
-              <span>Standard (&lt;150€ HT = 15€)</span>
-              <span>Incitatif (150€-299€ = 8€)</span>
-              <span className="text-emerald-800 font-black">Franco (≥300€ = 0€)</span>
-            </div>
-          </div>
-
-          {/* MESSAGE D'INFORMATION SPÉCIFIQUE MULTI-PRODUCTEURS (Affiché UNIQUEMENT si multi-producteurs) */}
-          {isMultiProducer && (
-            <div className="bg-blue-50/80 border border-blue-200 rounded-2xl p-3.5 text-blue-900 flex items-start gap-2.5">
-              <Layers size={18} className="text-blue-700 shrink-0 mt-0.5" />
-              <div className="space-y-1 text-[11px] leading-relaxed">
-                <span className="font-extrabold block">
-                  Organisation Logistique : {subOrdersGrouped.length} Sous-Commandes Distinctes
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {!isPublicBuyer && (
+            <label
+              onClick={() => setPaymentMethod("stripe_card")}
+              className={`p-3.5 border rounded-xl cursor-pointer transition-all flex flex-col justify-between space-y-1 ${
+                paymentMethod === "stripe_card"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-950 shadow-xs font-bold"
+                  : "border-slate-200 bg-slate-50 hover:bg-slate-100"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-xs flex items-center gap-1.5">
+                  <CreditCard size={15} className="text-emerald-700" /> Carte Bancaire
                 </span>
-                <p className="text-blue-800 font-medium">
-                  Votre panier réunit les récoltes de <strong>{subOrdersGrouped.length} maraîchers différents</strong>.
-                  Chaque producteur recevra son bon de préparation dédié. La livraison est consolidée en un seul passage.
-                </p>
+                <input
+                  type="radio"
+                  name="paymentChoice"
+                  checked={paymentMethod === "stripe_card"}
+                  onChange={() => setPaymentMethod("stripe_card")}
+                  className="text-emerald-600"
+                />
               </div>
-            </div>
+              <p className="text-[10px] text-slate-500 font-normal">
+                Règlement sécurisé immédiat ({displayTotalTTC} € TTC)
+              </p>
+            </label>
           )}
 
-          {/* BLOCS PRODUITS / SOUS-COMMANDES */}
-          <div className="space-y-4">
-            <div className="flex justify-between items-center px-1">
-              <h3 className="font-black text-gray-900 text-sm flex items-center gap-2">
-                <Store size={16} className="text-emerald-700" />
-                <span>
-                  {isMultiProducer 
-                    ? `Sous-Commandes par Fournisseur (${subOrdersGrouped.length})` 
-                    : `Produits Sélectionnés (${cart.length})`}
+          {!isPublicBuyer && (
+            <label
+              onClick={() => setPaymentMethod("virement_b2b")}
+              className={`p-3.5 border rounded-xl cursor-pointer transition-all flex flex-col justify-between space-y-1 ${
+                paymentMethod === "virement_b2b"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-950 shadow-xs font-bold"
+                  : "border-slate-200 bg-slate-50 hover:bg-slate-100"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-xs flex items-center gap-1.5">
+                  <Building size={15} className="text-blue-700" /> Virement B2B (30j)
                 </span>
-              </h3>
-              <button
-                onClick={onClearCart}
-                className="text-red-600 hover:text-red-800 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-              >
-                <Trash2 size={13} />
-                <span>Vider le panier</span>
-              </button>
-            </div>
-
-            {/* BOUCLE DE RENDU DYNAMIQUE DES GROUPES PRODUCTEURS */}
-            {subOrdersGrouped.map((group, groupIdx) => {
-              const groupFoodVAT = group.subtotalHT * 0.055;
-              const groupTotalTTC = group.subtotalHT + groupFoodVAT;
-
-              return (
-                <div 
-                  key={group.producerId} 
-                  className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm space-y-4 relative overflow-hidden"
-                >
-                  {/* En-tête du groupe */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-200 pb-3 gap-2">
-                    <div className="flex items-center gap-2.5">
-                      {isMultiProducer && (
-                        <span className="p-2 bg-emerald-100 text-emerald-800 rounded-xl font-extrabold text-xs">
-                          #{groupIdx + 1}
-                        </span>
-                      )}
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-black text-gray-900 text-sm">{group.producerName}</h4>
-                          <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 font-extrabold text-[9px] px-2 py-0.5 rounded-full uppercase">
-                            {isMultiProducer ? `Sous-Commande #${groupIdx + 1}` : "Vente Directe Producteur"}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-gray-400 font-bold">
-                          Provenance des récoltes : {group.producerCity}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="text-right bg-emerald-50/60 border border-emerald-200 px-3 py-1.5 rounded-xl">
-                      <span className="text-[9px] text-gray-500 font-extrabold uppercase block">Sous-Total Récolte</span>
-                      <span className="font-black text-emerald-900 text-xs font-mono">
-                        {group.subtotalHT.toFixed(2)} € HT
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Liste des articles de cette sous-commande */}
-                  <div className="divide-y divide-gray-100">
-                    {group.items.map((item) => (
-                      <div key={item.id} className="py-3 flex items-center justify-between gap-3">
-                        <div className="space-y-0.5 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <h5 className="font-extrabold text-gray-900 text-xs">{item.title || item.name}</h5>
-                            {item.isBio && (
-                              <span className="bg-amber-100 text-amber-900 font-black text-[8px] px-1.5 py-0.5 rounded uppercase">
-                                BIO
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-emerald-800 font-bold text-[11px] font-mono">
-                            {item.priceHT.toFixed(2)} € HT / {item.unit || "kg"}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center border border-gray-300 rounded-xl overflow-hidden bg-gray-50">
-                            <button
-                              onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
-                              className="px-2.5 py-1 text-gray-600 hover:bg-gray-200 font-black cursor-pointer"
-                            >
-                              <Minus size={13} />
-                            </button>
-                            <span className="px-3 py-1 font-extrabold text-gray-900 text-xs font-mono">{item.quantity}</span>
-                            <button
-                              onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-                              className="px-2.5 py-1 text-gray-600 hover:bg-gray-200 font-black cursor-pointer"
-                            >
-                              <Plus size={13} />
-                            </button>
-                          </div>
-
-                          <div className="text-right min-w-[70px]">
-                            <p className="font-black text-gray-900 text-xs font-mono">{item.lineHT.toFixed(2)} € HT</p>
-                          </div>
-
-                          <button
-                            onClick={() => onRemoveItem(item.id)}
-                            className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg transition-colors cursor-pointer"
-                            title="Retirer ce produit"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Pied de sous-commande */}
-                  <div className="pt-2 border-t border-gray-200 flex items-center justify-between text-[11px] font-bold text-gray-600 bg-gray-50/50 p-2.5 rounded-xl">
-                    <span className="flex items-center gap-1 text-gray-500">
-                      <Percent size={11} />
-                      <span>TVA Alimentation (5.5%) : <strong className="font-mono text-gray-800">{groupFoodVAT.toFixed(2)} €</strong></span>
-                    </span>
-                    <span className="text-emerald-900 font-mono font-black">
-                      Total Récolte : {groupTotalTTC.toFixed(2)} € TTC
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* RÉCAPITULATIF CONSOLIDÉ DES PRIX & LIVRAISON */}
-          <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-3">
-            <h4 className="font-extrabold text-gray-500 text-xs uppercase tracking-wider border-b border-gray-200 pb-2">
-              Synthèse Financière Consolidée
-            </h4>
-
-            <div className="space-y-2 text-xs font-semibold text-gray-700">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500">
-                  {isMultiProducer 
-                    ? `Total Produits HT (${subOrdersGrouped.length} sous-commandes)` 
-                    : `Sous-total Produits HT`}
-                </span>
-                <span className="font-black text-gray-900 font-mono">{globalSubtotalHT.toFixed(2)} € HT</span>
+                <input
+                  type="radio"
+                  name="paymentChoice"
+                  checked={paymentMethod === "virement_b2b"}
+                  onChange={() => setPaymentMethod("virement_b2b")}
+                  className="text-emerald-600"
+                />
               </div>
+              <p className="text-[10px] text-slate-500 font-normal">
+                Facture acquittable sous 30 jours (LME)
+              </p>
+            </label>
+          )}
 
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1 text-gray-500">
-                  <Truck size={13} className="text-emerald-700" />
-                  <span>Frais de Livraison B2B</span>
+          {(isPublicBuyer || paymentMethod === "mandat_public") && (
+            <label
+              onClick={() => setPaymentMethod("mandat_public")}
+              className={`p-3.5 border rounded-xl cursor-pointer transition-all flex flex-col justify-between space-y-1 sm:col-span-2 ${
+                paymentMethod === "mandat_public"
+                  ? "border-blue-600 bg-blue-50 text-blue-950 shadow-xs font-bold"
+                  : "border-slate-200 bg-slate-50 hover:bg-slate-100"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-xs flex items-center gap-1.5">
+                  <FileText size={15} className="text-blue-700" /> Mandat Chorus Pro (B2G)
                 </span>
-                <span className="font-black font-mono">
-                  {deliveryFeeHT === 0 ? (
-                    <span className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded text-[10px] font-extrabold uppercase">
-                      Offerts (Franco)
-                    </span>
-                  ) : (
-                    <span className="text-gray-900">{deliveryFeeHT.toFixed(2)} € HT</span>
-                  )}
-                </span>
+                <input
+                  type="radio"
+                  name="paymentChoice"
+                  checked={paymentMethod === "mandat_public"}
+                  onChange={() => setPaymentMethod("mandat_public")}
+                  className="text-blue-600"
+                />
               </div>
-
-              <div className="flex justify-between items-center text-[11px]">
-                <span className="flex items-center gap-1 text-gray-400">
-                  <Percent size={11} />
-                  <span>TVA Alimentation (5.5%)</span>
-                </span>
-                <span className="font-bold text-gray-600 font-mono">{foodVAT.toFixed(2)} €</span>
-              </div>
-
-              {deliveryFeeHT > 0 && (
-                <div className="flex justify-between items-center text-[11px]">
-                  <span className="flex items-center gap-1 text-gray-400">
-                    <Percent size={11} />
-                    <span>TVA Prestation Transport (20%)</span>
-                  </span>
-                  <span className="font-bold text-gray-600 font-mono">{deliveryFeeVAT.toFixed(2)} €</span>
-                </div>
-              )}
-
-              <div className="pt-3 border-t border-gray-200 flex justify-between items-center text-sm">
-                <span className="font-black text-gray-900">Total Général TTC</span>
-                <span className="font-black text-emerald-800 text-lg font-mono">{totalTTC.toFixed(2)} € TTC</span>
-              </div>
-            </div>
-          </div>
+              <p className="text-[10px] text-slate-500 font-normal">
+                Télétransmission automatique via Chorus Pro
+              </p>
+            </label>
+          )}
         </div>
 
-        {/* COLONNE DROITE : MODULE DE PAIEMENT SÉCURISÉ & LOGISTIQUE */}
-        <div className="lg:col-span-5 space-y-5">
-          <CheckoutView
-            cartItems={cart}
-            clearCart={onClearCart}
-            onCheckoutSuccess={onBackToShop}
-          />
+        {/* Champs spécifiques Chorus Pro */}
+        {(isPublicBuyer || paymentMethod === "mandat_public") && (
+          <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-xl space-y-3">
+            <span className="font-bold text-blue-900 text-[11px] uppercase tracking-wider block">
+              Identifiants Requis Chorus Pro (B2G)
+            </span>
+            <div className="space-y-1">
+              <label className="font-semibold text-slate-700 text-[10px]">N° Engagement Budgétaire *</label>
+              <input
+                type="text"
+                maxLength={30}
+                value={refEngagement}
+                onChange={(e) => setRefEngagement(e.target.value)}
+                placeholder="Ex: ENG-2026-908"
+                className="w-full p-2 border border-slate-300 rounded bg-white text-xs font-mono font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* 3. Zone d'exécution du paiement */}
+        <div className="pt-4 border-t border-slate-150">
+          {paymentMethod === "stripe_card" ? (
+            <Elements stripe={stripePromise}>
+              <StripeCardForm 
+                cartItems={cartItems} 
+                totals={totals}
+                deliveryDetails={deliveryDetails}
+                buyerProfile={profile}
+                refEngagement={refEngagement}
+                onCheckoutSuccess={(orderId) => {
+                  setSuccessOrderId(orderId);
+                  if (clearCart) clearCart();
+                  if (onCheckoutSuccess) onCheckoutSuccess(orderId);
+                }} 
+              />
+            </Elements>
+          ) : (
+            <button
+              onClick={handleDirectCheckout}
+              disabled={loading || cartItems.length === 0}
+              className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black py-4 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+              <span>
+                {paymentMethod === "mandat_public" 
+                  ? "Valider le Mandat Public (30j)" 
+                  : "Confirmer la commande (Virement B2B)"}
+              </span>
+            </button>
+          )}
         </div>
       </div>
     </div>

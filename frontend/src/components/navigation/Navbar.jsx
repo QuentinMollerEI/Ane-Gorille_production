@@ -1,12 +1,14 @@
 import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { LogOut, LogIn, Store } from "lucide-react";
-import { useAuth } from "../context/AuthContext";
-import CartButton from "./CartButton";
+
+// ⚠️ IMPORTS CORRIGÉS : Remontée de 2 niveaux pour le contexte, et alignement sur le dossier cart
+import { useAuth } from "../../context/AuthContext.jsx";
+import CartButton from "../cart/CartButton.jsx";
 
 /**
  * 🧭 COMPOSANT : Navbar.jsx
- * Emplacement : src/components/Navbar.jsx
+ * Emplacement : src/components/navigation/Navbar.jsx
  * 
  * Barre de navigation principale positionnée en sticky top-0 z-50 sur toute la largeur (sans barre de recherche).
  */

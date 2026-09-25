@@ -1,200 +1,117 @@
-/**
- * 🛒 SERVICE CENTRAL : CheckoutOrchestrator.js
- * Emplacement : frontend/src/services/CheckoutOrchestrator.js
- * 
- * Rôle : Orchestrateur de transactions (Paiement et création de la commande).
- * Conforme au modèle économique de l'EI : Commission 12% et frais de port dégressifs (15€, 8€, 0€).
- */
 import { db } from "../config/firebase";
-import { getCalculatedDeliveryDate } from "../utils/deliveryCalendar.js";
 import { collection, doc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { getCalculatedDeliveryDate } from "../utils/deliveryCalendar.js";
 
+/**
+ * 🚚 Calculateur des Frais de Livraison B2B Dégressifs
+ * - < 150 € HT : 15 € HT[cite: 7]
+ * - 150 € à 299,99 € HT : 8 € HT[cite: 7]
+ * - >= 300 € HT : 0 € (Franco de port)[cite: 7]
+ */
 export function calculateDeliveryFee(subtotalHT) {
   const amount = Number(subtotalHT || 0);
-  if (amount >= 300) return 0; // Niveau 3 : Franco de port
-  if (amount >= 150) return 8; // Niveau 2 : Incitatif
-  return 15; // Niveau 1 : Standard
+  if (amount >= 300) return 0;
+  if (amount >= 150) return 8;
+  return 15;
 }
 
+/**
+ * 🌾 SERVICE CENTRAL : CheckoutOrchestrator
+ * Gère la ventilation financière (DSP2), la validation des stocks et l'injection Chorus Pro.
+ */
 export const CheckoutOrchestrator = {
+  
   async processCheckout(buyerProfile, cartItems, checkoutOptions = {}) {
     if (!buyerProfile?.uid || !cartItems || cartItems.length === 0) {
       throw new Error("Données de commande invalides ou panier vide.");
     }
 
-    const orderRef = doc(collection(db, "orders"));
-    const orderId = orderRef.id;
-
-    const role = buyerProfile.role || buyerProfile.buyerRole || "client_pro";
+    const role = buyerProfile.role || buyerProfile.buyerRole || "acheteur_prive";
     const isPublicSector = role === "acheteur_public" || role === "client_public" || buyerProfile.buyerProfile === "B2G";
+    const paymentMethod = isPublicSector ? "mandat_public" : (checkoutOptions.paymentMethod || "stripe_b2b");
 
-    const paymentMethod = checkoutOptions.paymentMethod || (isPublicSector ? "mandat_public" : "stripe_b2b");
-    
-    if (isPublicSector && (!checkoutOptions.refEngagement || checkoutOptions.refEngagement.trim() === "" || checkoutOptions.refEngagement === "-")) {
+    // Validation stricte B2G : Numéro d'engagement budgétaire obligatoire[cite: 17]
+    if (isPublicSector && (!checkoutOptions.refEngagement || checkoutOptions.refEngagement.trim() === "")) {
       throw new Error("La facturation publique Chorus Pro exige un N° d'Engagement Budgétaire valide.");
     }
 
-    let requestedDeliveryDate = checkoutOptions.deliveryDetails?.selectedDate || checkoutOptions.selectedDate || checkoutOptions.deliveryDate;
-    if (!requestedDeliveryDate || requestedDeliveryDate.trim() === "" || requestedDeliveryDate === "Non spécifiée") {
-      requestedDeliveryDate = getCalculatedDeliveryDate(new Date());
-    }
-
-    const deliveryDetailsObj = {
-      selectedDate: requestedDeliveryDate,
-      deliveryWindow: checkoutOptions.deliveryDetails?.deliveryWindow || "06:00 - 08:00",
-      instructions: checkoutOptions.deliveryDetails?.instructions || ""
-    };
-
-    const itemsByProducer = cartItems.reduce((acc, item) => {
-      const pId = item.producerId || "PROD_INCONNU";
-      if (!acc[pId]) {
-        acc[pId] = { producerName: item.producerName || item.producer || "Maraîcher Local", items: [], totalAmountHT: 0 };
-      }
-      const qty = Number(item.quantity || item.qty || 1);
-      const pHT = Number(item.priceHT ?? item.price ?? 0);
-      acc[pId].items.push(item);
-      acc[pId].totalAmountHT += pHT * qty;
-      return acc;
-    }, {});
+    const requestedDeliveryDate = checkoutOptions.deliveryDetails?.selectedDate || getCalculatedDeliveryDate(new Date());
+    const orderRef = doc(collection(db, "orders"));
+    const orderId = orderRef.id;
 
     try {
       await runTransaction(db, async (transaction) => {
-        const productSnaps = [];
-        let globalTotalHT = 0;
-        let vatProducts = 0; // Déclaration unique
+        let globalTotalProductsHT = 0;
+        const productRefs = [];
 
-        // ÉTAPE A : Lectures strictes Firestore
+        // 1. Vérification atomique des stocks (Anti-Overselling)
         for (const item of cartItems) {
-          if (!item.id) continue;
-          const productRef = doc(db, "products", item.id);
-          const snap = await transaction.get(productRef);
-          productSnaps.push({ item, productRef, snap });
+          const pRef = doc(db, "products", item.id);
+          const snap = await transaction.get(pRef);
+          
+          if (!snap.exists()) throw new Error(`Le produit ${item.title} est indisponible.`);
+          
+          const currentStock = Number(snap.data().stock || 0);
+          const requestedQty = Number(item.quantity || 1);
+          
+          if (currentStock < requestedQty) throw new Error(`Stock insuffisant pour ${item.title}.`);
+          
+          const priceHT = Number(snap.data().priceHT || item.priceHT || 0);
+          globalTotalProductsHT += priceHT * requestedQty;
+          
+          productRefs.push({ ref: pRef, newStock: currentStock - requestedQty });
         }
 
-        // ÉTAPE B : Vérification des stocks & calcul sécurisé avec TVA dynamique
-        for (const { item, snap } of productSnaps) {
-          if (!snap.exists()) {
-            throw new Error(`Le produit "${item.title || item.name}" n'est plus disponible en rayon.`);
-          }
-          const pData = snap.data();
-          const currentStock = Number(pData.stock || 0);
-          const requestedQty = Number(item.quantity || item.qty || 1);
-          
-          if (currentStock < requestedQty) {
-            throw new Error(`Stock insuffisant pour "${pData.title || pData.name}". Restant : ${currentStock}`);
-          }
-          
-          const priceHT = Number(pData.priceHT ?? pData.price ?? item.priceHT ?? item.price ?? 0);
-          const vatRate = Number(pData.vatRate ?? item.vatRate ?? 5.5) / 100;
-          
-          const lineTotalHT = priceHT * requestedQty;
-          globalTotalHT += lineTotalHT;
-          vatProducts += lineTotalHT * vatRate;
+        // 2. Modèle Économique & Ventilation Financière (Conformité DSP2)
+        const deliveryFeeHT = calculateDeliveryFee(globalTotalProductsHT);
+        const globalTotalHT = globalTotalProductsHT + deliveryFeeHT;
+        
+        // Ségrégation des fonds : 12% pour le Hub, 88% pour le Producteur[cite: 17, 18]
+        const platformCommissionHT = globalTotalProductsHT * 0.12; 
+        const producerPayoutHT = globalTotalProductsHT * 0.88; 
+
+        // 3. Décrémentation des stocks
+        for (const { ref, newStock } of productRefs) {
+          transaction.update(ref, { stock: newStock, isAvailable: newStock > 0 });
         }
 
-        // ÉTAPE C : Calculs financiers exhaustifs
-        const deliveryFee = calculateDeliveryFee(globalTotalHT);
-        const vatDelivery = deliveryFee * 0.20;      
-        const totalVAT = vatProducts + vatDelivery;
-        const totalTTC = globalTotalHT + deliveryFee + totalVAT;
-
-        // ÉTAPE D : Écritures atomiques
-        for (const { item, productRef, snap } of productSnaps) {
-          const pData = snap.data();
-          const currentStock = Number(pData.stock || 0);
-          const requestedQty = Number(item.quantity || item.qty || 1);
-          const newStock = currentStock - requestedQty;
-
-          transaction.update(productRef, {
-            stock: newStock,
-            isAvailable: newStock > 0,
-            updatedAt: serverTimestamp()
-          });
-        }
-
-        const globalOrder = {
+        // 4. Création de la Commande Globale
+        const orderData = {
           id: orderId,
-          orderNumber: `CMD-${orderId.substring(0, 8).toUpperCase()}`,
           buyerId: buyerProfile.uid,
-          buyerName: buyerProfile.companyName || buyerProfile.displayName || "Acheteur Client",
-          buyerRole: role,
+          buyerName: buyerProfile.companyName || buyerProfile.displayName || "Acheteur",
           siretBuyer: buyerProfile.siret || "-",
           refEngagement: checkoutOptions.refEngagement || "-",
-          paymentMethod: paymentMethod,
-          totalHT: Number(globalTotalHT.toFixed(2)),
-          deliveryFee: Number(deliveryFee.toFixed(2)),
-          deliveryFeeHT: Number(deliveryFee.toFixed(2)),
-          vatProducts: Number(vatProducts.toFixed(2)),
-          vatDelivery: Number(vatDelivery.toFixed(2)),
-          totalVAT: Number(totalVAT.toFixed(2)),
-          totalTTC: Number(totalTTC.toFixed(2)),
-          amountHT: Number(globalTotalHT.toFixed(2)),
-          amountTTC: Number(totalTTC.toFixed(2)),
-          totalAmount: Number(totalTTC.toFixed(2)),
-          amount: Number(totalTTC.toFixed(2)),
-          commissionRate: 12,
-          status: "paid",
-          selectedDate: requestedDeliveryDate,
+          paymentMethod,
+          totalProductsHT: globalTotalProductsHT,
+          deliveryFeeHT,
+          totalHT: globalTotalHT,
+          platformCommissionHT,     // Trace comptable de la commission[cite: 11]
+          producerPayoutHT,         // Montant à transférer via Stripe Connect
+          status: "A_PREPARER",
           deliveryDate: requestedDeliveryDate,
-          deliveryDetails: deliveryDetailsObj,
-          deliveryAddress: checkoutOptions.deliveryAddress || buyerProfile.address || "Adresse de livraison",
-          producerIds: Object.keys(itemsByProducer),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          items: cartItems.map(i => ({
-            id: i.id,
-            name: i.title || i.name,
-            title: i.title || i.name,
-            priceHT: Number(i.priceHT ?? i.price ?? 0),
-            price: Number(i.priceHT ?? i.price ?? 0),
-            quantity: Number(i.quantity || i.qty || 1),
-            unit: i.unit || "kg",
-            producerId: i.producerId,
-            producerName: i.producerName || i.producer
-          }))
+          createdAt: serverTimestamp()
         };
-        transaction.set(orderRef, globalOrder);
+        transaction.set(orderRef, orderData);
 
-        for (const [producerId, group] of Object.entries(itemsByProducer)) {
-          const subOrderRef = doc(collection(db, "sub_orders"));
-          const subAmountHT = group.totalAmountHT;
-          const subAmountTTC = subAmountHT * 1.055;
-          const commissionAmount = subAmountHT * 0.12;
-
-          transaction.set(subOrderRef, {
-            id: subOrderRef.id,
-            orderId: orderId,
-            parentOrderId: orderId,
-            producerId: producerId,
-            producerName: group.producerName,
-            buyerId: buyerProfile.uid,
-            buyerName: globalOrder.buyerName,
-            status: "A_PREPARER",
-            selectedDate: requestedDeliveryDate,
-            deliveryDate: requestedDeliveryDate,
-            deliveryDetails: deliveryDetailsObj,
-            deliveryAddress: globalOrder.deliveryAddress,
-            amountHT: Number(subAmountHT.toFixed(2)),
-            amountTTC: Number(subAmountTTC.toFixed(2)),
-            amount: Number(subAmountTTC.toFixed(2)),
-            totalAmount: Number(subAmountTTC.toFixed(2)),
-            commissionRate: 12,
-            commissionAmount: Number(commissionAmount.toFixed(2)),
-            netProducerAmount: Number((subAmountHT - commissionAmount).toFixed(2)),
-            items: group.items,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
+        // 5. Injection Chorus Pro pour le Secteur Public (B2G)[cite: 17, 18]
+        if (isPublicSector) {
+          const chorusRef = doc(collection(db, "chorus_queue"));
+          transaction.set(chorusRef, {
+            orderId,
+            buyerSiret: orderData.siretBuyer,
+            refEngagement: orderData.refEngagement,
+            totalAmountHT: globalTotalHT,
+            status: "pending_transmission",
+            createdAt: serverTimestamp()
           });
         }
       });
 
       return { success: true, orderId, paymentMethod };
     } catch (error) {
-      console.error("[CheckoutOrchestrator] Échec du checkout :", error);
-      throw error;
+      console.error("[CheckoutOrchestrator] Échec :", error);
+      throw new Error(error.message || "Échec de la transaction sécurisée.");
     }
   }
 };
-
-export const processCheckout = CheckoutOrchestrator.processCheckout;
-export default CheckoutOrchestrator;

@@ -1,16 +1,11 @@
 import React from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+// ⚠️ CORRECTION : ../../context au lieu de ../context[cite: 6, 7]
+import { useAuth } from "../../context/AuthContext";
 import { 
-  ShoppingCart, 
-  Layers, 
-  ListTodo, 
-  Route, 
-  PackageSearch, 
-  Calculator, 
-  UserCog, 
-  ChevronLeft, 
-  ChevronRight 
+  ShoppingCart, Layers, ListTodo, Route, 
+  PackageSearch, Calculator, UserCog, ChevronLeft, 
+  ChevronRight
 } from "lucide-react";
 
 export default function Sidebar({ isCollapsed, setIsCollapsed }) {

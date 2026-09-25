@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import ShopContainer from "../pages/Boutique/ShopContainer";
-import MiseEnRayon from "../pages/MiseEnRayon/MiseEnRayon";
-import OrderPreparation from "../pages/Preparation/OrderPreparation";
-import RoutePlanner from "../pages/FeuilleDeRoute/RoutePlanner";
-import OrderTracking from "../pages/SuiviDesCommandes/OrderTracking";
-import PiecesComptables from "../pages/PiecesComptables/PiecesComptables";
-import MonProfilContainer from "../pages/MonProfil/MonProfilContainer";
+// ⚠️ CORRECTION : Le chemin remonte de deux niveaux depuis components/navigation/
+import { useAuth } from "../../context/AuthContext";
+import ShopContainer from "../../pages/Boutique/ShopContainer";
+import MiseEnRayon from "../../pages/MiseEnRayon/MiseEnRayon";
+import OrderPreparation from "../../pages/Preparation/OrderPreparation";
+import RoutePlanner from "../../pages/FeuilleDeRoute/RoutePlanner";
+import OrderTracking from "../../pages/SuiviDesCommandes/OrderTracking";
+import PiecesComptables from "../../pages/PiecesComptables/PiecesComptables";
+import MonProfilContainer from "../../pages/MonProfil/MonProfilContainer";
 
 export default function Workspace() {
   const { user, userProfile } = useAuth();

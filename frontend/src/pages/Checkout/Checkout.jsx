@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { CheckoutOrchestrator } from "../../services/CheckoutOrchestrator";
-import CheckoutDeliverySelector from "../../components/Checkout/CheckoutDeliverySelector";
+import CheckoutDeliverySelector from "../../components/checkout/CheckoutDeliverySelector";
 import {
   CreditCard,
   Building,
