@@ -1,49 +1,44 @@
 import React from "react";
-import { useAuth } from "../../context/AuthContext";
+import { useAuth } from "../../context/AuthContext.jsx";
+import GeneralInfoForm from "./components/GeneralInfoForm.jsx";
+import StripeConnectCard from "./components/StripeConnectCard.jsx";
+import { UserCheck, ShieldCheck } from "lucide-react";
 
-// IMPORTS DES CONTENEURS SPÉCIFIQUES PAR RÔLE
-import AcheteurPriveContainer from "./AcheteurPrive/AcheteurPriveContainer";
-import AcheteurPublicContainer from "./AcheteurPublic/AcheteurPublicContainer";
-import ProducteurContainer from "./Producteur/ProducteurContainer";
-import LivreurContainer from "./Livreur/LivreurContainer";
-import AdminContainer from "./Admin/AdminContainer";
-
-/**
- * COMPOSANT : MonProfilContainer.jsx
- * Routeur dynamique de l'espace Profil (Clean Code & SRP).
- */
 export default function MonProfilContainer() {
-  const { user, loading } = useAuth();
+  const { userProfile, user } = useAuth();
+  const profile = userProfile || user || {};
+  const role = profile.role || "acheteur_prive";
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-700"></div>
+  const isSupplier = role === "producteur" || role === "producer" || role === "artisan";
+
+  return (
+    <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-6 animate-fade-in">
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
+              <UserCheck size={20} />
+            </span>
+            <h2 className="text-xl font-black text-slate-900">
+              {profile.companyName || profile.displayName || "Mon Profil Pro"}
+            </h2>
+          </div>
+          <p className="text-xs text-slate-500 font-semibold">
+            {profile.email} | SIRET : {profile.siret || "Non renseigné"}
+          </p>
+        </div>
+
+        <div className="px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs font-black text-emerald-900 uppercase tracking-wider flex items-center gap-1.5">
+          <ShieldCheck size={16} className="text-emerald-700" />
+          <span>
+            Rôle : {role === "producteur" ? "Producteur Maraîcher" : role === "artisan" ? "Artisan Créateur" : role === "acheteur_public" ? "Acheteur Public" : "Acheteur Privé"}
+          </span>
+        </div>
       </div>
-    );
-  }
 
-  const role = user?.role || "acheteur_prive";
+      {isSupplier && <StripeConnectCard profileData={profile} />}
 
-  // AIGUILLAGE VERS LE BON CONTENEUR SELON LE RÔLE
-  switch (role) {
-    case "acheteur_prive":
-    case "client_pro":
-    case "acheteur":
-      return <AcheteurPriveContainer />;
-    case "acheteur_public":
-    case "client_public":
-      return <AcheteurPublicContainer />;
-    case "producteur":
-    case "producer":
-      return <ProducteurContainer />;
-    case "livreur":
-    case "carrier":
-      return <LivreurContainer />;
-    case "admin":
-    case "administrator":
-      return <AdminContainer />;
-    default:
-      return <AcheteurPriveContainer />;
-  }
+      <GeneralInfoForm />
+    </div>
+  );
 }

@@ -1,96 +1,123 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useState, useEffect } from "react";
+import { auth, db } from "../config/firebase.js";
 import {
   onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
+  getIdTokenResult,
+  signOut as firebaseSignOut,
+  signInWithEmailAndPassword as firebaseSignIn,
+  createUserWithEmailAndPassword as firebaseCreateUser
 } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "../config/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
-export function useAuth() {
-  return useContext(AuthContext);
-}
-
-export function AuthProvider({ children }) {
+export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Écouteur d'état d'authentification Firebase
-    const unsubscribe = onAuthStateChanged(
-      auth,
-      async (firebaseUser) => {
-        try {
-          if (firebaseUser) {
-            // Charger le profil utilisateur dans Firestore
-            const userDocRef = doc(db, "users", firebaseUser.uid);
-            const userSnap = await getDoc(userDocRef);
+    let unsubDoc = null;
 
-            if (userSnap.exists()) {
-              setUser({ uid: firebaseUser.uid, ...userSnap.data() });
-            } else {
-              setUser({
-                uid: firebaseUser.uid,
-                email: firebaseUser.email,
-                role: "acheteur_prive",
-              });
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (unsubDoc) {
+        unsubDoc();
+        unsubDoc = null;
+      }
+
+      if (firebaseUser) {
+        // Affectation immédiate pour débloquer PrivateRoute
+        setUser(firebaseUser);
+
+        try {
+          // Lecture des Custom Claims cryptographiques
+          const tokenResult = await getIdTokenResult(firebaseUser, false).catch(() => null);
+          const claimRole = tokenResult?.claims?.role;
+
+          const userDocRef = doc(db, "users", firebaseUser.uid);
+          unsubDoc = onSnapshot(
+            userDocRef,
+            (snap) => {
+              if (snap.exists()) {
+                const data = snap.data();
+                const effectiveRole = data.role || claimRole || "acheteur_prive";
+                const fullProfile = { ...data, uid: firebaseUser.uid, role: effectiveRole };
+                setUserProfile(fullProfile);
+                setUser({ ...firebaseUser, role: effectiveRole, ...data });
+              } else {
+                const defaultRole = claimRole || "acheteur_prive";
+                const fallbackProfile = { uid: firebaseUser.uid, role: defaultRole, email: firebaseUser.email };
+                setUserProfile(fallbackProfile);
+                setUser({ ...firebaseUser, role: defaultRole });
+              }
+              setLoading(false);
+            },
+            (err) => {
+              console.warn("Notice écoute profil Firestore:", err);
+              const fallbackRole = claimRole || "acheteur_prive";
+              setUserProfile({ uid: firebaseUser.uid, role: fallbackRole, email: firebaseUser.email });
+              setUser({ ...firebaseUser, role: fallbackRole });
+              setLoading(false);
             }
-          } else {
-            setUser(null);
-          }
+          );
         } catch (error) {
-          console.error("Erreur lors de la récupération du profil :", error);
-          setUser(null);
-        } finally {
-          // 🛡️ GARANTIE : Toujours débloquer le chargement
+          console.warn("Notice récupération jeton/profil:", error);
+          setUser(firebaseUser);
           setLoading(false);
         }
-      },
-      (error) => {
-        console.error("Erreur d'écouteur d'authentification :", error);
+      } else {
+        setUser(null);
+        setUserProfile(null);
         setLoading(false);
-      },
-    );
+      }
+    });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubDoc) unsubDoc();
+    };
   }, []);
 
-  // Fonction de connexion
   const login = async (email, password) => {
-    try {
-      return await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      console.error("Échec de la connexion :", error);
-      throw error;
-    }
+    if (!auth) throw new Error("Service d'authentification Firebase non disponible.");
+    return firebaseSignIn(auth, email.trim(), password);
   };
 
-  // Fonction d'inscription
   const register = async (email, password) => {
-    try {
-      return await createUserWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      console.error("Échec de l'inscription :", error);
-      throw error;
-    }
+    if (!auth) throw new Error("Service d'authentification Firebase non disponible.");
+    return firebaseCreateUser(auth, email.trim(), password);
   };
 
-  // Fonction de déconnexion
-  const logout = () => {
+  const logout = async () => {
     setUser(null);
-    return signOut(auth);
+    setUserProfile(null);
+    return firebaseSignOut(auth);
   };
 
-  const value = {
-    user,
-    loading,
-    login,
-    register,
-    logout,
-  };
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        userProfile,
+        profile: userProfile,
+        loading,
+        login,
+        register,
+        logout,
+        signOut: logout,
+        signInWithEmailAndPassword: login,
+        createUserWithEmailAndPassword: register
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error("useAuth doit être utilisé à l'intérieur d'un AuthProvider");
+  return context;
+};
+
+export default AuthContext;

@@ -1,158 +1,139 @@
 import { db } from "../config/firebase.js";
 import { collection, doc, runTransaction, serverTimestamp } from "firebase/firestore";
-import TaxAndFeeCalculator from "../utils/TaxAndFeeCalculator.js";
 
+/**
+ * ⚙️ CHECKOUT ORCHESTRATOR
+ * Service transactionnel atomique gérant la décrémentation des stocks,
+ * le découpage des sous-commandes par producteur, la commission 12% et le B2G Chorus Pro.
+ */
 export const CheckoutOrchestrator = {
   async processCheckout(buyerProfile, cartItems, checkoutOptions = {}) {
-    if (!buyerProfile || !buyerProfile.uid) {
-      throw new Error("Profil acheteur non authentifié.");
-    }
-    if (!Array.isArray(cartItems) || cartItems.length === 0) {
-      throw new Error("Le panier est vide.");
+    if (!buyerProfile?.uid) throw new Error("Acheteur non authentifié.");
+    if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
+      throw new Error("Le panier d'approvisionnement est vide.");
     }
 
-    const totals = TaxAndFeeCalculator.calculateCartTotals(cartItems);
-    const orderId = `PO-CMD-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+    const isB2G = buyerProfile.role === "acheteur_public" || buyerProfile.buyerProfile === "B2G";
 
-    const subOrders = {};
-    cartItems.forEach((item) => {
-      const pId = item.producerId || "fournisseur_general";
-      if (!subOrders[pId]) {
-        subOrders[pId] = {
-          producerId: pId,
-          producerName: item.producerName || "Producteur Partenaire",
-          stripeAccountId: item.stripeAccountId || null,
-          items: [],
-          totalHT: 0,
-          totalVAT: 0,
-          commissionHT: 0
-        };
-      }
+    if (isB2G && !checkoutOptions.refEngagement) {
+      throw new Error("Contrainte B2G Chorus Pro : Le numéro d'engagement budgétaire (refEngagement) est obligatoire.");
+    }
 
-      const itemHT = (Number(item.priceHT) || 0) * (Number(item.quantity) || 1);
-      const itemVATRate = Number(item.vatRate) || 5.5;
-      const itemVAT = itemHT * (itemVATRate / 100);
+    const orderRef = doc(collection(db, "orders"));
+    const orderId = orderRef.id;
 
-      subOrders[pId].items.push({
-        id: item.id,
-        name: item.name || item.title,
-        priceHT: item.priceHT,
-        vatRate: itemVATRate,
-        quantity: item.quantity || 1,
-        unit: item.unit || "kg",
-        batchNumber: item.batchNumber || "L-2026-001"
-      });
-      subOrders[pId].totalHT += itemHT;
-      subOrders[pId].totalVAT += itemVAT;
-      subOrders[pId].commissionHT += itemHT * 0.12;
-    });
+    // Regroupement par producteur / fournisseur
+    const itemsByProducer = this._groupItemsByProducer(cartItems);
 
     await runTransaction(db, async (transaction) => {
-      // PHASE 1 : READS
-      const stockUpdates = [];
+      // 1. Lecture atomique des stocks en rayon
+      const productSnaps = await Promise.all(
+        cartItems.map(item => transaction.get(doc(db, "products", item.id)))
+      );
 
-      for (const item of cartItems) {
-        if (item.id) {
-          const productRef = doc(db, "products", item.id);
-          const productSnap = await transaction.get(productRef);
+      let globalTotalHT = 0;
 
-          if (productSnap.exists()) {
-            const data = productSnap.data();
-
-            // 💡 Détection universelle multi-champs du stock (stock, quantity, stockQuantity)
-            const rawStock = data.stock ?? data.quantity ?? data.stockQuantity ?? data.stock_quantity;
-            const currentStock = (rawStock !== undefined && rawStock !== null) ? Number(rawStock) : 999;
-            const requestedQty = Number(item.quantity) || 1;
-
-            if (currentStock < requestedQty) {
-              throw new Error(
-                `Stock insuffisant pour "${item.name || item.title}" (${currentStock} disponible(s)).`
-              );
-            }
-
-            const stockField = (data.stock !== undefined) ? "stock" :
-                               (data.quantity !== undefined) ? "quantity" :
-                               (data.stockQuantity !== undefined) ? "stockQuantity" : "stock";
-
-            stockUpdates.push({
-              ref: productRef,
-              field: stockField,
-              newStock: Math.max(0, currentStock - requestedQty)
-            });
-          }
+      // 2. Vérification des stocks & prix
+      productSnaps.forEach((snap, index) => {
+        if (!snap.exists()) {
+          throw new Error(`Produit indisponible : ${cartItems[index].title || 'Article'}`);
         }
-      }
+        const pData = snap.data();
+        const item = cartItems[index];
+        const stock = Number(pData.stock ?? pData.quantity ?? 0);
+        const qty = Number(item.quantity ?? 1);
 
-      // PHASE 2 : WRITES
-      for (const update of stockUpdates) {
-        transaction.update(update.ref, { 
-          [update.field]: update.newStock,
-          isAvailable: update.newStock > 0
+        if (stock < qty) {
+          throw new Error(`Stock insuffisant chez le maraîcher pour ${item.title}. Disponible: ${stock}`);
+        }
+
+        // Prix HT certifié depuis Firestore
+        const unitPriceHT = Number(pData.priceHT ?? pData.price ?? item.priceHT ?? 0);
+        globalTotalHT += unitPriceHT * qty;
+
+        // Décrémentation atomique
+        const newStock = stock - qty;
+        transaction.update(snap.ref, {
+          stock: newStock,
+          quantity: newStock,
+          isAvailable: newStock > 0,
+          updatedAt: serverTimestamp()
         });
-      }
-
-      const orderRef = doc(db, "orders", orderId);
-      transaction.set(orderRef, {
-        orderId,
-        buyerId: buyerProfile.uid,
-        buyerName: buyerProfile.displayName || buyerProfile.companyName || "Client B2B",
-        buyerCompany: buyerProfile.companyName || "-",
-        buyerSiret: buyerProfile.siret || "-",
-        buyerRole: buyerProfile.role || "acheteur_prive",
-        isPublicSector: buyerProfile.role === "acheteur_public",
-        refEngagement: checkoutOptions.refEngagement || null,
-        paymentMethod: checkoutOptions.paymentMethod || "stripe_card",
-        paymentStatus: checkoutOptions.paymentMethod === "mandat_public" ? "PENDING_CHORUS" : "PAID_ESCROW",
-        deliveryDate: checkoutOptions.deliveryDate || new Date().toISOString(),
-        deliveryInstructions: checkoutOptions.deliveryInstructions || "",
-        status: "A_PREPARER",
-        totals,
-        subOrders,
-        createdAt: serverTimestamp()
       });
 
-      Object.entries(subOrders).forEach(([producerId, subData]) => {
+      // Calcul des frais de port B2B/B2G
+      let deliveryFeeHT = 15;
+      if (globalTotalHT >= 300) deliveryFeeHT = 0;
+      else if (globalTotalHT >= 150) deliveryFeeHT = 8;
+
+      const foodVAT = globalTotalHT * 0.055;
+      const deliveryVAT = deliveryFeeHT * 0.20;
+      const grandTotalTTC = globalTotalHT + foodVAT + deliveryFeeHT + deliveryVAT;
+
+      // 3. Écriture de la commande principale
+      transaction.set(orderRef, {
+        id: orderId,
+        buyerId: buyerProfile.uid,
+        buyerName: buyerProfile.companyName || buyerProfile.displayName || "Acheteur Pro",
+        buyerRole: buyerProfile.role || "acheteur_prive",
+        siretBuyer: buyerProfile.siret || "-",
+        refEngagement: checkoutOptions.refEngagement || "-",
+        paymentMethod: isB2G ? "mandat_public" : "stripe_b2b",
+        totalAmountHT: globalTotalHT,
+        foodVAT,
+        deliveryFeeHT,
+        deliveryVAT,
+        grandTotalTTC,
+        status: "A_PREPARER",
+        deliveryDetails: checkoutOptions.deliveryDetails || {},
+        deliveryAddress: checkoutOptions.deliveryAddress || buyerProfile.address || "",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      // 4. Écriture des sous-commandes par producteur (sub_orders)
+      Object.entries(itemsByProducer).forEach(([producerId, group]) => {
         const subOrderRef = doc(collection(db, "sub_orders"));
+        
+        // Division 0.88 : Marge marketplace 12%
+        const producerNetHT = group.subtotalHT * 0.88;
+        const marketplaceCommissionHT = group.subtotalHT * 0.12;
+
         transaction.set(subOrderRef, {
-          subOrderId: `${orderId}-${producerId.substring(0, 5)}`,
+          id: subOrderRef.id,
           parentOrderId: orderId,
           producerId,
-          producerName: subData.producerName,
-          stripeAccountId: subData.stripeAccountId,
-          buyerName: buyerProfile.companyName || buyerProfile.displayName,
-          buyerSiret: buyerProfile.siret,
-          items: subData.items,
-          totalHT: subData.totalHT,
-          totalVAT: subData.totalVAT,
-          totalTTC: subData.totalHT + subData.totalVAT,
-          marketplaceCommissionHT: subData.commissionHT,
-          deliveryDate: checkoutOptions.deliveryDate,
-          deliveryInstructions: checkoutOptions.deliveryInstructions,
+          producerName: group.producerName,
+          buyerId: buyerProfile.uid,
+          buyerName: buyerProfile.companyName || buyerProfile.displayName || "Acheteur",
           status: "A_PREPARER",
-          createdAt: serverTimestamp()
+          amountHT: group.subtotalHT,
+          producerNetHT,
+          marketplaceCommissionHT,
+          items: group.items,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
         });
       });
-
-      if (buyerProfile.role === "acheteur_public") {
-        const chorusRef = doc(collection(db, "chorus_queue"));
-        transaction.set(chorusRef, {
-          orderId,
-          refEngagement: checkoutOptions.refEngagement,
-          buyerSiret: buyerProfile.siret,
-          amountTTC: totals.grandTotalTTC,
-          status: "PENDING_TRANSMISSION",
-          createdAt: serverTimestamp()
-        });
-      }
     });
 
-    return {
-      success: true,
-      orderId,
-      amountTTC: totals.grandTotalTTC,
-      paymentMethod: checkoutOptions.paymentMethod
-    };
+    return { success: true, orderId };
+  },
+
+  _groupItemsByProducer(items) {
+    return items.reduce((acc, item) => {
+      const pId = item.producerId || item.userId || "PROD_LOCAL";
+      const pName = item.producerCompany || item.producerName || "Exploitation Locale";
+      
+      if (!acc[pId]) {
+        acc[pId] = { producerName: pName, items: [], subtotalHT: 0 };
+      }
+      const price = Number(item.priceHT ?? item.price ?? 0);
+      const qty = Number(item.quantity ?? 1);
+      
+      acc[pId].items.push({ ...item, priceHT: price, quantity: qty });
+      acc[pId].subtotalHT += price * qty;
+      return acc;
+    }, {});
   }
 };
-
-export default CheckoutOrchestrator;

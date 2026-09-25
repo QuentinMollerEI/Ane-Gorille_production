@@ -1,32 +1,51 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { getFunctions } from "firebase/functions";
 
-// 🔑 Récupération dynamique de vos clés d'API configurées dans votre fichier .env local par Vite [cite: 10]
+// Configuration Firebase centralisée avec fallbacks pour dev & prod
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDFB8w4ii-HOhjrMRoIjmBEC4NfPhJW46Q",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "ane-et-gorille-v2.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "ane-et-gorille-v2",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "ane-et-gorille-v2.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "1047443529140",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:1047443529140:web:cc842685181028147026e1"
 };
 
-// Initialisation unique de l'application Firebase (évite les doublons)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Initialisation unique (prévention HMR Vite)
+export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// 🎯 FORCE LA CONNEXION À VOTRE BASE NOMMÉE "ane-et-gorille-v2"
-export const db = getFirestore(app, "ane-et-gorille-v2");
+// Connexion à la base de données Firestore nommée "ane-et-gorille-v2"
+let dbInstance;
+try {
+  dbInstance = getFirestore(app, "ane-et-gorille-v2");
+} catch (e) {
+  dbInstance = getFirestore(app);
+}
+export const db = dbInstance;
 
-// 🔑 EXPORT DU SERVICE D'AUTHENTIFICATION (Requis par AuthContext.jsx)
+// Service d'Authentification
 export const auth = getAuth(app);
 
-// 🔌 EXPORTS CENTRALISÉS FIRESTORE (Prévient les doublons de paquets sous Vite et aligne les instances)
+// Service Cloud Functions (Europe / Paris - RGPD / DSP2)
+export const functions = getFunctions(app, "europe-west9");
+
+// Exports centralisés Firestore
 export {
   collection,
   doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  onSnapshot,
   runTransaction,
   serverTimestamp,
+  arrayUnion,
+  arrayRemove
 } from "firebase/firestore";
 
-export { app };
+export default app;

@@ -1,66 +1,147 @@
+import { db } from "../config/firebase.js";
+import {
+  collection,
+  doc,
+  runTransaction,
+  serverTimestamp,
+  query,
+  where,
+  getDocs
+} from "firebase/firestore";
+
 /**
- * 🚚 SERVICE CYCLE DE VIE & TRAÇABILITÉ : OrderWorkflowService.js
- * Gère les transitions de statut de commande, le contrôle de température HACCP (10-15°C)
- * et le déclenchement de la facturation lors du statut LIVRÉ.
+ * 📦 ORDER WORKFLOW SERVICE
+ * Source de vérité unique pour le cycle de vie des commandes :
+ * A_PREPARER -> EN_PREPARATION -> A_RAMASSER -> EN_COURS_DE_LIVRAISON -> LIVRE
  */
-import { db } from "../config/firebase";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import BillingWorkflowService from "./BillingWorkflowService";
-
 export const OrderWorkflowService = {
-  /**
-   * 1. ÉTAPE PREPARATION : Le maraîcher conditionne et assigne le N° de lot ("L")
-   */
-  async validatePreparation(subOrderId, lotNumber) {
-    if (!subOrderId || !lotNumber) throw new Error("ID de sous-commande et N° de lot obligatoires.");
-
-    await updateDoc(doc(db, "sub_orders", subOrderId), {
-      status: "A_RAMASSER",
-      lotNumber: lotNumber.startsWith("L") ? lotNumber : `L${lotNumber}`,
-      updatedAt: serverTimestamp(),
+  // --- OUTILS PRODUCTEUR ---
+  async markAsInPreparation(subOrderId) {
+    const subRef = doc(db, "sub_orders", subOrderId);
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(subRef);
+      if (!snap.exists()) throw new Error("Sous-commande introuvable.");
+      
+      transaction.update(subRef, {
+        status: "EN_PREPARATION",
+        updatedAt: serverTimestamp()
+      });
     });
+    return true;
   },
 
-  /**
-   * 2. ÉTAPE RAMASSE : Le chauffeur charge le colis au hub
-   */
-  async validatePickup(subOrderId, carrierId) {
-    await updateDoc(doc(db, "sub_orders", subOrderId), {
-      status: "EN_COURS_DE_LIVRAISON",
-      carrierId: carrierId || "TRANSPORTEUR_DREAL",
-      pickedUpAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+  async markAsReadyForPickup(subOrderId, batchNumber, realWeightKg = null) {
+    if (!batchNumber) throw new Error("Le numéro de lot HACCP (préfixé par L-) est obligatoire.");
+
+    const subRef = doc(db, "sub_orders", subOrderId);
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(subRef);
+      if (!snap.exists()) throw new Error("Sous-commande introuvable.");
+
+      const payload = {
+        status: "A_RAMASSER",
+        batchNumber: batchNumber.startsWith("L-") ? batchNumber : `L-${batchNumber}`,
+        updatedAt: serverTimestamp()
+      };
+
+      if (realWeightKg !== null) {
+        payload.realWeightKg = Number(realWeightKg);
+      }
+
+      transaction.update(subRef, payload);
     });
+    return true;
   },
 
-  /**
-   * 3. ÉTAPE LIVRAISON : Validation POD (Température + Signature) & Déclenchement Facturation
-   */
-  async validateFinalDelivery(orderId, tempHaccp, signatureBase64, recipientName) {
-    const tempNum = Number(tempHaccp);
-    if (!orderId) throw new Error("Identifiant de commande obligatoire.");
-    if (isNaN(tempNum) || tempNum < 0 || tempNum > 25) {
-      throw new Error("Relevé de température HACCP invalide.");
+  // --- OUTILS LIVREUR & TRANSPORT ---
+  async markAsInTransit(subOrderIds, carrierUid, temperatureC) {
+    const tempNum = Number(temperatureC);
+    if (isNaN(tempNum) || tempNum < 10 || tempNum > 15) {
+      throw new Error("Conformité HACCP : La température frigorifique de transit doit être comprise entre 10°C et 15°C.");
     }
 
-    // Mise à jour de la commande globale
-    await updateDoc(doc(db, "orders", orderId), {
-      status: "LIVRE",
-      tempHaccp: tempNum,
-      signature: signatureBase64 || "EMARGEMENT_NUMERIQUE_OK",
-      recipientName: recipientName || "Réceptionnaire",
-      deliveredAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+    await runTransaction(db, async (transaction) => {
+      for (const id of subOrderIds) {
+        const subRef = doc(db, "sub_orders", id);
+        transaction.update(subRef, {
+          status: "EN_COURS_DE_LIVRAISON",
+          carrierUid,
+          pickupTemperatureC: tempNum,
+          updatedAt: serverTimestamp()
+        });
+      }
+    });
+    return true;
+  },
+
+  // --- LIVRAISON FINALE & GÉNÉRATION FACTURES ---
+  async markAsDelivered(orderId, podSignatureDataUrl, deliveryTemperatureC) {
+    const tempNum = Number(deliveryTemperatureC);
+    if (isNaN(tempNum) || tempNum < 10 || tempNum > 15) {
+      throw new Error("Conformité HACCP : La température au déchargement doit être comprise entre 10°C et 15°C.");
+    }
+
+    const orderRef = doc(db, "orders", orderId);
+
+    await runTransaction(db, async (transaction) => {
+      const orderSnap = await transaction.get(orderRef);
+      if (!orderSnap.exists()) throw new Error("Commande principale introuvable.");
+
+      const orderData = orderSnap.data();
+
+      // Mettre à jour la commande principale
+      transaction.update(orderRef, {
+        status: "LIVRE",
+        deliveryTemperatureC: tempNum,
+        podSignatureUrl: podSignatureDataUrl,
+        deliveredAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Mettre à jour toutes les sous-commandes associées
+      const subQuery = query(collection(db, "sub_orders"), where("parentOrderId", "==", orderId));
+      const subSnaps = await getDocs(subQuery);
+
+      subSnaps.forEach((subDoc) => {
+        transaction.update(subDoc.ref, {
+          status: "LIVRE",
+          deliveredAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+
+        const subData = subDoc.data();
+        
+        // Génération de la référence Factur-X
+        const facVteRef = doc(collection(db, "documents"));
+        transaction.set(facVteRef, {
+          id: facVteRef.id,
+          type: "FAC-VTE",
+          orderId,
+          subOrderId: subDoc.id,
+          producerId: subData.producerId,
+          producerName: subData.producerName,
+          buyerId: orderData.buyerId,
+          buyerName: orderData.buyerName,
+          mandatMention: `Facture émise par Âne & Gorille au nom et pour le compte de ${subData.producerName}`,
+          amountHT: subData.amountHT,
+          createdAt: serverTimestamp()
+        });
+
+        // Facture de commission
+        const facComRef = doc(collection(db, "documents"));
+        transaction.set(facComRef, {
+          id: facComRef.id,
+          type: "FAC-COM",
+          orderId,
+          subOrderId: subDoc.id,
+          producerId: subData.producerId,
+          marketplaceCommissionHT: subData.marketplaceCommissionHT,
+          legalMention: "TVA non applicable, art. 293 B du CGI",
+          createdAt: serverTimestamp()
+        });
+      });
     });
 
-    // Génération automatique des pièces comptables Factur-X & Chorus Pro
-    await BillingWorkflowService.generatePostDeliveryDocuments(
-      orderId,
-      tempNum,
-      signatureBase64,
-      recipientName
-    );
-  },
+    return true;
+  }
 };
-
-export default OrderWorkflowService;

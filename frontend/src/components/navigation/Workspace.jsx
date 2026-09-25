@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext.jsx";
+
+// Importations dynamiques des modules spécialisés par rôle
 import ShopContainer from "../../pages/Boutique/ShopContainer.jsx";
 import MiseEnRayon from "../../pages/MiseEnRayon/MiseEnRayon.jsx";
 import OrderPreparation from "../../pages/Preparation/OrderPreparation.jsx";
@@ -9,11 +11,16 @@ import OrderTracking from "../../pages/SuiviDesCommandes/OrderTracking.jsx";
 import PiecesComptables from "../../pages/PiecesComptables/PiecesComptables.jsx";
 import MonProfilContainer from "../../pages/MonProfil/MonProfilContainer.jsx";
 
+/**
+ * 🛡️ WORKSPACE.JSX : PARE-FEU FRONTEND RBAC
+ * Aiguilleur strict adaptant les outils d'interface selon le rôle scellé dans le jeton.
+ */
 export default function Workspace() {
   const { user, userProfile } = useAuth();
   const location = useLocation();
   const [currentModule, setCurrentModule] = useState("default");
 
+  // Identification stricte du rôle via Custom Claims Firebase
   const role = userProfile?.role || user?.role || "acheteur_prive";
 
   useEffect(() => {
@@ -22,27 +29,25 @@ export default function Workspace() {
     if (module) setCurrentModule(module);
   }, [location.search]);
 
-  // Moteur de Contrôle d'Accès Strict (RBAC)
+  // Routage étanche par rôle
   const renderAuthorizedModule = () => {
     switch (role) {
-      // PRODUCTEURS / MARAÎCHERS
       case "producteur":
       case "producer":
-      case "artisan":
+      case "artisan": // Univers Âne (Terre) & Gorille (Main)
         if (currentModule === "prep") return <OrderPreparation />;
         if (currentModule === "compta") return <PiecesComptables />;
         if (currentModule === "profil") return <MonProfilContainer />;
-        return <MiseEnRayon />;
+        return <MiseEnRayon />; // Module par défaut
 
-      // LIVREURS / LOGISTIQUE
       case "livreur":
-      case "carrier":
+      case "carrier": // Logistique DREAL & HACCP
         if (currentModule === "profil") return <MonProfilContainer />;
-        return <RoutePlanner />;
+        if (currentModule === "compta") return <PiecesComptables />;
+        return <RoutePlanner />; // Module par défaut
 
-      // ADMINISTRATEURS
       case "admin":
-      case "administrator":
+      case "administrator": // Tour de contrôle globale
         if (currentModule === "rayon") return <MiseEnRayon />;
         if (currentModule === "prep") return <OrderPreparation />;
         if (currentModule === "route") return <RoutePlanner />;
@@ -51,16 +56,15 @@ export default function Workspace() {
         if (currentModule === "profil") return <MonProfilContainer />;
         return <ShopContainer />;
 
-      // ACHETEURS PRIVÉS (B2B) ET PUBLICS (B2G)
       case "acheteur_public":
       case "client_public":
       case "acheteur_prive":
       case "client_pro":
-      default:
+      default: // Acheteurs B2B & B2G
         if (currentModule === "suivi") return <OrderTracking />;
         if (currentModule === "compta") return <PiecesComptables />;
         if (currentModule === "profil") return <MonProfilContainer />;
-        return <ShopContainer />;
+        return <ShopContainer />; // Catalogue & Panier
     }
   };
 

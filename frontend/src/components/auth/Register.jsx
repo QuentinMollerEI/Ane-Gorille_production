@@ -1,446 +1,627 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useRegister } from "../../hooks/useRegister";
+import { useNavigate, Link } from "react-router-dom";
+import { auth, db, functions } from "../../config/firebase.js";
+import { createUserWithEmailAndPassword } from "firebase/auth";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import {
-  User,
-  Mail,
-  Lock,
-  Building2,
-  Phone,
-  ShieldCheck,
-  MapPin,
-  Loader2,
-  AlertTriangle,
-  ArrowRight,
-  Sprout,
-  Landmark,
   Store,
-  CheckCircle2,
-  Building,
+  ShieldCheck,
   AlertCircle,
+  Loader2,
+  FileCheck,
+  Search,
+  CheckCircle2,
+  MapPin,
+  Building2,
+  Lock
 } from "lucide-react";
+
+// Point central : Saint-Rémy-sur-Avre (28350)
+const CENTRAL_LAT = 48.7628;
+const CENTRAL_LON = 1.2422;
+const MAX_RADIUS_KM = 50;
+
+function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c * 10) / 10;
+}
+
+function isValidLuhnSiret(siret) {
+  const clean = siret.replace(/\s/g, "");
+  if (!/^\d{14}$/.test(clean)) return false;
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    let digit = parseInt(clean.charAt(i), 10);
+    if (i % 2 === 0) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
 
 export default function Register() {
   const navigate = useNavigate();
-  const { registerUser, isLoading, isCheckingGeo, error, setError } = useRegister();
+  const [role, setRole] = useState("producteur");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [siret, setSiret] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [postalCode, setPostalCode] = useState("");
+  const [city, setCity] = useState("");
+  const [acceptTerms, setAcceptTerms] = useState(true);
 
-  const [role, setRole] = useState("acheteur_prive");
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-    confirmPassword: "",
-    displayName: "",
-    companyName: "",
-    siret: "",
-    phone: "",
-    postalCode: "",
-    city: "",
-  });
+  // ÉTATS DE SÉCURITÉ
+  const [verifyingSiret, setVerifyingSiret] = useState(false);
+  const [siretVerified, setSiretVerified] = useState(false);
 
-  const [isSiretLoading, setIsSiretLoading] = useState(false);
-  const [siretStatus, setSiretStatus] = useState(null); // 'success' | 'error' | null
-  const [siretError, setSiretError] = useState("");
-  const [verifiedCompany, setVerifiedCompany] = useState(null);
+  const [verifyingLocation, setVerifyingLocation] = useState(false);
+  const [locationVerified, setLocationVerified] = useState(false);
+  const [detectedDistance, setDetectedDistance] = useState(null);
 
-  const passwordRegex =
-    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+  // 1. VÉRIFICATION DU SIRET (API SIRENE)
+  const handleVerifySiret = async () => {
+    const cleanSiret = siret.replace(/\s/g, "");
+    setSiretVerified(false);
+    setLocationVerified(false);
+    setDetectedDistance(null);
+    setError("");
 
-    if (name === "siret") {
-      setSiretStatus(null);
-      setSiretError("");
-      setVerifiedCompany(null);
-    }
-  };
-
-  // VÉRIFICATION DU SIRET CORRIGÉE (RÉCUPÉRATION DE data.results[0])
-  const handleVerifySiret = async (siretValue) => {
-    const cleanSiret = String(siretValue || "").replace(/\s+/g, "");
-
-    if (!cleanSiret) {
-      setSiretStatus(null);
-      setSiretError("");
-      setVerifiedCompany(null);
+    if (!cleanSiret || cleanSiret.length !== 14) {
+      setError("Le numéro SIRET doit comporter exactement 14 chiffres.");
       return;
     }
 
-    if (cleanSiret.length !== 14 || isNaN(cleanSiret)) {
-      setSiretStatus("error");
-      setSiretError("Le numéro SIRET doit comporter exactement 14 chiffres.");
+    if (!isValidLuhnSiret(cleanSiret)) {
+      setError("Le numéro SIRET ne respecte pas la clé de contrôle officielle SIRENE.");
       return;
     }
 
-    setIsSiretLoading(true);
-    setSiretStatus(null);
-    setSiretError("");
+    setVerifyingSiret(true);
 
     try {
-      const response = await fetch(
-        `https://recherche-entreprises.api.gouv.fr/search?q=${cleanSiret}`
-      );
-      const data = await response.json();
+      const res = await fetch(`https://recherche-entreprises.api.gouv.fr/search?q=${cleanSiret}`);
+      if (!res.ok) throw new Error("Impossible de contacter l'API du répertoire national SIRENE.");
 
-      if (data.results && data.results.length > 0) {
-        // CORRECTION : Récupération du 1er résultat dans le tableau
-        const company = data.results[0];
+      const data = await res.json();
+      const companyResult = data.results && data.results.length > 0 ? data.results[0] : null;
 
-        const etablissement =
-          company.matching_etablissements?.find(
-            (e) => e.siret === cleanSiret
-          ) || company.siege;
+      if (!companyResult) {
+        throw new Error("Numéro SIRET introuvable dans le répertoire national SIRENE.");
+      }
 
-        // Contrôle de l'état administratif ("A" = Actif)
-        const isCompanyActive = company.etat_administratif === "A";
-        const isEtablissementActive =
-          etablissement?.etat_administratif === "A" ||
-          etablissement?.etat_administratif !== "F"; // F = Fermé
+      const nomRaison = companyResult.nom_complet || companyResult.nom_raison_sociale || "";
+      const siege = companyResult.siege || {};
+      const fullAddr = siege.adresse || "";
+      const pCode = siege.code_postal || "";
+      const commune = siege.libelle_commune || "";
 
-        if (!isCompanyActive || !isEtablissementActive) {
-          setSiretStatus("error");
-          setSiretError("Cette entreprise ou cet établissement est enregistré comme fermé ou inactif.");
-          return;
-        }
+      setCompanyName(nomRaison);
+      if (fullAddr) setAddress(fullAddr);
+      if (pCode) setPostalCode(pCode);
+      if (commune) setCity(commune);
 
-        const info = {
-          companyName: company.nom_complet || "",
-          postalCode: etablissement?.code_postal || company.siege?.code_postal || "",
-          city: etablissement?.libelle_commune || company.siege?.libelle_commune || "",
-          address: etablissement?.adresse || company.siege?.adresse || "",
-        };
+      setSiretVerified(true);
 
-        setSiretStatus("success");
-        setVerifiedCompany(info);
-
-        // Auto-complétion sans altération des noms de champs originaux
-        setFormData((prev) => ({
-          ...prev,
-          companyName: prev.companyName || info.companyName,
-          postalCode: prev.postalCode || info.postalCode,
-          city: prev.city || info.city,
-        }));
-      } else {
-        setSiretStatus("error");
-        setSiretError("Aucune entreprise enregistrée pour ce numéro SIRET.");
+      if (fullAddr && pCode && commune) {
+        await checkGeoDistance(`${fullAddr}, ${pCode} ${commune}`);
       }
     } catch (err) {
-      console.error("[SIRET API ERROR] :", err);
-      setSiretStatus("error");
-      setSiretError("Impossible de vérifier le SIRET auprès du registre national.");
+      console.error("Erreur SIRET :", err);
+      setError(err.message || "Échec de la validation SIRET.");
+      setSiretVerified(false);
     } finally {
-      setIsSiretLoading(false);
+      setVerifyingSiret(false);
     }
   };
 
-  const isPasswordMatch =
-    formData.password.length >= 8 &&
-    passwordRegex.test(formData.password) &&
-    formData.password === formData.confirmPassword;
+  // 2. VÉRIFICATION DU GÉOFENCING (50 KM MAX)
+  const checkGeoDistance = async (customQueryAddress = null) => {
+    setLocationVerified(false);
+    setDetectedDistance(null);
+    setError("");
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (isLoading || isCheckingGeo || isSiretLoading) return;
-    setError(null);
-
-    if (formData.siret && siretStatus === "error") {
-      setError("Veuillez renseigner un numéro SIRET valide et actif.");
+    const queryAddr = customQueryAddress || `${address}, ${postalCode} ${city}`;
+    if (!queryAddr || queryAddr.trim().length < 5) {
+      setError("Veuillez renseigner une adresse physique, un code postal et une commune.");
       return;
     }
 
-    if (formData.password !== formData.confirmPassword) {
-      setError("Les mots de passe ne correspondent pas.");
-      return;
-    }
+    setVerifyingLocation(true);
 
-    if (!passwordRegex.test(formData.password)) {
-      setError(
-        "Le mot de passe doit contenir au moins 8 caractères, une majuscule, un chiffre et un caractère spécial."
+    try {
+      try {
+        const checkGeoFn = httpsCallable(functions, "checkGeoFenceServer");
+        const cloudRes = await checkGeoFn({ address: queryAddr, postalCode, city });
+        if (cloudRes.data && cloudRes.data.distanceKm !== undefined) {
+          const dist = cloudRes.data.distanceKm;
+          setDetectedDistance(dist);
+          if (dist <= MAX_RADIUS_KM) {
+            setLocationVerified(true);
+            return;
+          } else {
+            setLocationVerified(false);
+            setError(`Accès refusé : Votre entreprise est située à ${dist} km de Saint-Rémy-sur-Avre. Limite : ${MAX_RADIUS_KM} km.`);
+            return;
+          }
+        }
+      } catch (cloudErr) {
+        console.warn("Fallback API Adresse directe :", cloudErr);
+      }
+
+      const res = await fetch(
+        `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(queryAddr)}&limit=1`
       );
+      if (!res.ok) throw new Error("Service de géocodage indisponible.");
+
+      const data = await res.json();
+      const match = data.features && data.features.length > 0 ? data.features[0] : null;
+
+      if (!match) {
+        throw new Error("Adresse introuvable. Veuillez vérifier le libellé de la voie et du code postal.");
+      }
+
+      const [lon, lat] = match.geometry.coordinates;
+      const distance = calculateDistanceKm(CENTRAL_LAT, CENTRAL_LON, lat, lon);
+
+      setDetectedDistance(distance);
+
+      if (distance > MAX_RADIUS_KM) {
+        setLocationVerified(false);
+        setError(
+          `Accès refusé : Votre établissement se situe à ${distance} km de Saint-Rémy-sur-Avre (28350). Le rayon d'action est limité à ${MAX_RADIUS_KM} km.`
+        );
+      } else {
+        setLocationVerified(true);
+      }
+    } catch (err) {
+      console.error("Erreur Géolocalisation :", err);
+      setError(err.message || "Échec de la vérification géographique.");
+      setLocationVerified(false);
+    } finally {
+      setVerifyingLocation(false);
+    }
+  };
+
+  // 3. SOUMISSION STRICTE
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    const cleanSiret = siret.replace(/\s/g, "");
+
+    if (!siretVerified) {
+      setError("Veuillez cliquer sur 'Vérifier SIRET' pour certifier votre entreprise.");
       return;
     }
 
-    const result = await registerUser(formData, role);
-    if (result.success) {
-      navigate("/dashboard", { replace: true });
+    if (!locationVerified || detectedDistance === null) {
+      setError("Veuillez cliquer sur 'Valider la Localisation' pour certifier la zone de 50 km.");
+      return;
+    }
+
+    if (detectedDistance > MAX_RADIUS_KM) {
+      setError(`Inscription impossible : Votre établissement (${detectedDistance} km) dépasse la limite légale de ${MAX_RADIUS_KM} km.`);
+      return;
+    }
+
+    if (!email || !password || !companyName) {
+      setError("Veuillez renseigner tous les champs obligatoires.");
+      return;
+    }
+
+    if (password.length < 6) {
+      setError("Le mot de passe doit comporter au moins 6 caractères.");
+      return;
+    }
+
+    if (!acceptTerms) {
+      setError("Vous devez accepter le mandat de facturation et la politique des données.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const user = userCredential.user;
+
+      const userDocRef = doc(db, "users", user.uid);
+      const userPayload = {
+        uid: user.uid,
+        email: email.trim(),
+        role: role,
+        companyName: companyName.trim(),
+        displayName: companyName.trim(),
+        siret: cleanSiret,
+        siretVerified: true,
+        locationVerified: true,
+        phone: phone.trim() || "",
+        address: address.trim() || "",
+        postalCode: postalCode.trim() || "",
+        city: city.trim() || "",
+        department: postalCode.trim().substring(0, 2) || "28",
+        distanceFromHubKm: detectedDistance,
+        stripeAccountId: null,
+        stripeOnboardingStatus: "NOT_CREATED",
+        mandatFacturationAccepted: true,
+        mandatFacturationDate: new Date().toISOString(),
+        rgpdConsent: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      await setDoc(userDocRef, userPayload);
+
+      let targetModule = "boutique";
+      if (role === "producteur" || role === "artisan") targetModule = "rayon";
+      if (role === "livreur") targetModule = "route";
+
+      navigate(`/dashboard?module=${targetModule}`);
+    } catch (err) {
+      console.error("Erreur création de compte :", err);
+      if (err.code === "auth/email-already-in-use") {
+        setError("Cette adresse e-mail est déjà enregistrée.");
+      } else {
+        setError(err.message || "Impossible de créer le compte.");
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-2xl mx-auto my-8 p-6 bg-white border border-gray-200 rounded-3xl shadow-sm space-y-6 text-xs animate-fade-in">
-      <div className="text-center space-y-1.5 border-b pb-4">
-        <h1 className="text-xl font-black text-gray-900 flex items-center justify-center gap-2">
-          <ShieldCheck className="text-emerald-700" size={24} />
-          <span>Créer votre compte professionnel</span>
-        </h1>
-        <p className="text-gray-500 font-medium text-xs">
-          Plateforme d'alimentation locale et circuit court pour les professionnels.
+    <div className="max-w-2xl mx-auto my-8 p-6 md:p-8 bg-white border border-slate-200 rounded-3xl shadow-sm space-y-6">
+      <div className="text-center space-y-2 border-b border-slate-100 pb-4">
+        <h2 className="text-2xl font-black text-slate-900 flex items-center justify-center gap-2">
+          <Store className="text-emerald-700" size={28} />
+          Inscription Sécurisée Âne & Gorille
+        </h2>
+        <p className="text-xs font-semibold text-slate-500">
+          Contrôle SIRET (SIRENE / Gouv) & Périmètre 50 km (Saint-Rémy-sur-Avre)
         </p>
       </div>
 
       {error && (
-        <div className="p-3.5 bg-red-50 border border-red-200 text-red-800 rounded-xl font-bold flex items-center gap-2">
-          <AlertTriangle size={16} className="shrink-0 text-red-600" />
+        <div className="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-bold flex items-center gap-2">
+          <AlertCircle size={18} className="shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
-      {/* Rôles */}
-      <div className="space-y-2">
-        <label className="font-extrabold text-gray-900 block uppercase tracking-wider text-[11px]">
-          Type de Compte Professionnel *
-        </label>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          {[
-            { id: "acheteur_prive", label: "Acheteur Privé (B2B)", icon: Store },
-            { id: "acheteur_public", label: "Acheteur Public (B2G)", icon: Landmark },
-            { id: "producteur", label: "Producteur / Maraîcher", icon: Sprout },
-            { id: "livreur", label: "Livreur / Transporteur", icon: ShieldCheck },
-          ].map((item) => {
-            const IconComp = item.icon;
-            const isSelected = role === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setRole(item.id)}
-                className={`p-3 rounded-2xl border text-center font-bold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                  isSelected
-                    ? "border-emerald-600 bg-emerald-50/60 text-emerald-950 shadow-xs"
-                    : "border-gray-200 bg-gray-50/50 text-gray-600 hover:bg-gray-100"
-                }`}
-              >
-                <IconComp size={18} className={isSelected ? "text-emerald-700" : "text-gray-400"} />
-                <span className="text-[10px] leading-tight">{item.label}</span>
-              </button>
-            );
-          })}
+      <form onSubmit={handleRegister} className="space-y-5">
+        <div className="space-y-2">
+          <label className="text-xs font-black text-slate-800 uppercase tracking-wider block">
+            Profil d'Activité Professionnelle *
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setRole("producteur")}
+              className={`p-3.5 rounded-2xl border-2 text-left text-xs transition-all cursor-pointer ${
+                role === "producteur"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-950 font-black shadow-sm"
+                  : "border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <p className="font-bold">🥦 Producteur Maraîcher (Âne)</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Récoltes alimentaires & produits frais</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRole("artisan")}
+              className={`p-3.5 rounded-2xl border-2 text-left text-xs transition-all cursor-pointer ${
+                role === "artisan"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-950 font-black shadow-sm"
+                  : "border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <p className="font-bold">🦍 Artisan Créateur (Gorille)</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Créations façonnées & fait main</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRole("acheteur_prive")}
+              className={`p-3.5 rounded-2xl border-2 text-left text-xs transition-all cursor-pointer ${
+                role === "acheteur_prive"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-950 font-black shadow-sm"
+                  : "border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <p className="font-bold">💼 Acheteur Privé (B2B)</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Restaurants, épiceries, traiteurs</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRole("acheteur_public")}
+              className={`p-3.5 rounded-2xl border-2 text-left text-xs transition-all cursor-pointer ${
+                role === "acheteur_public"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-950 font-black shadow-sm"
+                  : "border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <p className="font-bold">🏛️ Secteur Public (B2G)</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Cantines, mairies, Chorus Pro</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRole("livreur")}
+              className={`p-3.5 rounded-2xl border-2 text-left text-xs transition-all cursor-pointer sm:col-span-2 ${
+                role === "livreur"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-950 font-black shadow-sm"
+                  : "border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <p className="font-bold">🚚 Transporteur / Livreur DREAL</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Tournées de ramasse & livraison VUL -3.5t</p>
+            </button>
+          </div>
         </div>
-      </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Nom & Prénom */}
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700 flex items-center gap-1">
-              <User size={13} className="text-emerald-700" /> Nom & Prénom du Responsable *
-            </label>
-            <input
-              type="text"
-              name="displayName"
-              required
-              value={formData.displayName}
-              onChange={handleChange}
-              placeholder="Ex: Martin Dupont"
-              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          {/* Email */}
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700 flex items-center gap-1">
-              <Mail size={13} className="text-emerald-700" /> Email Professionnel *
-            </label>
-            <input
-              type="email"
-              name="email"
-              required
-              value={formData.email}
-              onChange={handleChange}
-              placeholder="ex: contact@entreprise.fr"
-              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          {/* SIRET avec API INSEE corrigée */}
-          <div className="space-y-1 md:col-span-2">
-            <label className="font-bold text-gray-700 flex items-center justify-between">
-              <span className="flex items-center gap-1">
-                <Building2 size={13} className="text-emerald-700" /> Numéro SIRET (14 chiffres) *
+        {/* VERROU 1 : SIRET */}
+        <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+          <label className="text-[11px] font-black text-slate-800 uppercase flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Building2 size={16} className="text-emerald-700" />
+              1. Identification SIRET (Obligatoire) *
+            </span>
+            {siretVerified ? (
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-black flex items-center gap-1">
+                <CheckCircle2 size={12} /> SIRET Validé
               </span>
-              <span className="text-[10px] text-gray-400 font-normal">Vérification en temps réel</span>
-            </label>
-
-            <div className="relative">
-              <input
-                type="text"
-                name="siret"
-                maxLength={14}
-                required
-                value={formData.siret}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/\D/g, "");
-                  handleChange({ target: { name: "siret", value: val } });
-                }}
-                onBlur={(e) => handleVerifySiret(e.target.value)}
-                placeholder="Ex: 12345678900012"
-                className={`w-full p-2.5 pr-10 border rounded-xl font-mono text-xs outline-none transition ${
-                  siretStatus === "success"
-                    ? "border-emerald-500 bg-emerald-50/30 text-emerald-950 font-bold"
-                    : siretStatus === "error"
-                    ? "border-red-500 bg-red-50/30 text-red-950 font-bold"
-                    : "border-gray-300 focus:ring-2 focus:ring-emerald-500"
-                }`}
-              />
-
-              <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                {isSiretLoading && <Loader2 size={16} className="animate-spin text-emerald-700" />}
-                {!isSiretLoading && siretStatus === "success" && (
-                  <CheckCircle2 size={16} className="text-emerald-600" />
-                )}
-                {!isSiretLoading && siretStatus === "error" && (
-                  <AlertCircle size={16} className="text-red-500" />
-                )}
-              </div>
-            </div>
-
-            {siretError && (
-              <p className="text-[11px] font-bold text-red-600 flex items-center gap-1 mt-0.5">
-                <AlertCircle size={12} /> {siretError}
-              </p>
+            ) : (
+              <span className="text-[10px] bg-amber-100 text-amber-900 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                <Lock size={12} /> Vérification Requise
+              </span>
             )}
+          </label>
 
-            {siretStatus === "success" && verifiedCompany && (
-              <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-900 font-medium flex items-center gap-2 mt-1 animate-fade-in">
-                <Building size={14} className="shrink-0 text-emerald-700" />
-                <span>
-                  <strong>{verifiedCompany.companyName}</strong> — {verifiedCompany.address}{" "}
-                  ({verifiedCompany.postalCode} {verifiedCompany.city})
-                </span>
-              </div>
-            )}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              maxLength={14}
+              value={siret}
+              onChange={(e) => {
+                setSiret(e.target.value);
+                setSiretVerified(false);
+                setLocationVerified(false);
+              }}
+              placeholder="SIRET (14 chiffres)"
+              required
+              className="flex-1 p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <button
+              type="button"
+              onClick={handleVerifySiret}
+              disabled={verifyingSiret || siret.replace(/\s/g, "").length < 14}
+              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs uppercase transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+            >
+              {verifyingSiret ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Search size={14} />
+              )}
+              <span>Vérifier SIRET</span>
+            </button>
           </div>
 
-          {/* Raison Sociale */}
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700 flex items-center gap-1">
-              <Building2 size={13} className="text-emerald-700" /> Raison Sociale / Nom Établissement *
+          <div>
+            <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">
+              Raison Sociale Officielle (SIRENE)
             </label>
             <input
               type="text"
-              name="companyName"
               required
-              value={formData.companyName}
-              onChange={handleChange}
-              placeholder="Ex: Ferme du Val / Cantine Municipale"
-              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          {/* Téléphone */}
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700 flex items-center gap-1">
-              <Phone size={13} className="text-emerald-700" /> Téléphone Portable / Fixe *
-            </label>
-            <input
-              type="tel"
-              name="phone"
-              required
-              value={formData.phone}
-              onChange={handleChange}
-              placeholder="Ex: 06 12 34 56 78"
-              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          {/* Code Postal */}
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700 flex items-center gap-1">
-              <MapPin size={13} className="text-emerald-700" /> Code Postal *
-            </label>
-            <input
-              type="text"
-              name="postalCode"
-              required
-              value={formData.postalCode}
-              onChange={handleChange}
-              placeholder="Ex: 31000"
-              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          {/* Ville */}
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700 flex items-center gap-1">
-              <MapPin size={13} className="text-emerald-700" /> Ville *
-            </label>
-            <input
-              type="text"
-              name="city"
-              required
-              value={formData.city}
-              onChange={handleChange}
-              placeholder="Ex: Toulouse"
-              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          {/* Mot de passe */}
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700 flex items-center gap-1">
-              <Lock size={13} className="text-emerald-700" /> Mot de passe *
-            </label>
-            <input
-              type="password"
-              name="password"
-              required
-              value={formData.password}
-              onChange={handleChange}
-              placeholder="Min. 8 car. (A-z, 0-9, @)"
-              className="w-full p-2.5 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          {/* Confirmation Mot de passe */}
-          <div className="space-y-1">
-            <label className="font-bold text-gray-700 flex items-center gap-1">
-              <Lock size={13} className="text-emerald-700" /> Confirmer le mot de passe *
-            </label>
-            <input
-              type="password"
-              name="confirmPassword"
-              required
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              placeholder="Répétez le mot de passe"
-              className={`w-full p-2.5 border rounded-xl font-medium outline-none transition ${
-                formData.confirmPassword.length > 0
-                  ? isPasswordMatch
-                    ? "border-emerald-500 bg-emerald-50/20"
-                    : "border-red-500 bg-red-50/20"
-                  : "border-gray-300 focus:ring-2 focus:ring-emerald-500"
+              readOnly={siretVerified}
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="Raison sociale importée automatiquement"
+              className={`w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none ${
+                siretVerified ? "bg-slate-100 cursor-not-allowed" : "bg-white"
               }`}
             />
           </div>
         </div>
 
+        {/* VERROU 2 : GÉOFENCING 50 KM */}
+        <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] font-black text-slate-800 uppercase flex items-center gap-1.5">
+              <MapPin size={16} className="text-emerald-700" />
+              2. Adresse & Périmètre (50 km max) *
+            </label>
+            {locationVerified ? (
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-black flex items-center gap-1">
+                <CheckCircle2 size={12} /> Zone Validée ({detectedDistance} km)
+              </span>
+            ) : detectedDistance !== null ? (
+              <span className="text-[10px] bg-rose-100 text-rose-800 px-2.5 py-0.5 rounded-full font-bold">
+                Hors zone ({detectedDistance} km)
+              </span>
+            ) : (
+              <span className="text-[10px] bg-amber-100 text-amber-900 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                <Lock size={12} /> Validation Requise
+              </span>
+            )}
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">
+              Adresse physique
+            </label>
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => {
+                setAddress(e.target.value);
+                setLocationVerified(false);
+              }}
+              placeholder="Ex: 12 Rue des Maraîchers"
+              className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">
+                Code Postal *
+              </label>
+              <input
+                type="text"
+                maxLength={5}
+                value={postalCode}
+                onChange={(e) => {
+                  setPostalCode(e.target.value);
+                  setLocationVerified(false);
+                }}
+                placeholder="28350"
+                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">
+                Commune / Ville *
+              </label>
+              <input
+                type="text"
+                value={city}
+                onChange={(e) => {
+                  setCity(e.target.value);
+                  setLocationVerified(false);
+                }}
+                placeholder="Saint-Rémy-sur-Avre"
+                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => checkGeoDistance()}
+            disabled={verifyingLocation || !address || !postalCode}
+            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            {verifyingLocation ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <MapPin size={14} />
+            )}
+            <span>Valider la Localisation (Périmètre 50 km)</span>
+          </button>
+        </div>
+
+        {/* IDENTIFIANTS */}
+        <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 uppercase block mb-1">
+                Adresse E-mail *
+              </label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="contact@entreprise.fr"
+                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 uppercase block mb-1">
+                Téléphone
+              </label>
+              <input
+                type="text"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="06 00 00 00 00"
+                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[11px] font-bold text-slate-700 uppercase block mb-1">
+              Mot de Passe *
+            </label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+        </div>
+
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-[11px] text-amber-900 space-y-2">
+          <div className="flex items-start gap-2">
+            <FileCheck size={16} className="text-amber-700 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-bold">Mandat de Facturation Transparent (Art. 289-I-2 du CGI) & RGPD :</p>
+              <p className="text-amber-800 leading-tight">
+                Vous autorisez Âne & Gorille à générer les factures au nom et pour le compte de votre structure et acceptez la conservation sécurisée des données.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center gap-2 pt-1 font-bold cursor-pointer">
+            <input
+              type="checkbox"
+              checked={acceptTerms}
+              onChange={(e) => setAcceptTerms(e.target.checked)}
+              className="accent-emerald-700 w-4 h-4"
+            />
+            <span>J accepte le mandat de facturation et la politique des données.</span>
+          </label>
+        </div>
+
         <button
           type="submit"
-          disabled={isLoading || isCheckingGeo || isSiretLoading}
-          className="w-full py-3.5 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-4"
+          disabled={loading || !siretVerified || !locationVerified}
+          className="w-full py-4 bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
         >
-          {isLoading || isCheckingGeo ? (
+          {loading ? (
             <>
-              <Loader2 size={16} className="animate-spin" />
-              <span>Création du compte et vérification géographique...</span>
+              <Loader2 className="animate-spin" size={16} />
+              <span>Création du compte en cours...</span>
             </>
           ) : (
             <>
-              <span>Valider mon Inscription Professionnelle</span>
-              <ArrowRight size={16} />
+              <ShieldCheck size={18} />
+              <span>Valider & Inscrire mon Compte ({role.toUpperCase()})</span>
             </>
           )}
         </button>
 
-        <div className="text-center pt-2">
-          <p className="text-gray-500 font-medium">
-            Déjà inscrit ?{" "}
-            <Link to="/login" className="font-bold text-emerald-800 hover:underline">
-              Se connecter
-            </Link>
-          </p>
-        </div>
+        <p className="text-center text-xs text-slate-500">
+          Déjà un compte ?{" "}
+          <Link to="/login" className="font-bold text-emerald-800 hover:underline">
+            Se connecter
+          </Link>
+        </p>
       </form>
     </div>
   );

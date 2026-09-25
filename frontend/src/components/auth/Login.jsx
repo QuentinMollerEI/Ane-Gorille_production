@@ -1,203 +1,135 @@
 import React, { useState } from "react";
-import { useAuth } from "../../context/AuthContext";
 import { useNavigate, Link } from "react-router-dom";
-import { LogIn, Loader2, AlertCircle, CheckCircle } from "lucide-react";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "../../config/firebase";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { Store, Lock, Mail, AlertCircle, Loader2 } from "lucide-react";
 
 export default function Login() {
+  const navigate = useNavigate();
+  const { login, signInWithEmailAndPassword } = useAuth();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [resetMessage, setResetMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [resetLoading, setResetLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const { login, resetPassword } = useAuth();
-  const navigate = useNavigate();
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleLoginSubmit = async (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     setError("");
-    setResetMessage("");
+
+    const cleanEmail = email ? email.trim() : "";
+    if (!cleanEmail) {
+      setError("Veuillez saisir votre adresse e-mail.");
+      return;
+    }
+    if (!password) {
+      setError("Veuillez saisir votre mot de passe.");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await login(email, password);
-      navigate("/dashboard", { replace: true });
+      const loginFn = login || signInWithEmailAndPassword;
+      if (typeof loginFn !== "function") {
+        throw new Error("Fonction de connexion indisponible.");
+      }
+
+      const res = await loginFn(cleanEmail, password);
+      console.log("✅ Connexion réussie :", res?.user?.email || cleanEmail);
+      navigate("/dashboard");
     } catch (err) {
-      console.error("Erreur de connexion :", err);
-      if (
-        err.code === "auth/invalid-credential" ||
-        err.code === "auth/wrong-password" ||
-        err.code === "auth/user-not-found"
-      ) {
+      console.error("🔴 Erreur Firebase Auth :", err?.code, err?.message, err);
+
+      const errorCode = err?.code || "";
+      if (errorCode === "auth/invalid-credential" || errorCode === "auth/user-not-found" || errorCode === "auth/wrong-password") {
         setError("Adresse e-mail ou mot de passe incorrect.");
-      } else if (err.code === "auth/too-many-requests") {
-        setError(
-          "Compte temporairement bloqué suite à de trop nombreuses tentatives. Réessayez plus tard."
-        );
-      } else if (err.code === "auth/invalid-email") {
+      } else if (errorCode === "auth/invalid-email") {
         setError("Format d'adresse e-mail invalide.");
+      } else if (errorCode === "auth/too-many-requests") {
+        setError("Trop de tentatives. Veuillez réinstaller un délai de quelques minutes.");
+      } else if (errorCode === "auth/network-request-failed") {
+        setError("Erreur réseau : vérifiez votre connexion ou la configuration Firebase.");
       } else {
-        setError(
-          "Impossible de se connecter. Vérifiez votre connexion réseau."
-        );
+        setError(err?.message || "Impossible de se connecter.");
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleForgotPassword = async () => {
-    if (!email) {
-      setError("Veuillez saisir votre adresse e-mail ci-dessous pour réinitialiser votre mot de passe.");
-      return;
-    }
-    setError("");
-    setResetMessage("");
-    setResetLoading(true);
-
-    try {
-      if (typeof resetPassword === "function") {
-        await resetPassword(email);
-      } else {
-        await sendPasswordResetEmail(auth, email);
-      }
-      setResetMessage("Un e-mail de réinitialisation de mot de passe vous a été envoyé.");
-    } catch (err) {
-      console.error("Erreur réinitialisation :", err);
-      if (err.code === "auth/user-not-found") {
-        setError("Aucun compte ne correspond à cette adresse e-mail.");
-      } else if (err.code === "auth/invalid-email") {
-        setError("Format d'adresse e-mail invalide.");
-      } else {
-        setError("Impossible d'envoyer l'e-mail de réinitialisation. Vérifiez l'adresse renseignée.");
-      }
-    } finally {
-      setResetLoading(false);
-    }
-  };
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-3xl border border-gray-200 shadow-sm">
-        
-        {/* EN-TÊTE & LOGO ÉCUSSON TRANSPARENT */}
-        <div className="text-center space-y-2">
-          <img
-            src="/Logo.png"
-            alt="Logo Âne & Gorille"
-            className="mx-auto h-20 w-20 object-contain bg-transparent rounded-full"
-          />
-          <h2 className="mt-4 text-2xl font-black text-gray-900 tracking-tight">
-            Connexion à votre compte
-          </h2>
-          <p className="text-xs font-semibold text-gray-500">
-            Espace d'approvisionnement en circuit court — Âne & Gorille
-          </p>
-        </div>
-
-        {/* BANNIÈRE D'ERREUR */}
-        {error && (
-          <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-2xl text-xs font-bold flex items-center gap-2 animate-fade-in">
-            <AlertCircle size={18} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {/* BANNIÈRE DE SUCCÈS RÉINITIALISATION */}
-        {resetMessage && (
-          <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs font-bold flex items-center gap-2 animate-fade-in">
-            <CheckCircle size={18} className="shrink-0" />
-            <span>{resetMessage}</span>
-          </div>
-        )}
-
-        {/* FORMULAIRE DE CONNEXION */}
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
-                Adresse e-mail
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-xs font-semibold text-gray-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                placeholder="nom@domaine.com"
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label htmlFor="password" className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
-                  Mot de passe
-                </label>
-              </div>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-xs font-semibold text-gray-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                placeholder="••••••••"
-              />
-            </div>
-          </div>
-
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex justify-center items-center gap-2 py-3.5 px-4 border border-transparent text-xs font-black rounded-xl text-white bg-emerald-700 hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-all shadow-md disabled:opacity-50 uppercase tracking-wider cursor-pointer"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="animate-spin" size={18} />
-                  <span>Connexion en cours...</span>
-                </>
-              ) : (
-                <>
-                  <LogIn size={18} />
-                  <span>Se connecter</span>
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-
-        {/* LIEN INSCRIPTION & MOT DE PASSE OUBLIÉ */}
-        <div className="flex flex-col items-center gap-2 pt-2">
-          <p className="text-xs font-semibold text-gray-600">
-            Pas encore de compte ?{" "}
-            <Link
-              to="/register"
-              className="font-bold text-emerald-700 hover:text-emerald-800 hover:underline"
-            >
-              Créer un compte
-            </Link>
-          </p>
-
-          <button
-            type="button"
-            onClick={handleForgotPassword}
-            disabled={resetLoading}
-            className="text-xs font-bold text-emerald-700 hover:text-emerald-800 hover:underline focus:outline-none disabled:opacity-50"
-          >
-            {resetLoading ? "Envoi..." : "Mot de passe oublié ?"}
-          </button>
-        </div>
-
+    <div className="max-w-md mx-auto my-12 p-6 md:p-8 bg-white border border-slate-200 rounded-3xl shadow-sm space-y-6">
+      <div className="text-center space-y-2 border-b border-slate-100 pb-4">
+        <h2 className="text-2xl font-black text-slate-900 flex items-center justify-center gap-2">
+          <Store className="text-emerald-700" size={28} />
+          Espace Connexion Pro
+        </h2>
+        <p className="text-xs font-semibold text-slate-500">
+          Plateforme B2B & B2G Âne & Gorille
+        </p>
       </div>
+
+      {error && (
+        <div className="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-bold flex items-center gap-2">
+          <AlertCircle size={18} className="shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleLoginSubmit} className="space-y-4">
+        <div className="space-y-1">
+          <label className="text-xs font-black text-slate-700 uppercase flex items-center gap-1">
+            <Mail size={14} className="text-emerald-700" /> Adresse E-mail
+          </label>
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="contact@entreprise.fr"
+            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-black text-slate-700 uppercase flex items-center gap-1">
+            <Lock size={14} className="text-emerald-700" /> Mot de Passe
+          </label>
+          <input
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full py-4 bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="animate-spin" size={16} />
+              <span>Connexion en cours...</span>
+            </>
+          ) : (
+            <span>Se Connecter</span>
+          )}
+        </button>
+
+        <p className="text-center text-xs text-slate-500 pt-2">
+          Pas encore de compte ?{" "}
+          <Link to="/register" className="font-bold text-emerald-800 hover:underline">
+            Créer un compte professionnel
+          </Link>
+        </p>
+      </form>
     </div>
   );
 }

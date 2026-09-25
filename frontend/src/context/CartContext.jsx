@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from "react";
+import React, { createContext, useContext, useState, useEffect } from "react";
 import { useAuth } from "./AuthContext.jsx";
-import TaxAndFeeCalculator from "../utils/TaxAndFeeCalculator.js";
 
 const CartContext = createContext(null);
 
@@ -8,7 +7,7 @@ export const CartProvider = ({ children }) => {
   const { user } = useAuth();
   const cartKey = user?.uid ? `ane_gorille_cart_${user.uid}` : "ane_gorille_cart_guest";
 
-  const [cartItems, setCartItems] = useState(() => {
+  const [cart, setCart] = useState(() => {
     try {
       const saved = localStorage.getItem(cartKey);
       return saved ? JSON.parse(saved) : [];
@@ -20,143 +19,88 @@ export const CartProvider = ({ children }) => {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(cartKey);
-      setCartItems(saved ? JSON.parse(saved) : []);
-    } catch (e) {}
+      setCart(saved ? JSON.parse(saved) : []);
+    } catch (e) {
+      setCart([]);
+    }
   }, [cartKey]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(cartKey, JSON.stringify(cartItems));
-    } catch (e) {}
-  }, [cartItems, cartKey]);
-
-  const addToCart = (product, quantityToAdd = 1) => {
-    if (!product || !product.id) return;
-
-    setCartItems((prevItems) => {
-      const existingIndex = prevItems.findIndex((item) => item.id === product.id);
-      const requestedQty = Math.max(1, Number(quantityToAdd) || 1);
-      const availableStock = Number(
-        product.stock ?? product.quantity ?? product.stockQuantity ?? 999
+      localStorage.setItem(cartKey, JSON.stringify(cart));
+      window.dispatchEvent(
+        new CustomEvent("ane_gorille_cart_updated", { detail: { cart } })
       );
+    } catch (e) {
+      console.error("Erreur sauvegarde panier :", e);
+    }
+  }, [cart, cartKey]);
 
+  const addToCart = (product, quantity = 1) => {
+    setCart((prev) => {
+      const existingIndex = prev.findIndex((item) => item.id === product.id);
       if (existingIndex > -1) {
-        const updated = [...prevItems];
-        const currentQty = updated[existingIndex].quantity || 1;
-        const newQty = Math.min(availableStock, currentQty + requestedQty);
-        
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          quantity: newQty,
-          stock: availableStock
-        };
+        const updated = [...prev];
+        updated[existingIndex].quantity += quantity;
         return updated;
       }
-
-      const initialQty = Math.min(availableStock, requestedQty);
-      return [
-        ...prevItems,
-        {
-          id: product.id,
-          name: product.name || product.title || "Produit sans nom",
-          title: product.title || product.name || "Produit sans nom",
-          priceHT: Number(product.priceHT ?? product.price ?? 0),
-          vatRate: Number(product.vatRate ?? (product.category === "artisanat" ? 20 : 5.5)),
-          unit: product.unit || "kg",
-          producerId: product.producerId || product.userId || "fournisseur_general",
-          producerName: product.producerName || product.farmName || product.companyName || "Producteur Partenaire",
-          stripeAccountId: product.stripeAccountId || null,
-          category: product.category || "maraichage",
-          imageUrl: product.imageUrl || product.image || "/placeholder.png",
-          quantity: initialQty,
-          stock: availableStock,
-          batchNumber: product.batchNumber || "L-2026-001"
-        }
-      ];
-    });
-  };
-
-  const updateQuantity = (productId, newQuantity) => {
-    setCartItems((prev) => {
-      const target = prev.find((i) => i.id === productId);
-      if (!target) return prev;
-
-      const qty = Number(newQuantity);
-      if (qty <= 0) {
-        return prev.filter((i) => i.id !== productId);
-      }
-
-      const maxStock = Number(target.stock ?? 999);
-      const safeQty = Math.min(maxStock, qty);
-
-      return prev.map((item) =>
-        item.id === productId ? { ...item, quantity: safeQty } : item
-      );
+      return [...prev, { ...product, quantity }];
     });
   };
 
   const removeFromCart = (productId) => {
-    setCartItems((prev) => prev.filter((item) => item.id !== productId));
+    setCart((prev) => prev.filter((item) => item.id !== productId));
   };
 
-  const clearCart = () => {
-    setCartItems([]);
-    try {
-      localStorage.removeItem(cartKey);
-    } catch (e) {}
+  const updateQuantity = (productId, quantity) => {
+    if (quantity <= 0) {
+      removeFromCart(productId);
+      return;
+    }
+    setCart((prev) =>
+      prev.map((item) => (item.id === productId ? { ...item, quantity } : item))
+    );
   };
 
-  const itemsCount = useMemo(() => {
-    return cartItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
-  }, [cartItems]);
+  const clearCart = () => setCart([]);
 
-  const totals = useMemo(() => {
-    return TaxAndFeeCalculator.calculateCartTotals(cartItems);
-  }, [cartItems]);
+  const calculateTotals = () => {
+    const rawItemsHT = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const platformCommissionHT = Math.round(rawItemsHT * 0.12 * 100) / 100;
+    const vendorPayoutHT = Math.round((rawItemsHT - platformCommissionHT) * 100) / 100;
 
-  const subOrdersGrouped = useMemo(() => {
-    const map = {};
-    cartItems.forEach((item) => {
-      const pId = item.producerId || "fournisseur_general";
-      if (!map[pId]) {
-        map[pId] = {
-          producerId: pId,
-          producerName: item.producerName || "Producteur Partenaire",
-          stripeAccountId: item.stripeAccountId || null,
-          items: [],
-          totalHT: 0,
-          totalVAT: 0
-        };
-      }
+    let shippingCostHT = 15;
+    if (rawItemsHT >= 300) {
+      shippingCostHT = 0;
+    } else if (rawItemsHT >= 150) {
+      shippingCostHT = 8;
+    }
 
-      const pHT = Number(item.priceHT) || 0;
-      const qty = Number(item.quantity) || 1;
-      const vRate = Number(item.vatRate) || 5.5;
+    const tvaProducts = Math.round(rawItemsHT * 0.055 * 100) / 100;
+    const tvaShipping = Math.round(shippingCostHT * 0.20 * 100) / 100;
+    const totalTTC = Math.round((rawItemsHT + shippingCostHT + tvaProducts + tvaShipping) * 100) / 100;
 
-      const lineHT = pHT * qty;
-      const lineVAT = lineHT * (vRate / 100);
-
-      map[pId].items.push({
-        ...item,
-        lineHT
-      });
-      map[pId].totalHT += lineHT;
-      map[pId].totalVAT += lineVAT;
-    });
-    return map;
-  }, [cartItems]);
+    return {
+      subtotalHT: rawItemsHT,
+      platformCommissionHT,
+      vendorPayoutHT,
+      shippingCostHT,
+      tvaProducts,
+      tvaShipping,
+      totalTTC,
+      meetsMinimumOrder: rawItemsHT >= 50
+    };
+  };
 
   return (
     <CartContext.Provider
       value={{
-        cartItems,
+        cart,
         addToCart,
-        updateQuantity,
         removeFromCart,
+        updateQuantity,
         clearCart,
-        itemsCount,
-        subOrdersGrouped,
-        ...totals
+        calculateTotals
       }}
     >
       {children}
@@ -164,12 +108,5 @@ export const CartProvider = ({ children }) => {
   );
 };
 
-export const useCart = () => {
-  const context = useContext(CartContext);
-  if (!context) {
-    throw new Error("useCart doit être utilisé à l'intérieur d'un CartProvider");
-  }
-  return context;
-};
-
+export const useCart = () => useContext(CartContext);
 export default CartContext;

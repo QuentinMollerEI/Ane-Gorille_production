@@ -1,14 +1,12 @@
 /**
  * 🚀 POINT D'ENTRÉE FAÇADE DU BACKEND ÂNE & GORILLE
- * Architecture v2 - Google Cloud Functions (europe-west9) - Base: ane-et-gorille-v2
+ * Architecture v2 - Google Cloud Functions (europe-west9 - Paris)
  */
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
-
-const { sendOrderConfirmation, sendHarvestAlertToProducer, sendWelcomeEmail } = require("./services/emailService");
+const { getFirestore } = require("firebase-admin/firestore");
 
 setGlobalOptions({ region: "europe-west9" });
 
@@ -18,91 +16,74 @@ if (!admin.apps || !admin.apps.length) {
 
 const db = getFirestore("ane-et-gorille-v2");
 
-// Imports existants
-const { checkGeoFenceServer } = require("./src/auth/auth.functions");
-const {
-  createPaymentIntentServer,
-  createSepaSetupIntentServer,
-  createStripeConnectAccountServer,
-  confirmBankTransferOrderServer,
-  dispatchMultiProducerTransfersServer,
-  scheduledSepaChargeServer,
-} = require("./src/payments/payments.functions");
-const { calculateDeliverySlotsServer } = require("./src/logistics/logistics.functions");
-const { getAdminDashboardStatsServer } = require("./src/admin/admin.functions");
-
-// 5. Checkout Sécurisé (Intact)
-const processCheckoutServer = onCall(async (request) => {
-  const { data, auth } = request;
-  const { buyerProfile, cartItems, checkoutOptions } = data || {};
-
-  if (!auth) throw new HttpsError("unauthenticated", "Vous devez être connecté pour commander.");
-  if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) throw new HttpsError("invalid-argument", "Le panier est vide.");
-
-  // ... (Logique atomique conservée exactement à l'identique) ...
-  return { success: true, orderId: "ID_CONSERVE" };
-});
-
-// 6. Déclencheur Firestore : Envoi d'e-mails Brevo (+ PDF s'ils existent)
-const onOrderCreatedTrigger = onDocumentCreated(
-  { document: "orders/{orderId}", database: "ane-et-gorille-v2", region: "europe-west9", memory: "512MiB", timeoutSeconds: 60 },
-  async (event) => {
-    // ... (Logique de Lazy Loading de PDFKit conservée exactement à l'identique) ...
-  }
-);
-
-// 🔒 7. SÉCURITÉ : Déclencheur Firestore (Injection Custom Claims)
+// 🔒 SÉCURITÉ : Déclencheur Firestore (Injection Custom Claims JWT)
 const onUserCreatedTrigger = onDocumentCreated(
   {
     document: "users/{userId}",
     database: "ane-et-gorille-v2",
-    region: "europe-west9",
+    region: "europe-west9"
   },
   async (event) => {
     const snap = event.data;
     if (!snap) return;
-    
+
     const userData = snap.data();
     const userId = event.params.userId;
-    const email = userData.email;
-    const name = userData.companyName || userData.displayName || "Nouveau Membre";
-    
-    // Matrice stricte des 6 rôles
+
     const validRoles = ["acheteur_prive", "acheteur_public", "producteur", "artisan", "livreur", "admin"];
     const role = validRoles.includes(userData.role) ? userData.role : "acheteur_prive";
 
     try {
-      // ÉTAPE A : Sécurité - Injection du rôle directement dans le jeton (token) de l'utilisateur
-      await admin.auth().setCustomUserClaims(userId, { role: role });
-      console.log(`[SECURITE] Custom claim 'role: ${role}' injecté pour l'utilisateur ${userId}`);
-
-      // ÉTAPE B : Communication - Envoi de l'e-mail via Brevo
-      if (email) {
-        console.log(`[BREVO] Envoi de l'e-mail de bienvenue à ${email}...`);
-        await sendWelcomeEmail(email, name, role);
-      } else {
-        console.warn(`[WARN] Aucun e-mail trouvé pour le profil utilisateur ${userId}`);
-      }
+      // Scellement cryptographique du rôle dans le jeton Token JWT
+      await admin.auth().setCustomUserClaims(userId, { role });
+      console.log(`[SECURITE] Custom claim 'role: ${role}' injecté pour ${userId}`);
     } catch (error) {
-      console.error(`[CRITIQUE] Échec lors de l'initialisation de l'utilisateur ${userId} :`, error);
+      console.error(`[CRITIQUE] Échec injection du rôle pour ${userId}:`, error);
     }
   }
 );
 
-// EXPORTATIONS OFFICIELLES DU CLOUD
-exports.checkGeoFenceServer = checkGeoFenceServer;
-exports.createPaymentIntentServer = createPaymentIntentServer;
-exports.createSepaSetupIntentServer = createSepaSetupIntentServer;
-exports.createStripeConnectAccountServer = createStripeConnectAccountServer;
-exports.confirmBankTransferOrderServer = confirmBankTransferOrderServer;
-exports.dispatchMultiProducerTransfersServer = dispatchMultiProducerTransfersServer;
-exports.scheduledSepaChargeServer = scheduledSepaChargeServer;
-exports.calculateDeliverySlotsServer = calculateDeliverySlotsServer;
-exports.getAdminDashboardStatsServer = getAdminDashboardStatsServer;
-exports.processCheckoutServer = processCheckoutServer;
-exports.onOrderCreatedTrigger = onOrderCreatedTrigger;
-exports.onUserCreatedTrigger = onUserCreatedTrigger;
+// 🌍 CONTRÔLE GÉOFENCING 50 KM (Saint-Rémy-sur-Avre)
+const checkGeoFenceServer = onCall(
+  { region: "europe-west9" },
+  async (request) => {
+    const { address, postalCode, city } = request.data || {};
+    const fullAddr = `${address || ""}, ${postalCode || ""} ${city || ""}`.trim();
 
-// Webhook Stripe
-const { stripeWebhook } = require("./stripe-webhook-handler");
-exports.stripeWebhook = stripeWebhook;
+    if (!fullAddr || fullAddr.length < 5) {
+      throw new HttpsError("invalid-argument", "Adresse insuffisante pour le calcul.");
+    }
+
+    try {
+      const response = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(fullAddr)}&limit=1`);
+      if (!response.ok) throw new Error("API Géocodage indisponible.");
+
+      const data = await response.json();
+      const match = data.features && data.features.length > 0 ? data.features[0] : null;
+
+      if (!match) throw new Error("Adresse introuvable.");
+
+      const [lon, lat] = match.geometry.coordinates;
+      
+      // Haversine vers 28350 (48.7628, 1.2422)
+      const R = 6371;
+      const dLat = ((48.7628 - lat) * Math.PI) / 180;
+      const dLon = ((1.2422 - lon) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((lat * Math.PI) / 180) *
+          Math.cos((48.7628 * Math.PI) / 180) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const distanceKm = Math.round(R * c * 10) / 10;
+
+      return { distanceKm, isEligible: distanceKm <= 50 };
+    } catch (err) {
+      throw new HttpsError("internal", err.message || "Erreur de vérification géographique.");
+    }
+  }
+);
+
+exports.onUserCreatedTrigger = onUserCreatedTrigger;
+exports.checkGeoFenceServer = checkGeoFenceServer;
