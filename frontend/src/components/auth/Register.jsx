@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { auth, db, functions } from "../../config/firebase.js";
 import { createUserWithEmailAndPassword } from "firebase/auth";
@@ -75,24 +75,40 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // 1. VÉRIFICATION DU SIRET (API SIRENE)
-  const handleVerifySiret = async () => {
+  // ==========================================
+  // EFFETS AUTOMATIQUES (VÉRIFICATIONS)
+  // ==========================================
+
+  // 1. AUTO-VÉRIFICATION DU SIRET
+  useEffect(() => {
     const cleanSiret = siret.replace(/\s/g, "");
+    if (cleanSiret.length === 14 && isValidLuhnSiret(cleanSiret) && !siretVerified && !verifyingSiret) {
+      handleVerifySiret(cleanSiret);
+    }
+  }, [siret, siretVerified]);
+
+  // 2. AUTO-VÉRIFICATION DE L'ADRESSE (Debounce de 1 seconde)
+  useEffect(() => {
+    const isAddressComplete =
+      address.trim().length >= 5 && postalCode.trim().length === 5 && city.trim().length >= 2;
+
+    if (isAddressComplete && !locationVerified && detectedDistance === null && !verifyingLocation) {
+      const timer = setTimeout(() => {
+        checkGeoDistance();
+      }, 1000); // 1 seconde de délai pour laisser l'utilisateur finir de taper
+      return () => clearTimeout(timer);
+    }
+  }, [address, postalCode, city, locationVerified, detectedDistance]);
+
+  // ==========================================
+  // FONCTIONS DE VALIDATION
+  // ==========================================
+
+  const handleVerifySiret = async (cleanSiret) => {
     setSiretVerified(false);
     setLocationVerified(false);
     setDetectedDistance(null);
     setError("");
-
-    if (!cleanSiret || cleanSiret.length !== 14) {
-      setError("Le numéro SIRET doit comporter exactement 14 chiffres.");
-      return;
-    }
-
-    if (!isValidLuhnSiret(cleanSiret)) {
-      setError("Le numéro SIRET ne respecte pas la clé de contrôle officielle SIRENE.");
-      return;
-    }
-
     setVerifyingSiret(true);
 
     try {
@@ -118,10 +134,6 @@ export default function Register() {
       if (commune) setCity(commune);
 
       setSiretVerified(true);
-
-      if (fullAddr && pCode && commune) {
-        await checkGeoDistance(`${fullAddr}, ${pCode} ${commune}`);
-      }
     } catch (err) {
       console.error("Erreur SIRET :", err);
       setError(err.message || "Échec de la validation SIRET.");
@@ -131,17 +143,13 @@ export default function Register() {
     }
   };
 
-  // 2. VÉRIFICATION DU GÉOFENCING (50 KM MAX)
-  const checkGeoDistance = async (customQueryAddress = null) => {
+  const checkGeoDistance = async () => {
     setLocationVerified(false);
     setDetectedDistance(null);
     setError("");
 
-    const queryAddr = customQueryAddress || `${address}, ${postalCode} ${city}`;
-    if (!queryAddr || queryAddr.trim().length < 5) {
-      setError("Veuillez renseigner une adresse physique, un code postal et une commune.");
-      return;
-    }
+    const queryAddr = `${address}, ${postalCode} ${city}`;
+    if (!queryAddr || queryAddr.trim().length < 5) return;
 
     setVerifyingLocation(true);
 
@@ -207,12 +215,12 @@ export default function Register() {
     const cleanSiret = siret.replace(/\s/g, "");
 
     if (!siretVerified) {
-      setError("Veuillez cliquer sur 'Vérifier SIRET' pour certifier votre entreprise.");
+      setError("Le SIRET n'est pas encore validé ou est incorrect.");
       return;
     }
 
     if (!locationVerified || detectedDistance === null) {
-      setError("Veuillez cliquer sur 'Valider la Localisation' pour certifier la zone de 50 km.");
+      setError("L'adresse n'est pas encore validée ou se trouve hors de la zone des 50 km.");
       return;
     }
 
@@ -385,18 +393,22 @@ export default function Register() {
               <Building2 size={16} className="text-emerald-700" />
               1. Identification SIRET (Obligatoire) *
             </span>
-            {siretVerified ? (
+            {verifyingSiret ? (
+              <span className="text-[10px] bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                <Loader2 size={12} className="animate-spin" /> Recherche...
+              </span>
+            ) : siretVerified ? (
               <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-black flex items-center gap-1">
                 <CheckCircle2 size={12} /> SIRET Validé
               </span>
             ) : (
               <span className="text-[10px] bg-amber-100 text-amber-900 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
-                <Lock size={12} /> Vérification Requise
+                <Lock size={12} /> Automatique si 14 chiffres
               </span>
             )}
           </label>
 
-          <div className="flex gap-2">
+          <div className="relative">
             <input
               type="text"
               maxLength={14}
@@ -405,24 +417,17 @@ export default function Register() {
                 setSiret(e.target.value);
                 setSiretVerified(false);
                 setLocationVerified(false);
+                setDetectedDistance(null);
               }}
               placeholder="SIRET (14 chiffres)"
               required
-              className="flex-1 p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full p-2.5 pr-10 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
             />
-            <button
-              type="button"
-              onClick={handleVerifySiret}
-              disabled={verifyingSiret || siret.replace(/\s/g, "").length < 14}
-              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs uppercase transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-            >
-              {verifyingSiret ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <Search size={14} />
-              )}
-              <span>Vérifier SIRET</span>
-            </button>
+            {verifyingSiret && (
+              <div className="absolute right-3 top-2.5">
+                <Loader2 size={18} className="animate-spin text-emerald-600" />
+              </div>
+            )}
           </div>
 
           <div>
@@ -450,7 +455,11 @@ export default function Register() {
               <MapPin size={16} className="text-emerald-700" />
               2. Adresse & Périmètre (50 km max) *
             </label>
-            {locationVerified ? (
+            {verifyingLocation ? (
+              <span className="text-[10px] bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                <Loader2 size={12} className="animate-spin" /> Calcul...
+              </span>
+            ) : locationVerified ? (
               <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-black flex items-center gap-1">
                 <CheckCircle2 size={12} /> Zone Validée ({detectedDistance} km)
               </span>
@@ -460,7 +469,7 @@ export default function Register() {
               </span>
             ) : (
               <span className="text-[10px] bg-amber-100 text-amber-900 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
-                <Lock size={12} /> Validation Requise
+                <Lock size={12} /> Calcul Automatique
               </span>
             )}
           </div>
@@ -475,6 +484,7 @@ export default function Register() {
               onChange={(e) => {
                 setAddress(e.target.value);
                 setLocationVerified(false);
+                setDetectedDistance(null);
               }}
               placeholder="Ex: 12 Rue des Maraîchers"
               className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
@@ -493,6 +503,7 @@ export default function Register() {
                 onChange={(e) => {
                   setPostalCode(e.target.value);
                   setLocationVerified(false);
+                  setDetectedDistance(null);
                 }}
                 placeholder="28350"
                 className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
@@ -509,26 +520,13 @@ export default function Register() {
                 onChange={(e) => {
                   setCity(e.target.value);
                   setLocationVerified(false);
+                  setDetectedDistance(null);
                 }}
                 placeholder="Saint-Rémy-sur-Avre"
                 className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={() => checkGeoDistance()}
-            disabled={verifyingLocation || !address || !postalCode}
-            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            {verifyingLocation ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <MapPin size={14} />
-            )}
-            <span>Valider la Localisation (Périmètre 50 km)</span>
-          </button>
         </div>
 
         {/* IDENTIFIANTS */}
@@ -594,7 +592,7 @@ export default function Register() {
               onChange={(e) => setAcceptTerms(e.target.checked)}
               className="accent-emerald-700 w-4 h-4"
             />
-            <span>J accepte le mandat de facturation et la politique des données.</span>
+            <span>J'accepte le mandat de facturation et la politique des données.</span>
           </label>
         </div>
 
