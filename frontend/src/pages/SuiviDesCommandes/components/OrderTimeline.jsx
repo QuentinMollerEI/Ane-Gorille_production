@@ -1,49 +1,81 @@
-import React from "react";
-import { CheckCircle2, Clock, Truck, PackageCheck } from "lucide-react";
+import React from 'react';
+import { CheckCircle2, Clock, Truck, PackageCheck, AlertCircle } from 'lucide-react';
 
-export default function OrderTimeline({ status }) {
+export function OrderTimeline({ status, timelineEvents = [] }) {
   const steps = [
-    { key: "A_PREPARER", label: "En Préparation", icon: Clock },
-    { key: "EN_LIVRAISON", label: "En Livraison", icon: Truck },
-    { key: "LIVREE", label: "Livrée", icon: PackageCheck }
+    { key: 'PENDING', label: 'Commande Validée', icon: Clock },
+    { key: 'PREPARING', label: 'En Préparation HACCP', icon: CheckCircle2 },
+    { key: 'IN_TRANSIT', label: 'En Cours de Livraison VUL', icon: Truck },
+    { key: 'DELIVERED', label: 'Livré & Émargé POD', icon: PackageCheck }
   ];
 
-  const getCurrentStepIndex = () => {
-    if (status === "EN_LIVRAISON") return 1;
-    if (status === "LIVREE") return 2;
-    return 0;
+  const getStepStatus = (stepKey) => {
+    const statusOrder = ['PENDING', 'PREPARING', 'IN_TRANSIT', 'DELIVERED'];
+    const currentIndex = statusOrder.indexOf(status);
+    const stepIndex = statusOrder.indexOf(stepKey);
+
+    if (status === 'CANCELLED') return 'cancelled';
+    if (stepIndex < currentIndex) return 'completed';
+    if (stepIndex === currentIndex) return 'current';
+    return 'upcoming';
   };
 
-  const currentIndex = getCurrentStepIndex();
-
   return (
-    <div className="flex items-center justify-between w-full py-4 border-t border-b border-slate-100 my-3">
-      {steps.map((step, idx) => {
-        const Icon = step.icon;
-        const isPassed = idx <= currentIndex;
-        const isCurrent = idx === currentIndex;
+    <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 space-y-4">
+      <h3 className="font-black text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
+        <Clock size={16} className="text-emerald-700" />
+        Suivi Chronologique de la Commande
+      </h3>
 
-        return (
-          <div key={step.key} className="flex-1 flex flex-col items-center relative">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 relative pt-2">
+        {steps.map((step) => {
+          const stepState = getStepStatus(step.key);
+          const Icon = step.icon;
+
+          return (
             <div
-              className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
-                isPassed
-                  ? "bg-emerald-700 text-white shadow-md"
-                  : "bg-slate-100 text-slate-400"
+              key={step.key}
+              className={`p-3.5 rounded-2xl border text-left transition-all flex items-center sm:flex-col sm:text-center gap-3 ${
+                stepState === 'completed'
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                  : stepState === 'current'
+                  ? 'bg-slate-900 border-slate-900 text-white font-black shadow-md'
+                  : 'bg-white border-slate-200 text-slate-400'
               }`}
             >
-              {isPassed ? <CheckCircle2 size={16} /> : <Icon size={14} />}
+              <div
+                className={`p-2 rounded-xl shrink-0 ${
+                  stepState === 'completed'
+                    ? 'bg-emerald-200 text-emerald-900'
+                    : stepState === 'current'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-100 text-slate-400'
+                }`}
+              >
+                <Icon size={18} />
+              </div>
+
+              <div>
+                <p className="text-xs font-bold leading-tight">{step.label}</p>
+                <p className="text-[10px] opacity-75 mt-0.5">
+                  {stepState === 'completed'
+                    ? 'Étape validée'
+                    : stepState === 'current'
+                    ? 'En cours'
+                    : 'À venir'}
+                </p>
+              </div>
             </div>
-            <span
-              className={`text-[10px] font-extrabold uppercase mt-1.5 text-center ${
-                isCurrent ? "text-emerald-800" : isPassed ? "text-slate-800" : "text-slate-400"
-              }`}
-            >
-              {step.label}
-            </span>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+
+      {status === 'CANCELLED' && (
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs font-bold flex items-center gap-2">
+          <AlertCircle size={16} className="shrink-0" />
+          <span>Commande annulée.</span>
+        </div>
+      )}
     </div>
   );
 }
